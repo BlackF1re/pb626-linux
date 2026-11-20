@@ -1,3 +1,17 @@
 /* Development boot via FEL + microSD. Never enumerate the factory MMC2. */
+
+/*
+ * The Megi board DTS does not declare system RAM. U-Boot normally patches
+ * /memory into the flattened DT before booting Linux, but our 52-byte FEL
+ * entry stub does not. This observed PB626 has 256 MiB DDR3 at 0x40000000.
+ * Without the node, early_init_dt_scan_memory() discovers no usable RAM.
+ */
+/ {
+  memory@40000000 {
+    device_type = "memory";
+    reg = <0x40000000 0x10000000>;
+  };
+};
+
 &mmc0 { max-frequency = <12000000>; };
 &mmc2 { status = "disabled"; };
