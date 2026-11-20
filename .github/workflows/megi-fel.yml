@@ -43,7 +43,8 @@ jobs:
           make -C linux pocketbook_touch_lux_3_defconfig
           c=linux/scripts/config
           "$c" --file linux/.config \
-            -e USB -e USB_MUSB_HDRC -e USB_MUSB_SUNXI \
+            -e USB -e NOP_USB_XCEIV -e EXTCON -e PHY_SUN4I_USB \
+            -e USB_MUSB_HDRC -e USB_MUSB_SUNXI \
             -e USB_GADGET -e USB_LIBCOMPOSITE -e USB_CONFIGFS \
             -e USB_CONFIGFS_ACM -e USB_CONFIGFS_MASS_STORAGE \
             -e USB_EHCI_HCD -e USB_EHCI_HCD_PLATFORM \
