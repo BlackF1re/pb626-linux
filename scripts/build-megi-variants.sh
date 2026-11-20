@@ -24,6 +24,8 @@ for variant in cypress elan focaltech no-touch; do
   cp "$linux/arch/arm/boot/dts/sun5i-a13-pocketbook-touch-lux-3.dtb" "$out/pb626-$variant.dtb"
 done
 for dtb in "$out"/pb626-*.dtb; do
+  test "$(fdtget -t s "$dtb" '/memory@40000000' device_type)" = memory
+  test "$(fdtget -t x "$dtb" '/memory@40000000' reg)" = "40000000 10000000"
   test "$(fdtget -t s "$dtb" '/soc/mmc@1c11000' status)" = disabled
   test "$(fdtget -t s "$dtb" '/soc/mmc@1c0f000' status)" = okay
   test "$(fdtget -t s "$dtb" '/soc/display-controller@1c0c000' compatible)" = 'custom,pocketbook-touch-lux-3-tcon0-ed060xd4-display'
