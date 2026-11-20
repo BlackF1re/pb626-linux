@@ -2,7 +2,10 @@
 [CmdletBinding()]
 param(
     [string]$Distro = 'XperiaDev',
-    [string]$Loader = '/root/pb626-lab/try-fel-direct.sh'
+    [string]$Loader = '/root/pb626-lab/try-fel-direct.sh',
+    [string]$BundleDir = '',
+    [ValidateSet('elan','cypress','focaltech','no-touch')]
+    [string]$Variant = 'elan'
 )
 $ErrorActionPreference = 'Stop'
 foreach ($command in @('wsl.exe', 'usbipd.exe')) {
@@ -13,6 +16,35 @@ foreach ($command in @('wsl.exe', 'usbipd.exe')) {
 & wsl.exe -d $Distro -u root -- true
 if ($LASTEXITCODE -ne 0) { throw "Cannot initialize WSL distribution $Distro" }
 
+
+# Optionally stage a matching set of experimental Megi build products.
+# Keep the proven original lab inputs in a separate directory; never flash.
+if ($BundleDir) {
+    $resolved = (Resolve-Path $BundleDir).Path
+    $wslPath = (& wsl.exe -d $Distro -u root -- wslpath -a $resolved).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot translate bundle path to WSL' }
+    $lab = '/root/pb626-lab'
+    $backups = "$lab/megi-original-backup"
+    & wsl.exe -d $Distro -u root -- mkdir -p $backups
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot create FEL backup directory' }
+    $staging = @{
+        'fel-kernel.zImage' = 'pb626-megi-zImage'
+        'direct-board.dtb' = "pb626-$Variant.dtb"
+        'direct-initramfs.cpio.gz' = 'pb626-megi-initramfs.cpio.gz'
+    }
+    foreach ($entry in $staging.GetEnumerator()) {
+        $source = "$wslPath/$($entry.Value)"
+        $target = "$lab/$($entry.Key)"
+        & wsl.exe -d $Distro -u root -- test -s $source
+        if ($LASTEXITCODE -ne 0) { throw "Missing bundle asset: $source" }
+        & wsl.exe -d $Distro -u root -- cp -n $target "$backups/$($entry.Key)"
+        if ($LASTEXITCODE -ne 0) { throw "Cannot back up: $target" }
+        & wsl.exe -d $Distro -u root -- cp $source $target
+        if ($LASTEXITCODE -ne 0) { throw "Cannot stage: $source" }
+    }
+    Write-Host "Staged Megi variant $Variant. Previous lab inputs backed up in $backups"
+}
+
 $devices = @(& usbipd.exe list)
 $matches = @($devices | Where-Object { $_ -match '(?i)1f3a:efe8' -and $_ -match '^\s*\d+-\d+\s+' })
 if ($matches.Count -ne 1) {
@@ -20,9 +52,17 @@ if ($matches.Count -ne 1) {
 }
 $busid = [regex]::Match($matches[0], '^\s*(\d+-\d+)').Groups[1].Value
 Write-Host "PocketBook FEL: BUSID $busid"
-& usbipd.exe attach --wsl --busid $busid
-if ($LASTEXITCODE -ne 0) {
-    throw "USB attach failed. In elevated PowerShell run: usbipd bind --busid $busid, then rerun this script."
+if ($matches[0] -notmatch '(?i)\bAttached\s*
+Write-Host "Uploading the known lab kernel via USB (RAM only) ..."
+$commandLine = "lsusb -d 1f3a:efe8 >/dev/null && exec '$Loader'"
+& wsl.exe -d $Distro -u root -- bash -lc $commandLine
+if ($LASTEXITCODE -ne 0) { throw 'FEL upload failed. The stock eMMC was not modified.' }
+Write-Host 'FEL upload finished. Check Windows for USB gadget COM port 0525:a4a7.'
+) {
+    & usbipd.exe attach --wsl --busid $busid
+    if ($LASTEXITCODE -ne 0) {
+        throw "USB attach failed. In elevated PowerShell run: usbipd bind --busid $busid, then rerun this script."
+    }
 }
 Write-Host "Uploading the known lab kernel via USB (RAM only) ..."
 $commandLine = "lsusb -d 1f3a:efe8 >/dev/null && exec '$Loader'"

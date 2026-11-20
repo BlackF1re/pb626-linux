@@ -8,7 +8,7 @@ model name, upstream device tree or a successful cross-compile.
 | Subsystem | Evidence required | Status |
 | --- | --- | --- |
 | SoC and RAM | Kernel, CPU and memory inventory | Observed on stock firmware |
-| Boot storage | Storage topology and verified full backup | MMC boot areas observed; backup pending |
+| Boot storage | Storage topology and verified full backup | Main user area backed up and size-checked; boot0/boot1 pending |
 | Bootloader | Non-destructive boot handoff and recovery route | RAM-only FEL kernel boot demonstrated; recovery not qualified |
 | E Ink | Full and partial updates; waveform provenance | Module loaded; no visible display refresh |
 | Touchscreen | Controller identification and coordinate mapping | ELAN KTF2K identified; new-kernel input pending |

@@ -90,3 +90,34 @@ I/O errors, stop rather than repeatedly forcing writes.
 
 All device-tree and boot changes are experimental until tested on the physical
 hardware. No stage of this process flashes the factory firmware.
+
+
+## New: complete Megi Linux 5.9 FEL/microSD experiment
+
+- **[Megi FEL + microSD bundle](.github/workflows/megi-fel.yml)** builds from
+  pinned Ondrej Jirman-derived Linux 5.9 source
+  [e98db7f](https://github.com/sailfish-on-dontbeevil/kernel-megi/tree/e98db7f114d7602c6b847d76e183787f0c97cf5b):
+  kernel zImage, four revision-specific DTBs, **matching modules**, Alpine
+  microSD image, and a standalone RAM initramfs with USB recovery console.
+- Board variants: **elan** (I2C 0x15, observed later eMMC unit),
+  **cypress** (original Megi TMA4 0x24 board), **focaltech**
+  (experimental FT5X 0x24), **no-touch** (diagnostic).
+  See [hardware/revision matrix](docs/MEGI-HARDWARE.md).
+- The build **preserves our proven FEL bootstrap** and does not write eMMC.
+  All four new DTBs expressly disable internal MMC2. The old lab
+  kernel/DTB/image workflows remain available as rollback.
+- The ELAN and FocalTech DTS bindings are *hypotheses*, not verified working
+  drivers. The Megi E Ink driver exposes /dev/eink-panel but cannot display
+  content without a userspace waveform update engine. Kernel boot, frontlight,
+  Wi-Fi, touchscreen, power control and display remain to be tested on hardware.
+- To try the new bundle: first make a backup of all files on the **removable
+  microSD**, then write `pb626-megi-sd.img.gz` to that microSD only.
+  Extract the Actions bundle on Windows, hold Menu to enter FEL, and run
+  `scripts/Start-PB626.ps1 -BundleDir 'C:\\path\\to\\artifact' -Variant elan`.
+  This stages zImage/DTB/initramfs into `/root/pb626-lab`, backs up the three
+  previously proven inputs there, attaches FEL over usbipd and uses the
+  existing RAM uploader. Find the new USB gadget COM port afterwards.
+  **Never select the 8 GiB internal eMMC or your PC SSD as the image target.**
+
+The main eMMC user area has been backed up separately; eMMC boot0/boot1 and
+the recovery method are *not yet verified*. No eMMC installation is in scope.
