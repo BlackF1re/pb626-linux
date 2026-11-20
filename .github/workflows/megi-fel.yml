@@ -13,6 +13,10 @@ on:
       - 'scripts/inspect-live.sh'
   workflow_dispatch:
 
+concurrency:
+  group: megi-fel-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
