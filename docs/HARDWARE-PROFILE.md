@@ -102,6 +102,29 @@ without installing the optional services bundle, but modifies persistent
 `/mnt/secure` state and has **not been run on this device**:
 https://www.mobileread.com/forums/showthread.php?t=325185
 
+## Firmware downgrade decision
+
+A downgrade to an older stock release is not an acceptable first root-access
+step while no complete recovery image exists. Later 626 board revisions
+(including ELAN touch/eMMC variants) may be incompatible with older images.
+A documented 2018 attempt on PCB 2.1 was rejected with
+`Downgrade to 5.14.1226 for PCB 2.1 disabled`:
+https://4pda.to/forum/index.php?showtopic=538665&st=6620
+
+Stock firmware packages are signed, and both revision gating and touchscreen
+support must be established for the exact board before any update attempt:
+https://www.synacktiv.com/en/publications/e-ink-maiden-bring-your-reader-to-the-reverser.html
+
+The 2018 temporary `calibrate` sudo proof of concept was already attempted
+on this device and denied by sudoers. Rolling back for that particular proof
+of concept is speculative; do not use it as a recovery or root plan.
+
+Preferred next step: preserve user-accessible data, confirm firmware version,
+inspect the PBJB v8 release and installer source, and assess its persistent
+`/mnt/secure/runonce` changes before any on-device installation. The PBJB
+maintainer lists Touch Lux 3 as supported, but has not verified this unit:
+https://www.mobileread.com/forums/showthread.php?t=325185
+
 ## Next inspection (read-only)
 
 Via the established KOReader SSH connection, check the account privilege
