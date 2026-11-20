@@ -51,9 +51,10 @@ jobs:
           printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' | sudo tee rootfs/etc/resolv.conf >/dev/null
           sudo chmod 1777 rootfs/tmp
           test -x rootfs/sbin/pb626-init
-          test -x rootfs/usr/sbin/sshd
-          test -x rootfs/usr/sbin/wpa_supplicant
-          sudo chroot rootfs /bin/busybox cat /etc/pb626-image-id
+          test -x rootfs/usr/sbin/sshd || test -x rootfs/sbin/sshd
+          test -x rootfs/usr/sbin/wpa_supplicant || test -x rootfs/sbin/wpa_supplicant
+          test "$(cat rootfs/etc/pb626-image-id)" = pb626-external-alpine-v1
+          find rootfs/usr/sbin rootfs/sbin -maxdepth 1 \( -name sshd -o -name wpa_supplicant \) -print
       - name: Build and validate partitioned microSD image
         shell: bash
         run: |
