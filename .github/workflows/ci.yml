@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Hardware probe checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Validate shell syntax
+        run: |
+          sh -n scripts/probe-device.sh
+          sh -n tests/probe-smoke.sh
+          shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh
+      - name: Test hardware inventory
+        run: sh tests/probe-smoke.sh
