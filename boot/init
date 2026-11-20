@@ -1,0 +1,97 @@
+#!/bin/busybox sh
+set -u
+/bin/busybox --install -s /bin
+export PATH=/bin
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs tmpfs /run
+exec >/run/pb626-boot.log 2>&1
+
+enable_serial() {
+    modprobe sunxi || return 1
+    modprobe libcomposite || return 1
+    modprobe usb_f_acm || return 1
+    mount -t configfs configfs /sys/kernel/config || return 1
+    gadget=/sys/kernel/config/usb_gadget/pb626
+    mkdir "$gadget" || return 1
+    (
+        set -e
+        cd "$gadget"
+        echo 0x0525 > idVendor
+        echo 0xa4a7 > idProduct
+        echo 0x02 > bDeviceClass
+        echo 0x02 > bDeviceSubClass
+        mkdir strings/0x409
+        echo 'PB626FEL01' > strings/0x409/serialnumber
+        echo 'PocketBook' > strings/0x409/manufacturer
+        echo 'PB626 Linux USB Console' > strings/0x409/product
+        mkdir configs/c.1 functions/acm.usb0
+        ln -s functions/acm.usb0 configs/c.1/
+        for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            for controller in /sys/class/udc/*; do
+                if [ -e "$controller" ]; then
+                    echo "${controller##*/}" > UDC
+                    exit
+                fi
+            done
+            sleep 1
+        done
+        exit 1
+    )
+}
+
+echo "PB626 test kernel: $(uname -r)"
+if ! enable_serial; then echo 'USB console setup failed'; fi
+for b in /sys/class/backlight/*; do
+    if [ -r "$b/brightness" ]; then
+        echo "Backlight $(cat "$b/brightness")/$(cat "$b/max_brightness")"
+    fi
+done
+if modprobe sun5ieink; then
+    ls -l /dev/eink-panel /dev/fb0 2>&1
+fi
+
+
+# The PocketBook's external socket is MMC0. The internal controller is disabled in this DTB.
+for attempt in $(seq 1 25); do
+    if [ -b /dev/mmcblk0p1 ] && mount -t ext4 -o ro /dev/mmcblk0p1 /newroot; then
+        if [ "$(cat /newroot/etc/pb626-image-id 2>/dev/null)" = 'pb626-external-alpine-v1' ]; then
+            echo 'External microSD root verified'
+            for led in /sys/class/leds/*; do
+                [ -w "$led/trigger" ] || continue
+                echo none > "$led/trigger"
+                cat "$led/max_brightness" > "$led/brightness"
+            done
+            # A previous boot observed an interrupted ext4 journal. Never
+            # remount RW implicitly; repair offline first, then opt in.
+            if grep -qw 'pb626.root_rw=1' /proc/cmdline; then
+                mount -o remount,rw /newroot || echo 'Remount RW failed; staying read-only'
+            else
+                echo 'Read-only root; pass pb626.root_rw=1 after offline fsck'
+            fi
+            for fs in dev proc sys; do
+                mount -o move "/$fs" "/newroot/$fs" || echo "Failed to move /$fs"
+            done
+            mount -o move /run /newroot/run || echo 'Failed to move /run'
+            exec switch_root /newroot /sbin/pb626-init
+        fi
+        umount /newroot
+    fi
+    sleep 1
+done
+
+echo 'External microSD root was not found'
+for led in /sys/class/leds/*; do
+    [ -w "$led/trigger" ] || continue
+    echo timer > "$led/trigger"
+    [ ! -w "$led/delay_on" ] || echo 100 > "$led/delay_on"
+    [ ! -w "$led/delay_off" ] || echo 100 > "$led/delay_off"
+done
+(dmesg | tail -n 45) || true
+while :; do
+    if [ -c /dev/ttyGS0 ]; then
+        setsid -c sh -c 'cat /run/pb626-boot.log; exec sh -i' </dev/ttyGS0 >/dev/ttyGS0 2>&1
+    fi
+    sleep 1
+done

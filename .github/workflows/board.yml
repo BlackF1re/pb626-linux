@@ -1,0 +1,39 @@
+name: FEL board DTB
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'board/**'
+      - '.github/workflows/board.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dtb:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install device-tree tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler
+      - name: Compile and check FEL-only hardware variant
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          dtc -I dts -O dtb -o dist/pb626-sd-fel.dtb board/pb626-sd-fel.dts
+          test "$(fdtget -t s dist/pb626-sd-fel.dtb '/soc/mmc@1c11000' status)" = disabled
+          test "$(fdtget -t s dist/pb626-sd-fel.dtb '/soc/i2c@1c2b400/touchpanel@24' status)" = disabled
+          test "$(fdtget -t s dist/pb626-sd-fel.dtb '/soc/mmc@1c0f000' status)" = okay
+          (cd dist && sha256sum *.dtb > SHA256SUMS)
+          echo 'Experimental unbooted DTB. Never flash to eMMC.' > dist/README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-sd-fel-dtb
+          path: dist/
+          retention-days: 14

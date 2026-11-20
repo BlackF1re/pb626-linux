@@ -1,84 +1,44 @@
 # pb626-linux
 
-Linux port for PocketBook 626 Plus / Touch Lux 3, with a lightweight
-touch-oriented E Ink interface.
+Alternative Linux for PocketBook 626 Plus / Touch Lux 3 (Allwinner A13).
+**Development boot is FEL → RAM kernel → external microSD Alpine. The factory
+8 GB eMMC must never be modified by experimental builds.**
 
-A RAM-only FEL boot into Alpine Linux with external-microSD rootfs was
-already demonstrated on the owner's device outside this repository. The
-working source artifacts have **not yet been imported or reproduced in CI**.
-The previous experiment reached SSH and package installation but lacked E Ink
-output and frontlight control, and later encountered ext4 microSD errors.
+## What already worked on the device
 
-The stock eMMC and factory firmware must remain untouched. See the
-[FEL lab status](docs/FEL-LAB-STATUS.md) for observed facts and next steps.
+- FEL entry with the far-right Menu button, kernel in RAM and Alpine rootfs
+  on microSD; USB gadget COM console, Wi-Fi, SSH and `apk`.
+- Problems to solve: intermittent microSD I/O stalls / interrupted ext4 journal,
+  no E Ink refresh, frontlight stuck at maximum, and wrong Cypress touchscreen
+  description (the actual hardware uses ELAN at I2C 0x15).
 
-## Goals
+The supplied local Linux 7.1.3 configuration has `CONFIG_FB_SUN5I_EINK=m`
+while `CONFIG_MEDIA_SUPPORT` is disabled. A separate, later experimental
+`sun5i-eink.c` source uses V4L2. They are **not the same display path**:
+loading a kernel module alone cannot display a Linux console or GUI.
 
-- Maintain a modern ARM Linux kernel and a compact general-purpose userland.
-- Provide touchscreen-first navigation, terminal and E Ink-aware rendering.
-- Support Wi-Fi, input devices, frontlight, USB, battery and suspend.
-- Produce reproducible build artifacts with clear hardware validation gates.
-- Preserve a tested return path to the original firmware.
+## Build and bootstrap
 
-## First step: read-only inventory
+- **GitHub Actions → FEL board DTB:** compiles `board/pb626-sd-fel.dts` and checks
+  that internal eMMC and the mismatched Cypress touchscreen are both disabled.
+  This variant is **not boot-tested**. The external MMC clock is capped at
+  12 MHz until its stability is resolved.
+- **GitHub Actions → ARMv7 userland:** downloads, verifies and QEMU-tests the
+  Alpine bootstrap archive. This is not a complete boot image.
+- `scripts/fel-boot.sh` replays the previously used RAM-only USB loader with
+  already-built lab inputs. It still relies on files in `/root/pb626-lab`:
+  `pb626-spl.bin`, `fel-kernel.zImage`, `direct-board.dtb`,
+  `direct-initramfs.cpio.gz`, `direct-entry.bin` and `sunxi-fel`.
+- `scripts/inspect-live.sh` reads E Ink, PWM, backlight and MMC diagnostics
+  from the *alternate Linux*. It does not change hardware settings.
 
-The factory firmware can be inspected through KOReader SSH without installing
-new software on the reader. From Windows PowerShell, no local compiler, WSL or
-Git checkout is required:
+**Do not flash** any provided artifact. In particular, never execute a generic
+SD-card writer against an unverified `/dev/sdX` or the eMMC. The source
+`boot/init` defaults to a read-only microSD root; writable mode requires an
+explicit `pb626.root_rw=1` kernel argument *after an offline filesystem check*.
 
-```powershell
-Invoke-WebRequest `
-  -Uri "https://raw.githubusercontent.com/BlackF1re/pb626-linux/main/scripts/probe-device.sh" `
-  -OutFile "$env:TEMP\probe-device.sh"
-
-cmd /c 'ssh -p 2222 reader@READER_IP sh -s < %TEMP%\probe-device.sh > %USERPROFILE%\pocketbook-hardware.txt'
-```
-
-The probe is sent over SSH standard input. It does not need to be copied
-onto the reader. The `cmd /c` step preserves the downloaded script's Unix
-line endings; piping `Get-Content` into the Windows OpenSSH client can
-introduce CRLF characters and cause BusyBox `sh` to report `: not found`.
-The report is saved to `%USERPROFILE%\pocketbook-hardware.txt`.
-
-For a Linux workstation, the equivalent is:
-
-```sh
-git clone https://github.com/BlackF1re/pb626-linux.git
-cd pb626-linux
-ssh -p 2222 reader@READER_IP 'sh -s' < scripts/probe-device.sh > pocketbook-hardware.txt
-```
-
-Replace `READER_IP` with the reader's address. The SSH account and port may
-differ from KOReader defaults. The script reads procfs/sysfs and prints a
-report to standard output. It does not modify the reader. The text report is
-created on the computer, not on the reader.
-
-Review the report before sharing it. It intentionally excludes serial numbers,
-network addresses, storage identifiers and kernel logs. An unprivileged shell
-may not be able to inspect every device; blank sections are not proof that
-hardware is absent.
-
-For a local fixture test:
-
-```sh
-sh tests/probe-smoke.sh
-```
-
-## Current status
-
-| Component | State |
-| --- | --- |
-| Board revision inventory | Initial stock-firmware inventory complete; PCB ID pending |
-| Boot media backup | MMC/eMMC boot areas observed; backup not performed |
-| Kernel build | Prior local RAM-boot kernel exists; source not imported |
-| Root filesystem | Alpine ran from external microSD; ext4 recovery unresolved |
-| USB serial / SSH | Worked during earlier lab boot; latest boot unverified |
-| E Ink bridge | Module loaded; no image refresh yet |
-| Frontlight | Maximum brightness; control not working |
-| Touch-oriented shell | Not implemented |
-| Hardware acceptance tests | Pending |
-
-See the [observed hardware profile](docs/HARDWARE-PROFILE.md) and
-[hardware validation](docs/HARDWARE-VALIDATION.md) for the acceptance
-matrix and recovery requirements. No firmware flash or storage write is
-performed by CI.
+`kernel/linux.config` and `boot/` are imported starting points from the
+previous lab. They are not a complete reproducible kernel build: the exact
+working kernel source, its out-of-tree patches, the FEL entry assembly and
+boot-stage sources still need to be identified. No need to replace stock
+firmware, gain stock root or open the reader to continue development.
