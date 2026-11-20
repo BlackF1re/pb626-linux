@@ -1,0 +1,60 @@
+name: ARMv7 userland
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/userland.yml
+      - docs/USERLAND.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  alpine-armv7:
+    name: Alpine ARMv7 bootstrap
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install QEMU user-mode emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user
+      - name: Fetch pinned Alpine minirootfs
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/armv7
+          archive=alpine-minirootfs-3.24.4-armv7.tar.gz
+          curl -fL --retry 3 "${base}/${archive}" -o "$archive"
+          curl -fL --retry 3 "${base}/${archive}.sha256" -o "${archive}.sha256"
+          sha256sum --check "${archive}.sha256"
+          mkdir -p rootfs
+          tar -xzf "$archive" -C rootfs
+          test -x rootfs/bin/busybox
+          test -f rootfs/etc/alpine-release
+          test -e rootfs/lib/ld-musl-armv7.so.1
+      - name: Check ARMv7 executable under QEMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          qemu-arm -L rootfs "$PWD/rootfs/bin/busybox" echo 'ARMv7 userland smoke test passed'
+          cat rootfs/etc/alpine-release
+      - name: Package bootstrap tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp alpine-minirootfs-3.24.4-armv7.tar.gz dist/pb626-alpine-3.24.4-armv7-rootfs.tar.gz
+          (cd dist && sha256sum *.tar.gz > SHA256SUMS)
+          printf '%s\n' 'EXPERIMENTAL: userland only, not a bootable firmware image.' \
+            'QEMU verifies the executable on the Actions runner, not on PocketBook Linux 3.0.8.' \
+            'Do not write this file to a block device.' > dist/README.txt
+      - name: Upload bootstrap artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pb626-alpine-armv7-bootstrap
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
