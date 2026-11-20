@@ -23,9 +23,23 @@ upstream Linux port operates all peripherals.
 | SPI | spi2.0 present |
 | Power | battery and USB supply nodes reported; 85% battery at probe |
 
-The presence of MMC boot0/boot1 nodes strongly indicates eMMC rather than
-a simple removable SD card. The MMC type field and physical PCB revision
-have not yet been inspected.
+A second read-only SSH inspection confirmed `/sys/block/mmcblk0/device/type`
+reports `MMC`, with chip name `8WPD3R`. This confirms the internal eMMC
+storage type. Its physical PCB revision remains unverified.
+
+The reader SSH account is `reader` (UID/GID 101); no privileged access was
+established by this inspection. The kernel reports `force_ro=1` on both eMMC
+hardware boot devices. This is a software read-only safeguard, not evidence
+that the contents are immutable or that the active boot source is known.
+
+Observed filesystem mounts:
+- `/dev/mmcblk0p2` at `/boot` (VFAT, read-only).
+- `/dev/mmcblk0p8` at `/ebrmain` (ext2, read-only).
+- `/dev/mmcblk0p9` at `/mnt/secure` (ext2, read-write).
+
+The reported mount mode does not by itself establish which files the
+unprivileged SSH account may change. Do not publish raw contents of
+`/mnt/secure`; it may contain device-specific or private state.
 
 The stock firmware uses a vendor framebuffer; no `/dev/eink-panel` node was
 observed. This says nothing about whether a replacement kernel can expose the
