@@ -1,4 +1,5 @@
-# Boot the existing FEL lab kernel from Windows. No compilation or eMMC writes.
+# PocketBook 626: RAM-only FEL bootstrap, optionally stage a Megi build bundle.
+# Never writes the internal eMMC.
 [CmdletBinding()]
 param(
     [string]$Distro = 'XperiaDev',
@@ -13,21 +14,22 @@ foreach ($command in @('wsl.exe', 'usbipd.exe')) {
         throw "Missing Windows command: $command"
     }
 }
+
 & wsl.exe -d $Distro -u root -- true
 if ($LASTEXITCODE -ne 0) { throw "Cannot initialize WSL distribution $Distro" }
 
-
-# Optionally stage a matching set of experimental Megi build products.
-# Keep the proven original lab inputs in a separate directory; never flash.
+# Copy only RAM boot inputs to the lab. Keep the known original binaries.
 if ($BundleDir) {
-    $resolved = (Resolve-Path $BundleDir).Path
+    $resolved = (Resolve-Path -LiteralPath $BundleDir).Path
     $wslPath = (& wsl.exe -d $Distro -u root -- wslpath -a $resolved).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Cannot translate bundle path to WSL' }
+
     $lab = '/root/pb626-lab'
     $backups = "$lab/megi-original-backup"
     & wsl.exe -d $Distro -u root -- mkdir -p $backups
     if ($LASTEXITCODE -ne 0) { throw 'Cannot create FEL backup directory' }
-    $staging = @{
+
+    $staging = [ordered]@{
         'fel-kernel.zImage' = 'pb626-megi-zImage'
         'direct-board.dtb' = "pb626-$Variant.dtb"
         'direct-initramfs.cpio.gz' = 'pb626-megi-initramfs.cpio.gz'
@@ -36,36 +38,33 @@ if ($BundleDir) {
         $source = "$wslPath/$($entry.Value)"
         $target = "$lab/$($entry.Key)"
         & wsl.exe -d $Distro -u root -- test -s $source
-        if ($LASTEXITCODE -ne 0) { throw "Missing bundle asset: $source" }
+        if ($LASTEXITCODE -ne 0) { throw "Missing bundle input: $source" }
         & wsl.exe -d $Distro -u root -- cp -n $target "$backups/$($entry.Key)"
         if ($LASTEXITCODE -ne 0) { throw "Cannot back up: $target" }
         & wsl.exe -d $Distro -u root -- cp $source $target
         if ($LASTEXITCODE -ne 0) { throw "Cannot stage: $source" }
     }
-    Write-Host "Staged Megi variant $Variant. Previous lab inputs backed up in $backups"
+    Write-Host "Megi $Variant staged; previous inputs preserved at $backups"
 }
 
 $devices = @(& usbipd.exe list)
-$matches = @($devices | Where-Object { $_ -match '(?i)1f3a:efe8' -and $_ -match '^\s*\d+-\d+\s+' })
+$matches = @($devices | Where-Object {
+    $_ -match '(?i)1f3a:efe8' -and $_ -match '^\s*\d+-\d+\s+'
+})
 if ($matches.Count -ne 1) {
-    throw "Expected exactly one PocketBook in FEL mode (1f3a:efe8), found $($matches.Count). Check usbipd list."
+    throw "Expected exactly one PocketBook in FEL mode (1f3a:efe8), found $($matches.Count)"
 }
 $busid = [regex]::Match($matches[0], '^\s*(\d+-\d+)').Groups[1].Value
-Write-Host "PocketBook FEL: BUSID $busid"
-if ($matches[0] -notmatch '(?i)\bAttached\s*
-Write-Host "Uploading the known lab kernel via USB (RAM only) ..."
-$commandLine = "lsusb -d 1f3a:efe8 >/dev/null && exec '$Loader'"
-& wsl.exe -d $Distro -u root -- bash -lc $commandLine
-if ($LASTEXITCODE -ne 0) { throw 'FEL upload failed. The stock eMMC was not modified.' }
-Write-Host 'FEL upload finished. Check Windows for USB gadget COM port 0525:a4a7.'
-) {
+Write-Host "PocketBook FEL BUSID: $busid"
+if ($matches[0] -notmatch '(?i)\bAttached\s*$') {
     & usbipd.exe attach --wsl --busid $busid
     if ($LASTEXITCODE -ne 0) {
-        throw "USB attach failed. In elevated PowerShell run: usbipd bind --busid $busid, then rerun this script."
+        throw "USB attach failed; bind $busid via an elevated PowerShell and retry."
     }
 }
-Write-Host "Uploading the known lab kernel via USB (RAM only) ..."
-$commandLine = "lsusb -d 1f3a:efe8 >/dev/null && exec '$Loader'"
-& wsl.exe -d $Distro -u root -- bash -lc $commandLine
-if ($LASTEXITCODE -ne 0) { throw 'FEL upload failed. The stock eMMC was not modified.' }
-Write-Host 'FEL upload finished. Check Windows for USB gadget COM port 0525:a4a7.'
+
+Write-Host "Uploading kernel via FEL (RAM only)..."
+$cmd = "lsusb -d 1f3a:efe8 >/dev/null && exec '$Loader'"
+& wsl.exe -d $Distro -u root -- bash -lc $cmd
+if ($LASTEXITCODE -ne 0) { throw 'FEL upload failed; factory eMMC was not modified.' }
+Write-Host 'Upload finished. Find the USB Gadget COM port (0525:a4a7).'
