@@ -49,3 +49,9 @@ Wi-Fi and suspend remain hardware acceptance tests, not guaranteed features.
 Sources:
 - https://linux-sunxi.org/PocketBook_Touch_Lux_3
 - https://github.com/pocketbook/Platform_A13 (missing factory epdc.ko source)
+
+Touch power: ELAN and FocalTech development profiles now model the vendor
+PE5 active-low switch as a fixed regulator, fed by PC13's 1.8 V supply.
+They connect it to the actual consumer supply names (ELAN vcc33/vccio,
+EDT FocalTech vcc). This fixes power sequencing but DOES NOT establish
+that the vendor-specific I2C message protocols are compatible.
