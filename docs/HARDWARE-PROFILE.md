@@ -35,11 +35,15 @@ allow-list matches the one analyzed by Synacktiv on Touch Lux 3, including
 Synacktiv documented a command-path validation weakness in this configuration:
 https://www.synacktiv.com/en/publications/e-ink-maiden-bring-your-reader-to-the-reverser.html
 
-The root execution path is **not yet validated on this physical unit**.
-Do not treat presence of sudo or the matching allow-list as confirmed
-privileged access. A temporary, non-persistent proof of `id` must precede
-any raw-device backup or firmware change. The kernel reports `force_ro=1` on both eMMC
-hardware boot devices. This is a software read-only safeguard, not evidence
+A non-persistent attempt to run a temporary `/tmp/calibrate` script via
+`sudo ./calibrate` was denied by sudoers: `reader is not allowed to execute
+'./calibrate' as root`. Thus the historical Synacktiv proof of concept is
+**not reproduced on this firmware**. This does not establish that other
+root-access approaches work or fail.
+
+Privileged access remains unverified. Do not attempt raw-device backup or
+firmware changes until the privilege and recovery paths are understood.
+The kernel reports `force_ro=1` on both eMMC hardware boot devices. This is a software read-only safeguard, not evidence
 that the contents are immutable or that the active boot source is known.
 
 Observed filesystem mounts:
