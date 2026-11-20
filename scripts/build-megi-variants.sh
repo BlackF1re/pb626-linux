@@ -29,5 +29,17 @@ for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/soc/mmc@1c11000' status)" = disabled
   test "$(fdtget -t s "$dtb" '/soc/mmc@1c0f000' status)" = okay
   test "$(fdtget -t s "$dtb" '/soc/display-controller@1c0c000' compatible)" = 'custom,pocketbook-touch-lux-3-tcon0-ed060xd4-display'
+  # Essential Megi board devices: firmware pinout does not equal driver success.
+  test "$(fdtget -t s "$dtb" '/soc/usb@1c13000' dr_mode)" = peripheral
+  test "$(fdtget -t s "$dtb" '/soc/usb@1c13000' status)" = okay
+  test "$(fdtget -t s "$dtb" '/soc/usb@1c14000' status)" = okay
+  test "$(fdtget -t s "$dtb" '/soc/usb@1c14400' status)" = okay
+  test "$(fdtget -t s "$dtb" '/soc/spi@1c17000' status)" = okay
+  test "$(fdtget -t s "$dtb" '/soc/spi@1c17000/flash@0' compatible)" = 'macronix,mx25u4033 jedec,spi-nor'
+  test "$(fdtget -t s "$dtb" '/soc/i2c@1c2ac00/pmic@34' compatible)" = x-powers,axp209
+  test "$(fdtget -t s "$dtb" '/soc/i2c@1c2b000/rtc@51' compatible)" = nxp,pcf8563
+  test "$(fdtget -t s "$dtb" '/soc/i2c@1c2b000/regulator@68' compatible)" = tp,tp65185x
+  test "$(fdtget -t s "$dtb" '/backlight' compatible)" = pwm-backlight
+  test "$(fdtget -t s "$dtb" '/leds' compatible)" = gpio-leds
 done
 test "$(fdtget -t s "$out/pb626-elan.dtb" '/soc/i2c@1c2b400/touchscreen@15' compatible)" = 'elan,ekth3500'
