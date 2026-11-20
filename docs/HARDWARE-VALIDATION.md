@@ -9,14 +9,14 @@ model name, upstream device tree or a successful cross-compile.
 | --- | --- | --- |
 | SoC and RAM | Kernel, CPU and memory inventory | Observed on stock firmware |
 | Boot storage | Storage topology and verified full backup | MMC boot areas observed; backup pending |
-| Bootloader | Non-destructive boot handoff and recovery route | Pending |
-| E Ink | Full and partial updates; waveform provenance | Pending |
+| Bootloader | Non-destructive boot handoff and recovery route | RAM-only FEL kernel boot demonstrated; recovery not qualified |
+| E Ink | Full and partial updates; waveform provenance | Module loaded; no visible display refresh |
 | Touchscreen | Controller identification and coordinate mapping | ELAN KTF2K identified; new-kernel input pending |
-| Frontlight | Brightness range, off state and resume | Pending |
+| Frontlight | Brightness range, off state and resume | Stuck at apparent maximum in alternative Linux |
 | Buttons | Linux input events and wake behavior | Pending |
-| Wi-Fi | Driver, association and reconnect after suspend | Vendor rtl8188eu observed; new-kernel test pending |
+| Wi-Fi | Driver, association and reconnect after suspend | Association and SSH seen in alternate Linux; resume pending |
 | Power | Charge state, battery capacity and shutdown | Pending |
-| USB | Mode identification and data transfer | Pending |
+| USB | Mode identification and data transfer | FEL and USB gadget COM demonstrated |
 | Suspend | Repeated sleep/wake cycles without display corruption | Pending |
 
 ## Hardware inspection
@@ -45,7 +45,7 @@ inventory or initial build work. Before a real boot experiment:
 1. Identify the physical storage type and board revision.
 2. Create and verify an offline full-device backup using the correct storage
    method; a user-visible USB volume is not a full firmware backup.
-3. Identify a viable recovery interface, preferably UART.
+3. Validate FEL recovery via USB; UART and disassembly are excluded for this device.
 4. Confirm the selected device tree, boot image format and display waveforms.
 5. Test on separate media where the hardware actually permits it.
 

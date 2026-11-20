@@ -3,10 +3,14 @@
 Linux port for PocketBook 626 Plus / Touch Lux 3, with a lightweight
 touch-oriented E Ink interface.
 
-The initial phase is **hardware identification**, not firmware replacement.
-Device revisions may differ in boot storage, touchscreen controller, frontlight
-and E Ink waveform data. Nothing in this repository is currently a bootable
-image or a verified replacement for the stock firmware.
+A RAM-only FEL boot into Alpine Linux with external-microSD rootfs was
+already demonstrated on the owner's device outside this repository. The
+working source artifacts have **not yet been imported or reproduced in CI**.
+The previous experiment reached SSH and package installation but lacked E Ink
+output and frontlight control, and later encountered ext4 microSD errors.
+
+The stock eMMC and factory firmware must remain untouched. See the
+[FEL lab status](docs/FEL-LAB-STATUS.md) for observed facts and next steps.
 
 ## Goals
 
@@ -66,9 +70,11 @@ sh tests/probe-smoke.sh
 | --- | --- |
 | Board revision inventory | Initial stock-firmware inventory complete; PCB ID pending |
 | Boot media backup | MMC/eMMC boot areas observed; backup not performed |
-| Kernel build | Not configured |
-| Root filesystem | Not configured |
-| E Ink bridge | Not implemented |
+| Kernel build | Prior local RAM-boot kernel exists; source not imported |
+| Root filesystem | Alpine ran from external microSD; ext4 recovery unresolved |
+| USB serial / SSH | Worked during earlier lab boot; latest boot unverified |
+| E Ink bridge | Module loaded; no image refresh yet |
+| Frontlight | Maximum brightness; control not working |
 | Touch-oriented shell | Not implemented |
 | Hardware acceptance tests | Pending |
 

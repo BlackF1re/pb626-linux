@@ -9,25 +9,26 @@ binary under QEMU user mode on GitHub Actions. It produces a rootfs tarball,
 SHA256SUMS and a warning marker.
 
 **Compatibility gate:** successful execution on the Actions runner does not
-prove that Alpine musl and its packages work with the stock PocketBook Linux
-3.0.8 kernel. The replacement kernel, mount layout, writable storage and
-available privileges have not been validated. Do not extract the tarball over
-the vendor root filesystem or flash it to the eMMC.
+prove this specific artifact is bootable on the reader. Separately, an earlier
+locally prepared Alpine rootfs **did boot from external microSD** using a
+RAM-loaded FEL kernel, with SSH and package installation demonstrated.
+Those local sources and kernel have not been imported into this repository.
+Never extract this tarball over the vendor root filesystem or flash eMMC.
 
-A temporary root filesystem may eventually be tested from user storage or a
-filesystem image with suitable mounts. This requires independently verified
-root access and a stock-kernel runtime test first.
+The existing external-microSD rootfs has an unresolved ext4 journal issue.
+Prioritize recovery and preservation of the working lab assets, then move
+the source build into Actions. See [FEL lab status](FEL-LAB-STATUS.md).
 
 ## Hardware milestones
 
-1. Get temporary privileged execution without a firmware downgrade.
-2. Capture a private, verified full eMMC backup, including both hardware boot
-   areas and the boot configuration; do not publish the image.
-3. Test the isolated ARMv7 userspace without modifying vendor mount points.
-4. Assemble and boot a board-specific modern kernel non-destructively, after
-   recovery can be demonstrated on this device.
-5. Implement the verified ELAN input path, Wi-Fi, E Ink waveform bridge and a
-   touch-oriented graphical shell.
+1. Preserve the previous local FEL build tree and recover the microSD ext4
+   filesystem without touching eMMC.
+2. Reproduce the working headless FEL kernel and Alpine rootfs in Actions.
+3. Validate E Ink update, waveforms and frontlight; establish touchscreen
+   controller support and map input events.
+4. Implement an E Ink-first general-purpose shell and verify suspend/resume.
+5. Keep a verified rollback route before considering any permanent eMMC
+   installation. A private full backup would be required for that later step.
 
 The planned modern Linux system must not silently degrade to an unsupported
 stock-kernel chroot; the initial userland is a test component and not the
