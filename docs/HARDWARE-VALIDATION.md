@@ -7,19 +7,24 @@ model name, upstream device tree or a successful cross-compile.
 
 | Subsystem | Evidence required | Status |
 | --- | --- | --- |
-| SoC and RAM | Kernel, CPU and memory inventory | Pending |
-| Boot storage | Storage topology and verified full backup | Pending |
+| SoC and RAM | Kernel, CPU and memory inventory | Observed on stock firmware |
+| Boot storage | Storage topology and verified full backup | MMC boot areas observed; backup pending |
 | Bootloader | Non-destructive boot handoff and recovery route | Pending |
 | E Ink | Full and partial updates; waveform provenance | Pending |
-| Touchscreen | Controller identification and coordinate mapping | Pending |
+| Touchscreen | Controller identification and coordinate mapping | ELAN KTF2K identified; new-kernel input pending |
 | Frontlight | Brightness range, off state and resume | Pending |
 | Buttons | Linux input events and wake behavior | Pending |
-| Wi-Fi | Driver, association and reconnect after suspend | Pending |
+| Wi-Fi | Driver, association and reconnect after suspend | Vendor rtl8188eu observed; new-kernel test pending |
 | Power | Charge state, battery capacity and shutdown | Pending |
 | USB | Mode identification and data transfer | Pending |
 | Suspend | Repeated sleep/wake cycles without display corruption | Pending |
 
 ## Hardware inspection
+
+The observed hardware profile for this particular device is recorded in
+[HARDWARE-PROFILE.md](HARDWARE-PROFILE.md). Generic upstream PocketBook
+DTS support must not be treated as full support for this ELAN revision.
+
 
 Run the read-only inventory under the factory firmware before preparing boot
 media. It deliberately skips MAC addresses, serial numbers, MMC CID/CSD and

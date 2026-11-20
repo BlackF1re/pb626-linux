@@ -64,14 +64,15 @@ sh tests/probe-smoke.sh
 
 | Component | State |
 | --- | --- |
-| Board revision inventory | Ready for hardware run |
-| Boot media backup | Not performed |
+| Board revision inventory | Initial stock-firmware inventory complete; PCB ID pending |
+| Boot media backup | MMC/eMMC boot areas observed; backup not performed |
 | Kernel build | Not configured |
 | Root filesystem | Not configured |
 | E Ink bridge | Not implemented |
 | Touch-oriented shell | Not implemented |
 | Hardware acceptance tests | Pending |
 
-See [hardware validation](docs/HARDWARE-VALIDATION.md) for the acceptance
+See the [observed hardware profile](docs/HARDWARE-PROFILE.md) and
+[hardware validation](docs/HARDWARE-VALIDATION.md) for the acceptance
 matrix and recovery requirements. No firmware flash or storage write is
 performed by CI.
