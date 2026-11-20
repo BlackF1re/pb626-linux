@@ -49,11 +49,72 @@ param(
 
     function ConvertTo-WslPath([string]$WindowsPath) {
         $resolved=(Resolve-Path -LiteralPath $WindowsPath).Path
-        if ($resolved -notmatch '^([A-Za-z]):\\(.*)$') {
+        if ($resolved -match '^([A-Za-z]):\\(.*)
+        return "/mnt/$drive/$tail"
+    }
+    $wslBundle=ConvertTo-WslPath $resolvedBundle
+    $wslLinuxScript=ConvertTo-WslPath $linuxScript
+
+    # This first invocation also creates the WSL VM needed by usbipd attach.
+    & wsl.exe -d $Distro -u root -- true
+    if ($LASTEXITCODE -ne 0) { throw "Failed to start WSL distro $Distro" }
+
+    $felDevices=@(& usbipd.exe list | Where-Object {
+        $_ -match '^\s*\d+-\d+\s+1f3a:efe8\b'
+    })
+    if ($felDevices.Count -ne 1) {
+        throw "Expected exactly one PocketBook in cold FEL mode, found $($felDevices.Count)."
+    }
+    $line=$felDevices[0]
+    $busid=[regex]::Match($line,'^\s*(\d+-\d+)').Groups[1].Value
+    Write-Host "PocketBook FEL BUSID: $busid"
+    if ($line -notmatch 'Attached\s*$') {
+        if ($line -match 'Not shared\s*$') {
+            & usbipd.exe bind --busid $busid
+            if ($LASTEXITCODE -ne 0) {
+                throw "usbipd bind failed; elevate PowerShell for a one-time bind of $busid."
+            }
+        }
+        & usbipd.exe attach --wsl --busid $busid
+        if ($LASTEXITCODE -ne 0) { throw 'usbipd attach failed' }
+    }
+    Start-Sleep -Seconds 2
+    & wsl.exe -d $Distro -u root -- lsusb -d 1f3a:efe8
+    if ($LASTEXITCODE -ne 0) { throw 'FEL device not visible from WSL' }
+
+    $argsLinux=@($wslLinuxScript,$wslBundle,$Variant,$Profile)
+    if ($NoExecute) { $argsLinux+='--no-execute' }
+    Write-Host "Starting RAM-only Megi: variant=$Variant profile=$Profile"
+    & wsl.exe -d $Distro -u root -- bash @argsLinux
+    $exit=$LASTEXITCODE
+    Write-Host "`nFEL loader exit: $exit (NOT proof of Linux boot)"
+    if ($exit -ne 0) { throw "FEL upload/verification failed: exit $exit" }
+
+    if (-not $NoExecute) {
+        # A new Linux USB device may enumerate back on Windows rather than
+        # auto-attach to WSL: inspect both, never infer boot from LED/backlight.
+        Write-Host "`n=== USB visible in WSL ==="
+        & wsl.exe -d $Distro -u root -- lsusb
+        Write-Host "`n=== usbipd devices in Windows ==="
+        & usbipd.exe list
+        Write-Host "`n=== Linux USB gadget (0525:a4a7) on Windows ==="
+        $devices=@(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
+            $_.InstanceId -match 'VID_0525&PID_A4A7'
+        })
+        if ($devices.Count -eq 0) {
+            Write-Warning 'No USB ACM gadget detected: Linux serial console is NOT available yet.'
+        } else {
+            $devices | Format-Table Status,FriendlyName,InstanceId -AutoSize
+            Write-Host 'Open the newly identified COM port using PuTTY, 115200 8N1.'
+        }
+    }
+}
+) {
+            $drive=$Matches[1].ToLowerInvariant()
+            $tail=$Matches[2].Replace('\','/')
+        } else {
             throw "Path must be on a Windows drive: $resolved"
         }
-        $drive=$Matches[1].ToLowerInvariant()
-        $tail=$Matches[2].Replace('\','/')
         return "/mnt/$drive/$tail"
     }
     $wslBundle=ConvertTo-WslPath $resolvedBundle
