@@ -10,6 +10,7 @@ on:
       - 'boot/pb626-init-megi'
       - 'scripts/build-megi-variants.sh'
       - 'scripts/make-sd-image.sh'
+      - 'scripts/inspect-live.sh'
   workflow_dispatch:
 
 permissions:
@@ -95,6 +96,7 @@ jobs:
             openssh-server openssh-keygen e2fsprogs usbutils i2c-tools
           sudo rm -f rootfs/usr/bin/qemu-arm-static
           sudo install -m 755 boot/pb626-init-megi rootfs/sbin/pb626-init
+          sudo install -m 755 scripts/inspect-live.sh rootfs/usr/sbin/inspect-pb626
           echo pb626-external-alpine-v1 | sudo tee rootfs/etc/pb626-image-id >/dev/null
           printf 'nameserver 1.1.1.1\n' | sudo tee rootfs/etc/resolv.conf >/dev/null
           sudo chmod 1777 rootfs/tmp
