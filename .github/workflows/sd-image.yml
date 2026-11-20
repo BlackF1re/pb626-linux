@@ -43,7 +43,8 @@ jobs:
           sudo cp /usr/bin/qemu-arm-static rootfs/usr/bin/qemu-arm-static
           sudo cp /etc/resolv.conf rootfs/etc/resolv.conf
           sudo chroot rootfs /usr/bin/qemu-arm-static /sbin/apk add --no-cache \
-            iw wpa_supplicant openssh-server openssh-keygen htop e2fsprogs
+            iw wpa_supplicant linux-firmware-rtlwifi kmod usbutils \
+            openssh-server openssh-keygen htop e2fsprogs
           sudo rm -f rootfs/usr/bin/qemu-arm-static
           sudo install -m 755 boot/pb626-init rootfs/sbin/pb626-init
           printf 'pb626-external-alpine-v1\n' | sudo tee rootfs/etc/pb626-image-id >/dev/null
