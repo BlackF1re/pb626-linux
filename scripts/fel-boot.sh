@@ -67,7 +67,7 @@ check_sha() {
     [[ $expected =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Missing SHA256SUMS entry: $base" >&2; exit 12; }
     actual=$(sha256sum "$file")
     actual=${actual%% *}
-    [[ ${actual,,} == ${expected,,} ]] || { echo "SHA256 mismatch: $base" >&2; exit 12; }
+    [[ ${actual,,} == "${expected,,}" ]] || { echo "SHA256 mismatch: $base" >&2; exit 12; }
     echo "SHA256 OK: $base"
 }
 check_sha "$kernel"
