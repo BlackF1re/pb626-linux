@@ -1,0 +1,130 @@
+name: Megi Linux 5.9 FEL and microSD bundle
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/megi-fel.yml'
+      - 'board/megi/**'
+      - 'boot/init-megi'
+      - 'boot/pb626-init-megi'
+      - 'scripts/build-megi-variants.sh'
+      - 'scripts/make-sd-image.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kernel-and-rootfs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-compiler and filesystem tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git gcc-arm-linux-gnueabihf make bc bison flex libssl-dev libelf-dev \
+            device-tree-compiler libncurses-dev lz4 cpio kmod \
+            qemu-user-static fdisk e2fsprogs dosfstools mtools
+      - name: Fetch pinned Megi 5.9 kernel, source of all device drivers
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch orange-pi-5.9 \
+            https://github.com/sailfish-on-dontbeevil/kernel-megi.git linux
+          test "$(git -C linux rev-parse HEAD)" = e98db7f114d7602c6b847d76e183787f0c97cf5b
+      - name: Configure full PB626 support without external boot-time modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
+          make -C linux pocketbook_touch_lux_3_defconfig
+          c=linux/scripts/config
+          "$c" --file linux/.config \
+            -e USB -e USB_MUSB_HDRC -e USB_MUSB_SUNXI \
+            -e USB_GADGET -e USB_LIBCOMPOSITE -e USB_CONFIGFS \
+            -e USB_CONFIGFS_ACM -e USB_CONFIGFS_MASS_STORAGE \
+            -e USB_EHCI_HCD -e USB_EHCI_HCD_PLATFORM \
+            -e USB_OHCI_HCD -e USB_OHCI_HCD_PLATFORM \
+            -e MMC -e MMC_SUNXI -e EXT4_FS -e VFAT_FS \
+            -e DEVTMPFS -e DEVTMPFS_MOUNT -e CONFIGFS_FS \
+            -e REGULATOR_TP65185X -e BACKLIGHT_PWM \
+            -e TOUCHSCREEN_CYTTSP4_CORE -e TOUCHSCREEN_CYTTSP4_I2C \
+            -e TOUCHSCREEN_ELAN -e TOUCHSCREEN_EDT_FT5X06 \
+            -m FB_SUN5I_EINK -m R8188EU
+          make -C linux olddefconfig
+          for key in USB_MUSB_SUNXI USB_CONFIGFS USB_CONFIGFS_ACM MMC_SUNXI REGULATOR_TP65185X; do
+            grep -q "^CONFIG_$key=y$" linux/.config || { echo "Missing required built-in: $key"; exit 1; }
+          done
+      - name: Cross-compile zImage, modules and four version-matched DTBs
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
+          make -C linux -j"$(nproc)" KCFLAGS=-Wno-error zImage modules
+          mkdir -p dist
+          cp linux/arch/arm/boot/zImage dist/pb626-megi-zImage
+          bash scripts/build-megi-variants.sh linux dist "$PWD"
+          cp linux/.config dist/pb626-megi.config
+          make -s -C linux kernelrelease > dist/KERNELRELEASE
+      - name: Assemble Alpine rootfs and independent RAM rescue initramfs
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/armv7
+          f=alpine-minirootfs-3.24.4-armv7.tar.gz
+          curl -fsSL --retry 3 "$base/$f" -o "$f"
+          curl -fsSL --retry 3 "$base/$f.sha256" -o "$f.sha256"
+          sha256sum -c "$f.sha256"
+          mkdir -p rootfs initramfs
+          sudo tar --numeric-owner -xzf "$f" -C rootfs
+          sudo tar --numeric-owner -xzf "$f" -C initramfs
+          sudo install -m 755 boot/init-megi initramfs/init
+          sudo mkdir -p initramfs/newroot initramfs/run initramfs/sys/kernel/config
+          (cd initramfs && sudo find . -print0 | sudo cpio --null -o --format=newc --quiet) \
+            | gzip -9 > dist/pb626-megi-initramfs.cpio.gz
+          sudo install -d rootfs/usr/bin rootfs/dev rootfs/proc rootfs/sys rootfs/run rootfs/root rootfs/media/pb626-config
+          test -e rootfs/dev/null || sudo mknod -m 666 rootfs/dev/null c 1 3
+          sudo cp /usr/bin/qemu-arm-static rootfs/usr/bin/qemu-arm-static
+          sudo cp /etc/resolv.conf rootfs/etc/resolv.conf
+          sudo chroot rootfs /usr/bin/qemu-arm-static /sbin/apk add --no-cache \
+            kmod iw wpa_supplicant linux-firmware-rtlwifi \
+            openssh-server openssh-keygen e2fsprogs usbutils i2c-tools
+          sudo rm -f rootfs/usr/bin/qemu-arm-static
+          sudo install -m 755 boot/pb626-init-megi rootfs/sbin/pb626-init
+          echo pb626-external-alpine-v1 | sudo tee rootfs/etc/pb626-image-id >/dev/null
+          printf 'nameserver 1.1.1.1\n' | sudo tee rootfs/etc/resolv.conf >/dev/null
+          sudo chmod 1777 rootfs/tmp
+          export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
+          sudo make -C linux modules_install INSTALL_MOD_PATH="$PWD/rootfs" DEPMOD=true
+          sudo depmod -b rootfs "$(cat dist/KERNELRELEASE)"
+          sudo tar -C rootfs -czf dist/pb626-megi-modules.tar.gz lib/modules
+          sudo bash scripts/make-sd-image.sh rootfs dist/pb626-megi-sd.img
+          sudo gzip -1 -n dist/pb626-megi-sd.img
+          sudo chown -R "$USER:$USER" dist
+      - name: Verify build outputs and publish checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/pb626-megi-zImage
+          test -s dist/pb626-megi-initramfs.cpio.gz
+          test -s dist/pb626-megi-sd.img.gz
+          test "$(find dist -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 4
+          (cd dist && sha256sum pb626-megi-zImage *.dtb *.gz *.config > SHA256SUMS)
+          cat > dist/README.txt <<'NOTE'
+          EXPERIMENTAL FEL + microSD ONLY. NEVER FLASH THE INTERNAL EMMC.
+          Source: Megi Linux 5.9 pinned e98db7f114d7602c6b847d76e183787f0c97cf5b.
+          Select one DTB: cypress / elan / focaltech / no-touch.
+          ELAN/FocalTech protocols unverified. E Ink requires waveform-aware userspace.
+          RAM initramfs has USB serial recovery when microSD is unavailable.
+          Use zImage + initramfs + DTB with the proven FEL SPL/entry loader.
+          SD .img.gz is for removable microSD only and contains matching modules.
+          NOTE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-megi-fel-sd-bundle
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

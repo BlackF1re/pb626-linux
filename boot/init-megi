@@ -1,0 +1,66 @@
+#!/bin/sh
+# Megi Linux 5.9 RAM initramfs; no eMMC, no auto display updates.
+set -u
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+mkdir -p /dev /proc /sys /run /newroot /sys/kernel/config
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs tmpfs /run
+exec >/run/pb626-boot.log 2>&1
+echo "PB626 Megi FEL kernel $(uname -r)"
+mount -t configfs configfs /sys/kernel/config || true
+G=/sys/kernel/config/usb_gadget/pb626
+if [ -d /sys/kernel/config/usb_gadget ]; then
+  mkdir -p "$G"
+  echo 0x0525 > "$G/idVendor"
+  echo 0xa4a7 > "$G/idProduct"
+  echo 0x02 > "$G/bDeviceClass"
+  echo 0x02 > "$G/bDeviceSubClass"
+  mkdir -p "$G/strings/0x409" "$G/configs/c.1" "$G/functions/acm.usb0"
+  echo PB626FEL01 > "$G/strings/0x409/serialnumber"
+  echo PocketBook > "$G/strings/0x409/manufacturer"
+  echo 'PB626 Megi Linux USB Console' > "$G/strings/0x409/product"
+  ln -s "$G/functions/acm.usb0" "$G/configs/c.1/acm.usb0" 2>/dev/null || true
+  for n in 1 2 3 4 5 6 7 8 9 10; do
+    for ctl in /sys/class/udc/*; do
+      if [ -e "$ctl" ]; then
+        echo "$(basename "$ctl")" > "$G/UDC" && break 2
+      fi
+    done
+    sleep 1
+  done
+fi
+# A microSD mount can block in uninterruptible I/O: keep PID1 responsive.
+(
+  n=0
+  while [ "$n" -lt 10 ]; do
+    if [ -b /dev/mmcblk0p1 ]; then
+      if mount -t ext4 -o ro,noload /dev/mmcblk0p1 /newroot &&
+        [ "$(cat /newroot/etc/pb626-image-id 2>/dev/null)" = pb626-external-alpine-v1 ]; then
+        touch /run/pb626-root-ready
+        exit 0
+      fi
+      mountpoint -q /newroot && umount /newroot
+    fi
+    n=$((n + 1))
+    sleep 1
+  done
+) >/run/pb626-sd.log 2>&1 &
+for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  [ -f /run/pb626-root-ready ] && break
+  sleep 1
+done
+if [ -f /run/pb626-root-ready ]; then
+  echo 'microSD root verified, starting Alpine'
+  for fs in dev proc sys; do mount -o move "/$fs" "/newroot/$fs"; done
+  mount -o move /run /newroot/run
+  exec switch_root /newroot /sbin/pb626-init
+fi
+echo 'No microSD root: RAM rescue USB serial shell. Factory eMMC not enumerated.'
+while :; do
+  if [ -c /dev/ttyGS0 ]; then
+    setsid -c sh -c 'cat /run/pb626-boot.log; cat /run/pb626-sd.log; exec sh -i' </dev/ttyGS0 >/dev/ttyGS0 2>&1
+  fi
+  sleep 1
+done
