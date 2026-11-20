@@ -32,9 +32,11 @@ jobs:
           sha256sum --check "${archive}.sha256"
           mkdir -p rootfs
           tar -xzf "$archive" -C rootfs
-          test -x rootfs/bin/busybox
-          test -f rootfs/etc/alpine-release
-          test -e rootfs/lib/ld-musl-armv7.so.1
+          ls -ld rootfs/bin rootfs/usr/bin rootfs/lib rootfs/etc 2>&1 || true
+          ls -l rootfs/bin/busybox rootfs/usr/bin/busybox rootfs/lib/ld-musl-armv7.so.1 rootfs/etc/alpine-release 2>&1 || true
+          test -f rootfs/etc/alpine-release || { echo 'Alpine release file missing'; exit 1; }
+          test -x rootfs/bin/busybox || test -x rootfs/usr/bin/busybox || { echo 'BusyBox executable missing'; exit 1; }
+          test -e rootfs/lib/ld-musl-armv7.so.1 || test -L rootfs/lib/ld-musl-armv7.so.1 || { echo 'musl loader missing'; exit 1; }
       - name: Check ARMv7 executable under QEMU
         shell: bash
         run: |
