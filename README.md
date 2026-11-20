@@ -1,44 +1,92 @@
 # pb626-linux
 
-Alternative Linux for PocketBook 626 Plus / Touch Lux 3 (Allwinner A13).
-**Development boot is FEL → RAM kernel → external microSD Alpine. The factory
-8 GB eMMC must never be modified by experimental builds.**
+Development Linux for PocketBook 626 Plus / Touch Lux 3 (Allwinner A13).
 
-## What already worked on the device
+**Boot path:** USB FEL → kernel and initramfs in RAM → Alpine on removable
+microSD. The factory eMMC must not be modified. E Ink display, frontlight and
+touchscreen are not functional yet; USB serial console and Wi-Fi were working
+in previous hardware tests.
 
-- FEL entry with the far-right Menu button, kernel in RAM and Alpine rootfs
-  on microSD; USB gadget COM console, Wi-Fi, SSH and `apk`.
-- Problems to solve: intermittent microSD I/O stalls / interrupted ext4 journal,
-  no E Ink refresh, frontlight stuck at maximum, and wrong Cypress touchscreen
-  description (the actual hardware uses ELAN at I2C 0x15).
+## Windows: fresh microSD and FEL boot
 
-The supplied local Linux 7.1.3 configuration has `CONFIG_FB_SUN5I_EINK=m`
-while `CONFIG_MEDIA_SUPPORT` is disabled. A separate, later experimental
-`sun5i-eink.c` source uses V4L2. They are **not the same display path**:
-loading a kernel module alone cannot display a Linux console or GUI.
+1. Download the `pb626-alpine-sd-image` artifact from the latest successful
+   [Alpine microSD image](https://github.com/BlackF1re/pb626-linux/actions/workflows/sd-image.yml)
+   workflow. Unzip the Actions artifact to obtain `pb626-alpine-sd.img.gz`.
+2. With the microSD in a **PC USB card reader**, use
+   [balenaEtcher](https://etcher.balena.io/) to flash the `.img.gz` onto
+   **that removable microSD only**. Flashing erases the card. Do not select
+   the computer disk, the reader's eMMC or another removable drive.
+3. Optional Wi-Fi autoconnect: Windows should expose the card's FAT32
+   partition as `PB626CFG`. Create a `wifi.conf` in that partition,
+   using standard wpa_supplicant syntax:
 
-## Build and bootstrap
+   ```text
+   ctrl_interface=/run/wpa_supplicant
+   network={
+       ssid="YOUR_SSID"
+       psk="YOUR_PASSWORD"
+   }
+   ```
 
-- **GitHub Actions → FEL board DTB:** compiles `board/pb626-sd-fel.dts` and checks
-  that internal eMMC and the mismatched Cypress touchscreen are both disabled.
-  This variant is **not boot-tested**. The external MMC clock is capped at
-  12 MHz until its stability is resolved.
-- **GitHub Actions → ARMv7 userland:** downloads, verifies and QEMU-tests the
-  Alpine bootstrap archive. This is not a complete boot image.
-- `scripts/fel-boot.sh` replays the previously used RAM-only USB loader with
-  already-built lab inputs. It still relies on files in `/root/pb626-lab`:
-  `pb626-spl.bin`, `fel-kernel.zImage`, `direct-board.dtb`,
-  `direct-initramfs.cpio.gz`, `direct-entry.bin` and `sunxi-fel`.
-- `scripts/inspect-live.sh` reads E Ink, PWM, backlight and MMC diagnostics
-  from the *alternate Linux*. It does not change hardware settings.
+   Do not commit this file or store Wi-Fi passwords in CI.
+4. Insert the card into the **powered-off** PocketBook. Connect USB to the
+   Windows PC and hold the far-right Menu button while powering on to enter
+   FEL. In **PowerShell**, check `usbipd list` for `1f3a:efe8`.
+5. For the existing proven uploader in WSL `XperiaDev`, perform:
 
-**Do not flash** any provided artifact. In particular, never execute a generic
-SD-card writer against an unverified `/dev/sdX` or the eMMC. The source
-`boot/init` defaults to a read-only microSD root; writable mode requires an
-explicit `pb626.root_rw=1` kernel argument *after an offline filesystem check*.
+   ```powershell
+   wsl -d XperiaDev -u root -- true
+   usbipd attach --wsl --busid BUSID
+   wsl -d XperiaDev -u root -- bash -lc '/root/pb626-lab/try-fel-direct.sh'
+   ```
 
-`kernel/linux.config` and `boot/` are imported starting points from the
-previous lab. They are not a complete reproducible kernel build: the exact
-working kernel source, its out-of-tree patches, the FEL entry assembly and
-boot-stage sources still need to be identified. No need to replace stock
-firmware, gain stock root or open the reader to continue development.
+   Substitute the actual FEL `BUSID`. If USB binding is needed first,
+   run `usbipd bind --busid BUSID` from an elevated PowerShell. WSL is
+   **only** the USB FEL transport; all new images are built in Actions.
+   The uploader still depends on previously working lab binaries stored in
+   `/root/pb626-lab`; there is not yet a fully self-contained kernel build.
+6. In PowerShell, find the Linux USB serial device:
+
+   ```powershell
+   Get-PnpDevice -PresentOnly -Class Ports |
+     Where-Object InstanceId -like 'USB\VID_0525&PID_A4A7*'
+   putty -serial COM7 -sercfg 115200,8,n,1,N
+   ```
+
+   Replace `COM7` with the detected COM port and press Enter. The expected
+   root filesystem is `/dev/mmcblk0p1` on the **microSD**, not the eMMC.
+
+## First USB-console session
+
+Check `cat /etc/pb626-image-id` and `mount`. On the freshly flashed card,
+if the root is read-only and you intend to configure persistent SSH, run
+`mount -o remount,rw /` (this writes to the removable microSD only).
+Then, from the **USB COM console**, run:
+
+```sh
+passwd
+ssh-keygen -A
+mkdir -p /run/sshd
+/usr/sbin/sshd -o PermitRootLogin=yes -o PasswordAuthentication=yes
+ip addr
+```
+
+If the Wi-Fi configuration worked, connect via `ssh root@DEVICE_IP` and
+enter the password set over USB. **No default password is shipped.** A
+previous experiment allowed unauthenticated root SSH; this image does not.
+
+The image is 1 GiB: partition 1 is ext4 Alpine; partition 2 is FAT32 config.
+The remainder of larger cards is left unused for now. If Linux reports MMC
+I/O errors, stop rather than repeatedly forcing writes.
+
+## Current build artifacts
+
+- [MicroSD image workflow](.github/workflows/sd-image.yml) — working CI;
+  image has **not yet been boot-tested** on the reader.
+- [Device Tree workflow](.github/workflows/board.yml) — eMMC-disabled test
+  DTB compiled, **not yet boot-tested**.
+- [ARMv7 bootstrap workflow](.github/workflows/userland.yml) — reusable
+  Alpine minirootfs, not a bootable image.
+
+All device-tree and boot changes are experimental until tested on the physical
+hardware. No stage of this process flashes the factory firmware.
