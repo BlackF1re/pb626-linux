@@ -30,8 +30,14 @@ jobs:
           test "$(fdtget -t s dist/pb626-sd-fel.dtb '/soc/mmc@1c11000' status)" = disabled
           test "$(fdtget -t s dist/pb626-sd-fel.dtb '/soc/i2c@1c2b400/touchpanel@24' status)" = disabled
           test "$(fdtget -t s dist/pb626-sd-fel.dtb '/soc/mmc@1c0f000' status)" = okay
+          # Inspection variant: make eMMC visible to the RAM-booted kernel.
+          # This does not make the eMMC read-only! Never flash this DTB.
+          cp dist/pb626-sd-fel.dtb dist/pb626-emmc-inspect.dtb
+          fdtput -t s dist/pb626-emmc-inspect.dtb '/soc/mmc@1c11000' status okay
+          test "$(fdtget -t s dist/pb626-emmc-inspect.dtb '/soc/mmc@1c11000' status)" = okay
+          test "$(fdtget -t s dist/pb626-emmc-inspect.dtb '/soc/mmc@1c0f000' status)" = okay
           (cd dist && sha256sum *.dtb > SHA256SUMS)
-          echo 'Experimental unbooted DTB. Never flash to eMMC.' > dist/README.txt
+          printf '%s\n' 'RAM/FEL boot artifacts only. Not boot-tested; never flash to eMMC.' 'pb626-emmc-inspect.dtb enables access to INTERNAL eMMC: Linux can WRITE to it.' 'Use only for inspection/backup. Boot root must remain on microSD.' > dist/README.txt
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-sd-fel-dtb
