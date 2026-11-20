@@ -27,13 +27,16 @@ Invoke-WebRequest `
   -Uri "https://raw.githubusercontent.com/BlackF1re/pb626-linux/main/scripts/probe-device.sh" `
   -OutFile "$env:TEMP\probe-device.sh"
 
-Get-Content -Raw "$env:TEMP\probe-device.sh" |
-  ssh -p 2222 reader@READER_IP sh -s |
-  Set-Content -Encoding utf8 .\pocketbook-hardware.txt
+cmd /c 'ssh -p 2222 reader@READER_IP sh -s < %TEMP%\probe-device.sh > %USERPROFILE%\pocketbook-hardware.txt'
 ```
 
 The probe is sent over SSH standard input. It does not need to be copied
-onto the reader. For a Linux workstation, the equivalent is:
+onto the reader. The `cmd /c` step preserves the downloaded script's Unix
+line endings; piping `Get-Content` into the Windows OpenSSH client can
+introduce CRLF characters and cause BusyBox `sh` to report `: not found`.
+The report is saved to `%USERPROFILE%\pocketbook-hardware.txt`.
+
+For a Linux workstation, the equivalent is:
 
 ```sh
 git clone https://github.com/BlackF1re/pb626-linux.git
