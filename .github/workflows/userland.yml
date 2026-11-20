@@ -32,16 +32,16 @@ jobs:
           sha256sum --check "${archive}.sha256"
           mkdir -p rootfs
           tar -xzf "$archive" -C rootfs
-          ls -ld rootfs/bin rootfs/usr/bin rootfs/lib rootfs/etc 2>&1 || true
-          ls -l rootfs/bin/busybox rootfs/usr/bin/busybox rootfs/lib/ld-musl-armv7.so.1 rootfs/etc/alpine-release 2>&1 || true
-          test -f rootfs/etc/alpine-release || { echo 'Alpine release file missing'; exit 1; }
-          test -x rootfs/bin/busybox || test -x rootfs/usr/bin/busybox || { echo 'BusyBox executable missing'; exit 1; }
-          test -e rootfs/lib/ld-musl-armv7.so.1 || test -L rootfs/lib/ld-musl-armv7.so.1 || { echo 'musl loader missing'; exit 1; }
+          test -x rootfs/bin/busybox
+          test -x rootfs/sbin/apk
+          test -f rootfs/etc/alpine-release
+          find rootfs/lib -maxdepth 1 -name 'ld-musl-*.so.1' -print | grep -q .
       - name: Check ARMv7 executable under QEMU
         shell: bash
         run: |
           set -euo pipefail
           qemu-arm -L rootfs "$PWD/rootfs/bin/busybox" echo 'ARMv7 userland smoke test passed'
+          qemu-arm -L rootfs "$PWD/rootfs/sbin/apk" --version
           cat rootfs/etc/alpine-release
       - name: Package bootstrap tarball
         shell: bash
