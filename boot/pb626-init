@@ -23,7 +23,7 @@ fi
 # First provision a password and keys through the local USB serial console.
 if [ -f /etc/ssh/ssh_host_ed25519_key ]; then
     mkdir -p /run/sshd
-    /usr/sbin/sshd >/run/pb626-sshd.log 2>&1 || true
+    /usr/sbin/sshd -o PermitRootLogin=yes -o PasswordAuthentication=yes >/run/pb626-sshd.log 2>&1 || true
 fi
 
 cd /root || exit 1
