@@ -54,7 +54,9 @@ fi
 
 
 # The PocketBook's external socket is MMC0. The internal controller is disabled in this DTB.
-for attempt in $(seq 1 25); do
+attempt=0
+while [ "$attempt" -lt 25 ]; do
+    attempt=$((attempt + 1))
     if [ -b /dev/mmcblk0p1 ] && mount -t ext4 -o ro /dev/mmcblk0p1 /newroot; then
         if [ "$(cat /newroot/etc/pb626-image-id 2>/dev/null)" = 'pb626-external-alpine-v1' ]; then
             echo 'External microSD root verified'

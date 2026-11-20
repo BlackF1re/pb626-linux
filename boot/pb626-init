@@ -3,9 +3,11 @@ export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export HOME=/root
 export TERM=vt100
 hostname pb626-alpine
-cd /root
+cd /root || exit 1
 while :; do
     if [ -c /dev/ttyGS0 ]; then
+        # Deliberate expansion by the inner shell, not this one.
+        # shellcheck disable=SC2016
         busybox setsid -c sh -c 'printf "\r\nAlpine Linux %s on PocketBook PB626 (external microSD)\r\n" "$(cat /etc/alpine-release)"; exec sh -i' </dev/ttyGS0 >/dev/ttyGS0 2>&1
     fi
     sleep 1
