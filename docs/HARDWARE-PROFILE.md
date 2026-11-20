@@ -28,7 +28,17 @@ reports `MMC`, with chip name `8WPD3R`. This confirms the internal eMMC
 storage type. Its physical PCB revision remains unverified.
 
 The reader SSH account is `reader` (UID/GID 101); no privileged access was
-established by this inspection. The kernel reports `force_ro=1` on both eMMC
+established by this inspection. Follow-up diagnostics confirm that stock
+`sudo` is version 1.7.4p6, with SUID-root permissions. Its `sudo -l`
+allow-list matches the one analyzed by Synacktiv on Touch Lux 3, including
+`/bin/set_bootmode calibrate` and a passwordless `sshstart.sh` entry.
+Synacktiv documented a command-path validation weakness in this configuration:
+https://www.synacktiv.com/en/publications/e-ink-maiden-bring-your-reader-to-the-reverser.html
+
+The root execution path is **not yet validated on this physical unit**.
+Do not treat presence of sudo or the matching allow-list as confirmed
+privileged access. A temporary, non-persistent proof of `id` must precede
+any raw-device backup or firmware change. The kernel reports `force_ro=1` on both eMMC
 hardware boot devices. This is a software read-only safeguard, not evidence
 that the contents are immutable or that the active boot source is known.
 
