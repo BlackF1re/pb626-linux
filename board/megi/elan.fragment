@@ -1,0 +1,24 @@
+/* Stock type 8: ELAN eKTF2227 on I2C2 0x15 (late/eMMC revisions).
+ * elants_i2c's EKTH3500 protocol is only a candidate; test before claiming support.
+ */
+&i2c2 {
+  /delete-node/ touchpanel@24;
+  touchscreen@15 {
+    compatible = "elan,ekth3500";
+    reg = <0x15>;
+    interrupt-parent = <&pio>;
+    interrupts = <6 11 IRQ_TYPE_EDGE_FALLING>;
+    reset-gpios = <&pio 1 3 GPIO_ACTIVE_LOW>;
+    power-gpios = <&pio 4 5 GPIO_ACTIVE_LOW>;
+    vdd-supply = <&reg_1v8_ctp>;
+    touchscreen-size-x = <1024>;
+    touchscreen-size-y = <758>;
+  };
+};
+/* This observed unit's factory /boot/vcom is -2440 mV.
+ * Megi's TP65185 regulator driver uses the positive magnitude in uV.
+ */
+&tp65185x {
+  regulator-min-microvolt = <2440000>;
+  regulator-max-microvolt = <2440000>;
+};

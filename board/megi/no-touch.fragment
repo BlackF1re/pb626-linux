@@ -1,0 +1,2 @@
+/* Diagnostic fallback: no wrong touchscreen probe. */
+&i2c2 { /delete-node/ touchpanel@24; };
