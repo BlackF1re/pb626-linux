@@ -19,7 +19,21 @@ image or a verified replacement for the stock firmware.
 ## First step: read-only inventory
 
 The factory firmware can be inspected through KOReader SSH without installing
-new software on the reader. On a Linux computer:
+new software on the reader. From Windows PowerShell, no local compiler, WSL or
+Git checkout is required:
+
+```powershell
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/BlackF1re/pb626-linux/main/scripts/probe-device.sh" `
+  -OutFile "$env:TEMP\probe-device.sh"
+
+Get-Content -Raw "$env:TEMP\probe-device.sh" |
+  ssh -p 2222 reader@READER_IP sh -s |
+  Set-Content -Encoding utf8 .\pocketbook-hardware.txt
+```
+
+The probe is sent over SSH standard input. It does not need to be copied
+onto the reader. For a Linux workstation, the equivalent is:
 
 ```sh
 git clone https://github.com/BlackF1re/pb626-linux.git
