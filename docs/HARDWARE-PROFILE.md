@@ -78,6 +78,30 @@ Do not silently select early-revision Cypress-specific configuration for
 this hardware. First obtain a board revision, touchscreen pinout and a boot
 log from the replacement kernel when non-destructive booting becomes possible.
 
+## Additional non-privileged storage findings
+
+On stock firmware, `/dev/mmcblk0` is a block node owned by `root:disk`
+with mode `0660`. The KOReader SSH account `reader` does not have that
+group, so the available `/bin/dd` cannot normally read the entire eMMC
+through this account.
+
+The kernel reports `mmcblk0boot0` and `mmcblk0boot1` under sysfs and
+`force_ro=1` for both, but their `/dev` nodes are absent. This is an
+incomplete userspace device-node setup, not evidence that the two eMMC
+hardware boot areas are missing. A complete backup will need to account
+for both areas after obtaining controlled privileged access.
+
+No UART or case disassembly is permitted for this device. Alternative
+recovery via USB/FEL must be verified on the specific unit before any
+storage or bootloader write. FEL access does not on its own guarantee
+recovery of all eMMC areas.
+
+The `ezdiy/pbjb` v8 maintainer lists PB626 Touch Lux 3 as tested. Its
+`@Jailbreak` option provides a route to root on compatible firmware
+without installing the optional services bundle, but modifies persistent
+`/mnt/secure` state and has **not been run on this device**:
+https://www.mobileread.com/forums/showthread.php?t=325185
+
 ## Next inspection (read-only)
 
 Via the established KOReader SSH connection, check the account privilege
