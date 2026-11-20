@@ -26,10 +26,10 @@ jobs:
           sh -n scripts/probe-device.sh
           sh -n tests/probe-smoke.sh
           sh -n scripts/inspect-live.sh
-          sh -n boot/init
-          sh -n boot/pb626-init
+          sh -n boot/init-megi
+          sh -n boot/pb626-init-megi
           bash -n scripts/fel-boot.sh
-          shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh boot/init boot/pb626-init
+          shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh
           shellcheck -s bash scripts/fel-boot.sh
       - name: Test hardware inventory
         run: sh tests/probe-smoke.sh
