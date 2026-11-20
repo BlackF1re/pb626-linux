@@ -101,8 +101,13 @@ jobs:
           printf 'nameserver 1.1.1.1\n' | sudo tee rootfs/etc/resolv.conf >/dev/null
           sudo chmod 1777 rootfs/tmp
           export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
-          sudo make -C linux modules_install INSTALL_MOD_PATH="$PWD/rootfs" DEPMOD=true
-          sudo depmod -b rootfs "$(cat dist/KERNELRELEASE)"
+          # modules_install may append "-dirty" after the DTB variants are generated.
+          # Pin the destination to the release embedded in the compiled zImage.
+          kernel_release=$(sed -n 's/^#define UTS_RELEASE "\\(.*\\)"/\\1/p' linux/include/generated/utsrelease.h)
+          test -n "$kernel_release"
+          printf '%s\\n' "$kernel_release" > dist/KERNELRELEASE
+          sudo make -C linux modules_install KERNELRELEASE="$kernel_release" INSTALL_MOD_PATH="$PWD/rootfs" DEPMOD=true
+          sudo depmod -b rootfs "$kernel_release"
           sudo tar -C rootfs -czf dist/pb626-megi-modules.tar.gz lib/modules
           sudo bash scripts/make-sd-image.sh rootfs dist/pb626-megi-sd.img
           sudo gzip -1 -n dist/pb626-megi-sd.img
