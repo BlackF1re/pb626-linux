@@ -1,0 +1,23 @@
+diff --git a/fel.c b/fel.c
+--- a/fel.c
++++ b/fel.c
+@@ -954,8 +954,15 @@
+ 	if (strcmp(header_signature, "eGON.FEL") != 0)
+ 		pr_fatal("SPL: failure code '%s'\n", header_signature);
+ 
+-	/* re-enable the MMU if it was enabled by BROM */
+-	if (tt != NULL)
+-		aw_restore_and_enable_mmu(dev, soc_info, tt);
++	/* PocketBook 626: BROM MMU re-enable after SPL breaks FEL USB access.
++	 * This override is used only for the RAM-only FEL workflow. In normal
++	 * operation retain the upstream restore behavior.
++	 */
++	if (tt != NULL) {
++		if (getenv("PB626_FEL_KEEP_MMU_OFF"))
++			free(tt);
++		else
++			aw_restore_and_enable_mmu(dev, soc_info, tt);
++	}
+ 
+ 	return spl_len;
+ }
