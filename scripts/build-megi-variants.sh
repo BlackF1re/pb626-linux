@@ -20,7 +20,7 @@ for variant in cypress elan focaltech no-touch; do
   if [[ $variant != cypress ]]; then
     cat "$repo/board/megi/$variant.fragment" >> "$src"
   fi
-  make -C "$linux" -j2 dtbs
+  make -C "$linux" -j2 sun5i-a13-pocketbook-touch-lux-3.dtb
   cp "$linux/arch/arm/boot/dts/sun5i-a13-pocketbook-touch-lux-3.dtb" "$out/pb626-$variant.dtb"
 done
 for dtb in "$out"/pb626-*.dtb; do
