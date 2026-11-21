@@ -7,9 +7,14 @@ on:
       - '.github/workflows/uboot.yml'
       - 'boot/pb626-uboot-entry.S'
   workflow_dispatch:
+    inputs:
+      kernel_run_id:
+        description: Successful RAM bundle run whose eMMC kernel to include
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build:
@@ -20,6 +25,13 @@ jobs:
       UBOOT_REV: 96c08df75f632622c57954940d6a1a6c20062e18
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        if: inputs.kernel_run_id != ''
+        with:
+          name: pb626-mainline-7.2-ram-bundle
+          run-id: ${{ inputs.kernel_run_id }}
+          github-token: ${{ github.token }}
+          path: kernel-bundle
       - name: Build Megi U-Boot for the PocketBook
         run: |
           sudo apt-get update
@@ -58,6 +70,12 @@ jobs:
           cp u-boot/u-boot-sunxi-with-spl.bin dist/
           test "$(dd if=dist/u-boot-sunxi-with-spl.bin bs=1 skip=4 count=8 status=none)" = 'eGON.BT0'
           test "$(stat -c '%s' dist/u-boot-sunxi-with-spl.bin)" -le $((0x100000))
+          touch factory-kernel.bin
+          if test -d kernel-bundle; then
+            (cd kernel-bundle && sha256sum -c SHA256SUMS)
+            tar -xOf kernel-bundle/pb626-emmc-boot.tar.gz bImage > factory-kernel.bin
+            test -s factory-kernel.bin
+          fi
           "${CROSS_COMPILE}as" boot/pb626-uboot-entry.S -o uboot-entry.o
           "${CROSS_COMPILE}ld" -Ttext=0x40008000 -e _start uboot-entry.o -o uboot-entry.elf
           "${CROSS_COMPILE}objcopy" -O binary -j .text uboot-entry.elf dist/bImage

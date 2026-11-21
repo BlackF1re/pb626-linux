@@ -26,20 +26,31 @@ _start:
     ldr r0, =uboot
     ldr r1, =uboot_end
     ldr r2, =0x4a000000
+    bl copy_image
+    ldr r0, =kernel
+    ldr r1, =kernel_end
+    ldr r2, =0x42000000
+    bl copy_image
+    b disable_mmu
+
+/* Copy an image and publish it even if the factory loader left D-cache on. */
+copy_image:
+    cmp r0, r1
+    bxeq lr
+    mov r5, r2
 copy:
     ldr r3, [r0], #4
     str r3, [r2], #4
     cmp r0, r1
     blo copy
     tst r4, #4
-    beq disable_mmu
-    ldr r0, =0x4a000000
-    add r2, r2, #31
+    bxeq lr
 clean:
-    mcr p15, 0, r0, c7, c10, 1
-    add r0, r0, #32
-    cmp r0, r2
+    mcr p15, 0, r5, c7, c10, 1
+    add r5, r5, #32
+    cmp r5, r2
     blo clean
+    bx lr
 disable_mmu:
     dsb
     bic r4, r4, #1
@@ -110,3 +121,7 @@ uboot:
     .incbin "u-boot/u-boot.bin"
     .balign 4
 uboot_end:
+kernel:
+    .incbin "factory-kernel.bin"
+    .balign 4
+kernel_end:
