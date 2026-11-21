@@ -183,7 +183,7 @@ jobs:
           gzip -t dist/pb626-megi-initramfs.cpio.gz
           gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t > dist/INITRAMFS-CONTENTS.txt 2>/dev/null
           # GNU cpio strips the leading './' from archive paths.
-          grep -Ex '(\\./)?init' dist/INITRAMFS-CONTENTS.txt >/dev/null
+          ( grep -Fxq 'init' dist/INITRAMFS-CONTENTS.txt || grep -Fxq './init' dist/INITRAMFS-CONTENTS.txt )
           grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
           grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
           rm dist/INITRAMFS-CONTENTS.txt
