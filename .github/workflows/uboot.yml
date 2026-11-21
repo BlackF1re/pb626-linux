@@ -106,10 +106,21 @@ jobs:
             "${CROSS_COMPILE}ld" -Ttext=0x40008000 -e _start direct-entry.o -o direct-entry.elf
             "${CROSS_COMPILE}objcopy" -O binary -j .text direct-entry.elf dist/bImage-direct
             test "$(stat -c '%s' dist/bImage-direct)" -lt $((0x800000))
+            mkdir native-fel
+            cp factory-kernel.bin native-fel/pb626-megi-zImage
+            cp factory-dtb.bin native-fel/pb626-elan-emmc-native.dtb
+            cp factory-initrd.bin native-fel/pb626-megi-initramfs.cpio.gz
+            (cd native-fel && sha256sum pb626-* > SHA256SUMS)
           fi
           (cd dist && sha256sum bImage* u-boot-sunxi-with-spl.bin > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-uboot-bimage
           path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: inputs.kernel_run_id != ''
+        with:
+          name: pb626-emmc-native-fel
+          path: native-fel/
           if-no-files-found: error
