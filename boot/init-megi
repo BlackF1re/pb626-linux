@@ -2,6 +2,10 @@
 # Full Alpine rootfs in RAM. External removable rootfs is OPT-IN.
 set -u
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin HOME=/root TERM=vt100
+# The RAM PID 1 enters BusyBox ash directly, without a login session.
+# Set a clear interactive prompt and board identity for the USB shell.
+hostname pb626-alpine 2>/dev/null || true
+export PS1='\u@\h:\w\$ '
 mkdir -p /dev /proc /sys /run /newroot /dev/pts /sys/kernel/config
 mount -t devtmpfs devtmpfs /dev || exit 1
 mount -t proc proc /proc || exit 1
@@ -185,6 +189,12 @@ if [ "$external" = 1 ] && [ "$unsafe" = 0 ]; then
   log "External root not available; retaining full RAM root"
 fi
 log "RAM Linux userspace initialized; waiting for gadget UDC"
+# Optional per-boot private WLAN configuration. No Wi-Fi credentials
+# belong in public source or downloaded CI artifacts. Network startup
+# is non-blocking and is skipped unless a local RAM secret is provisioned.
+if [ -s /etc/pb626/wpa_supplicant.conf ] && [ -x /usr/sbin/pb626-network ]; then
+  /usr/sbin/pb626-network >>/run/pb626-network.log 2>&1 &
+fi
 cd /root || exit 1
 while :; do
   if [ -c /dev/ttyGS0 ]; then

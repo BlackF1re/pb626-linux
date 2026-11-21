@@ -21,7 +21,8 @@ sudo cp /etc/resolv.conf rootfs/etc/resolv.conf
 
 sudo chroot rootfs /usr/bin/qemu-arm-static /sbin/apk add --no-cache \
   kmod iw wpa_supplicant linux-firmware-rtlwifi \
-  openssh-server openssh-keygen e2fsprogs usbutils i2c-tools v4l-utils
+  openssh-server openssh-keygen e2fsprogs usbutils i2c-tools \
+  lm-sensors iproute2 v4l-utils
 
 sudo rm -f rootfs/usr/bin/qemu-arm-static
 printf 'nameserver 1.1.1.1\n' | sudo tee rootfs/etc/resolv.conf >/dev/null

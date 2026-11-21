@@ -26,13 +26,14 @@ jobs:
           sh -n scripts/probe-device.sh
           sh -n tests/probe-smoke.sh
           sh -n scripts/inspect-live.sh
+          sh -n scripts/pb626-network.sh
           sh -n boot/init-megi
           sh -n boot/pb626-init-megi
           bash -n scripts/fel-boot.sh
           bash -n scripts/configure-megi-kernel.sh
           bash -n scripts/build-alpine-rootfs.sh
           bash -n scripts/assemble-megi-ram.sh
-          shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh
+          shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh scripts/pb626-network.sh
           shellcheck -s bash scripts/fel-boot.sh
       - name: Test hardware inventory
         run: sh tests/probe-smoke.sh

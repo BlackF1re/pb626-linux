@@ -25,6 +25,7 @@ sudo depmod -b rootfs "$kernel_release"
 sudo install -d rootfs/sbin rootfs/usr/sbin rootfs/etc
 sudo install -m 755 boot/pb626-init-megi rootfs/sbin/pb626-init
 sudo install -m 755 scripts/inspect-live.sh rootfs/usr/sbin/inspect-pb626
+sudo install -m 755 scripts/pb626-network.sh rootfs/usr/sbin/pb626-network
 printf 'pb626-external-alpine-v1\n' | sudo tee rootfs/etc/pb626-image-id > /dev/null
 
 sudo cp -a rootfs/. initramfs/
@@ -32,6 +33,7 @@ sudo install -d initramfs/usr/sbin initramfs/newroot initramfs/sys/kernel/config
 sudo install -m 755 boot/init-megi initramfs/init
 sudo install -m 755 scripts/inspect-live.sh initramfs/usr/sbin/inspect-pb626
 sudo install -m 755 scripts/probe-device.sh initramfs/usr/sbin/probe-pb626
+sudo install -m 755 scripts/pb626-network.sh initramfs/usr/sbin/pb626-network
 test -e initramfs/dev/null || sudo mknod -m 666 initramfs/dev/null c 1 3
 
 (cd initramfs && sudo find . -print0 | sudo cpio --null -o --format=newc --quiet) \
