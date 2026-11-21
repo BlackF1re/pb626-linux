@@ -56,3 +56,24 @@ implementation and per-unit VCOM calibration.
 The GPIO status LED PE8 blinks rapidly upon reaching PID 1 and changes to
 kernel heartbeat when the RAM shell is ready. This is an independent milestone
 if USB gadget never enumerates. LED behavior still needs physical testing.
+
+## USB gadget / frontlight hardware milestone (second RAM test)
+
+The first real 7.2 execution test showed PE8 LED blinking and no Windows
+or WSL 0525:a4a7 enumeration. This strongly suggests PID 1 ran, but does
+not independently prove that gadget binding succeeded. The frontlight was
+reported at full brightness: Linux 7.2 pwm_bl ignores DT default-brightness-
+level if the brightness-levels array is absent. The new DTB specifies both.
+The new /init also writes brightness=0 and bl_power=4 where available.
+
+For one controlled test, observe PE8 *after 30 seconds*:
+
+* Fast even 150ms on/off: PID1 started; USB diagnostic has not concluded
+* 100ms on / 900ms off: no UDC exposed to Linux
+* 300ms on / 700ms off: configfs gadget creation failed
+* 700ms on / 300ms off: UDC found, but gadget bind failed
+* Kernel heartbeat double pulse: UDC gadget binding accepted by kernel
+
+Do not conflate gadget binding with host USB enumeration. If the frontlight
+remains intense after the off-request, **stop the test and power down**.
+No persistent storage access is required and no flashing mechanism is added.
