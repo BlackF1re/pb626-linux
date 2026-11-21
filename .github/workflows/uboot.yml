@@ -33,11 +33,12 @@ jobs:
           sed -i '/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;/{N;s/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;\n[[:blank:]]*writel(rval, \&priv->reg->clkcr);/clrbits_le32(\&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);/;}' u-boot/drivers/mmc/sunxi_mmc.c
           grep -F 'clrbits_le32(&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);' u-boot/drivers/mmc/sunxi_mmc.c
           make -C u-boot pocketbook_touch_lux_3_defconfig
-          sed -i -E '/^(# )?CONFIG_(SYS_TEXT_BASE|USE_BOOTCOMMAND|BOOTCOMMAND|ENV_IS_NOWHERE|ENV_IS_IN_MMC|ENV_IS_IN_FAT|ENV_IS_IN_SPI_FLASH)(=| is not set)/d' u-boot/.config
+          sed -i -E '/^(# )?CONFIG_(SYS_TEXT_BASE|USE_BOOTCOMMAND|BOOTCOMMAND|CMD_GPIO|ENV_IS_NOWHERE|ENV_IS_IN_MMC|ENV_IS_IN_FAT|ENV_IS_IN_SPI_FLASH)(=| is not set)/d' u-boot/.config
           cat >> u-boot/.config <<'EOF'
           CONFIG_SYS_TEXT_BASE=0x4a000000
           CONFIG_USE_BOOTCOMMAND=y
-          CONFIG_BOOTCOMMAND="if fatload mmc 1:2 0x42000000 linux/pbkern.bin && fatload mmc 1:2 0x43200000 linux/pbdt.bin && fatload mmc 1:2 0x45000000 linux/pb626rd.gz; then bootz 0x42000000 0x45000000:${filesize} 0x43200000; fi"
+          CONFIG_CMD_GPIO=y
+          CONFIG_BOOTCOMMAND="gpio clear PE8; if fatload mmc 1:2 0x42000000 linux/pbkern.bin && fatload mmc 1:2 0x43200000 linux/pbdt.bin && fatload mmc 1:2 0x45000000 linux/pb626rd.gz; then gpio set PE8; bootz 0x42000000 0x45000000:${filesize} 0x43200000; gpio clear PE8; fi"
           CONFIG_ENV_IS_NOWHERE=y
           # CONFIG_ENV_IS_IN_MMC is not set
           # CONFIG_ENV_IS_IN_FAT is not set
@@ -45,15 +46,19 @@ jobs:
           EOF
           make -C u-boot olddefconfig
           grep -Fx 'CONFIG_SYS_TEXT_BASE=0x4a000000' u-boot/.config
-          grep -F 'CONFIG_BOOTCOMMAND="if fatload mmc 1:2 ' u-boot/.config
+          grep -Fx 'CONFIG_SPL=y' u-boot/.config
+          grep -F 'CONFIG_BOOTCOMMAND="gpio clear PE8; if fatload mmc 1:2 ' u-boot/.config
           grep -Fx 'CONFIG_CMD_BOOTZ=y' u-boot/.config
-          make -C u-boot -j"$(nproc)" u-boot.bin
+          make -C u-boot -j"$(nproc)" u-boot-sunxi-with-spl.bin
           mkdir dist
+          cp u-boot/u-boot-sunxi-with-spl.bin dist/
+          test "$(dd if=dist/u-boot-sunxi-with-spl.bin bs=1 skip=4 count=8 status=none)" = 'eGON.BT0'
+          test "$(stat -c '%s' dist/u-boot-sunxi-with-spl.bin)" -le $((0x100000))
           "${CROSS_COMPILE}as" boot/pb626-uboot-entry.S -o uboot-entry.o
           "${CROSS_COMPILE}ld" -Ttext=0x40008000 -e _start uboot-entry.o -o uboot-entry.elf
           "${CROSS_COMPILE}objcopy" -O binary -j .text uboot-entry.elf dist/bImage
           test "$(stat -c '%s' dist/bImage)" -lt $((0x800000))
-          (cd dist && sha256sum bImage > SHA256SUMS)
+          (cd dist && sha256sum bImage u-boot-sunxi-with-spl.bin > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-uboot-bimage
