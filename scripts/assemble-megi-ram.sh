@@ -64,6 +64,8 @@ fdtput -d pb626-emmc-native.dtb /chosen pb626,emmc-backup
 fdtput -t x pb626-emmc-native.dtb /chosen pb626,emmc-root
 fdtput -t s pb626-emmc-native.dtb /chosen bootargs \
   'console=ttyS0,115200 root=/dev/mmcblk2p8 rootwait rootfstype=ext4 rw init=/sbin/pb626-emmc-init'
+cp dist/pb626-elan-emmc-backup.dtb dist/pb626-elan-emmc-install.dtb
+fdtput -t x dist/pb626-elan-emmc-install.dtb /chosen pb626,emmc-install
 arm-linux-gnueabihf-as boot/pb626-factory-entry.S -o pb626-emmc-entry.o
 arm-linux-gnueabihf-ld -Ttext=0x40008000 -e _start pb626-emmc-entry.o -o pb626-emmc-entry.elf
 arm-linux-gnueabihf-objcopy -O binary -j .text pb626-emmc-entry.elf pb626.bin
@@ -76,11 +78,21 @@ sudo mkfs.ext4 -q -F -L PB626_ROOT -d rootfs pb626-emmc-root.ext4
 gzip -1 pb626-emmc-root.ext4
 sudo rm rootfs/sbin/pb626-emmc-init
 printf 'pb626-external-alpine-v1\n' | sudo tee rootfs/etc/pb626-image-id >/dev/null
-sudo install -D -m 755 scripts/install-pb626-emmc.sh initramfs/usr/sbin/install-pb626-emmc
-sudo install -d initramfs/opt/pb626-install
-sudo install -m 644 pb626.bin pb626-emmc-root.ext4.gz initramfs/opt/pb626-install/
-sha256sum pb626.bin pb626-emmc-root.ext4.gz | sudo tee initramfs/opt/pb626-install/SHA256SUMS >/dev/null
-(cd initramfs && sudo find . -print0 | sudo cpio --null -o --format=newc --quiet) \
+# Keep the installer small: the complete Alpine tree is already in the disk image.
+mkdir -p installer/{bin,lib,etc,dev,proc,sys,run,root,usr/sbin,opt/pb626-install}
+cp -a rootfs/bin/busybox installer/bin/
+cp -a rootfs/lib/{ld-musl-armhf.so.1,libc.musl-armv7.so.1} installer/lib/
+cp rootfs/etc/{passwd,group} installer/etc/
+for applet in sh hostname mkdir grep mount umount cat blockdev sleep setsid \
+  uname ls sha256sum mountpoint install gzip sync cp cmp mv sed reboot poweroff; do
+  ln -s busybox "installer/bin/$applet"
+done
+sudo mknod -m 666 installer/dev/null c 1 3
+install -m 755 boot/init-megi installer/init
+install -m 755 scripts/install-pb626-emmc.sh installer/usr/sbin/install-pb626-emmc
+install -m 644 pb626.bin pb626-emmc-root.ext4.gz installer/opt/pb626-install/
+sha256sum pb626.bin pb626-emmc-root.ext4.gz > installer/opt/pb626-install/SHA256SUMS
+(cd installer && sudo find . -print0 | sudo cpio --null --owner=0:0 -o --format=newc --quiet) \
   | gzip -1 > dist/pb626-emmc-installer.cpio.gz
 
 initrd_start=$((0x45000000))

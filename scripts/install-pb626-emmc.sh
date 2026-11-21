@@ -10,7 +10,7 @@ root=${disk}p8
 mountpoint=/run/pb626-install
 bundle=/opt/pb626-install
 
-[ -f /sys/firmware/devicetree/base/chosen/pb626,emmc-backup ] ||
+[ -f /sys/firmware/devicetree/base/chosen/pb626,emmc-install ] ||
   fail 'Boot elan-emmc-install through FEL first'
 [ -r "$sys/device/cid" ] || fail 'MMC2 not found'
 cid=$(cat "$sys/device/cid")
