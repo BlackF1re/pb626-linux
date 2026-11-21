@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PocketBook 626 Plus / Touch Lux 3: canonical Megi 5.9 RAM-only FEL uploader.
+# PocketBook 626 Plus / Touch Lux 3: Megi mainline 7.2 RAM-only FEL uploader.
 #
 # Why this loader differs from stock sunxi-fel:
 #   * The board's BROM starts with MMU enabled. Restoring it after SPL can make
@@ -23,17 +23,17 @@
 set -Eeuo pipefail
 
 if (( $# < 3 || $# > 4 )); then
-    echo 'Usage: fel-boot.sh IMAGE_DIR elan|cypress|focaltech|no-touch standard|diagnostic [--no-execute]' >&2
+    echo 'Usage: fel-boot.sh IMAGE_DIR elan|elan-lightoff|elan-usbtest|cypress|focaltech|no-touch standard|diagnostic [--no-execute]' >&2
     exit 2
 fi
 imgs=${1%/}
 variant=$2
 profile=$3
 option=${4:-}
-case "$variant" in elan|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
+case "$variant" in elan|elan-lightoff|elan-usbtest|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
 case "$profile" in
   standard) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
-  diagnostic) dtb="pb626-$variant-diag.dtb"; initrd=pb626-megi-diag-initramfs.cpio.gz ;;
+  diagnostic) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
   *) echo "Invalid profile: $profile" >&2; exit 2 ;;
 esac
 if [[ -n $option && $option != --no-execute ]]; then
@@ -73,6 +73,13 @@ check_sha() {
 check_sha "$kernel"
 check_sha "$fdt"
 check_sha "$ramfs"
+command -v fdtget >/dev/null || { echo 'Missing fdtget (device-tree-compiler)' >&2; exit 10; }
+[[ $(fdtget -t s "$fdt" /soc/mmc@1c11000 status) == disabled ]] || { echo "UNSAFE: MMC2 enabled" >&2; exit 13; }
+[[ $(fdtget -t x "$fdt" /memory@40000000 reg) == "40000000 10000000" ]] || { echo "Wrong RAM FDT" >&2; exit 13; }
+fdt_initrd_start=$(fdtget -t x "$fdt" /chosen linux,initrd-start)
+fdt_initrd_end=$(fdtget -t x "$fdt" /chosen linux,initrd-end)
+[[ ${fdt_initrd_start,,} == 45000000 ]] || { echo "Wrong FDT initrd start" >&2; exit 13; }
+(( 16#$fdt_initrd_end == 0x45000000 + $(stat -c '%s' "$ramfs") )) || { echo "Wrong FDT initrd end" >&2; exit 13; }
 
 # A13 physical DDR3 is 0x40000000..0x4fffffff. Do not overwrite another
 # image or exceed available RAM, even if the bundle is unexpectedly large.
@@ -114,7 +121,7 @@ upload_verified() {
     rm -f "$run"/chunk-*
     echo "SUCCESS: $label"
 }
-upload_verified 'MEGI zImage' "$kernel" 0x42000000
+upload_verified 'MAINLINE zImage' "$kernel" 0x42000000
 upload_verified "DEVICE TREE $variant" "$fdt" 0x43200000
 upload_verified 'RAM INITRAMFS' "$ramfs" 0x45000000
 upload_verified 'ARM ENTRY STUB' "$entry" 0x41000000
