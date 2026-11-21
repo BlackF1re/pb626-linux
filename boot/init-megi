@@ -14,6 +14,14 @@ log() {
   echo "pb626: $*" >/dev/kmsg 2>/dev/null || true
 }
 log "RAM Linux reached /init, kernel $(uname -r)"
+# Hardware milestone without USB/serial: PE8 status LED blinks quickly after
+# PID 1 starts; changes to heartbeat only when the RAM system is ready.
+for led in /sys/class/leds/*; do
+  [ -w "$led/trigger" ] || continue
+  echo timer > "$led/trigger" 2>/dev/null || true
+  echo 150 > "$led/delay_on" 2>/dev/null || true
+  echo 150 > "$led/delay_off" 2>/dev/null || true
+done
 unsafe=0
 for type in /sys/block/mmcblk*/device/type; do
   [ -r "$type" ] || continue
@@ -99,6 +107,9 @@ if [ "$external" = 1 ] && [ "$unsafe" = 0 ]; then
   log "External root not available; retaining full RAM root"
 fi
 log "RAM Linux ready; inspect-pb626 and probe-pb626 available"
+for led in /sys/class/leds/*; do
+  [ -w "$led/trigger" ] && echo heartbeat > "$led/trigger" 2>/dev/null || true
+done
 cd /root || exit 1
 while :; do
   if [ -c /dev/ttyGS0 ]; then
