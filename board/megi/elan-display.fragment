@@ -1,0 +1,18 @@
+/* ELAN / ED060XD4 display bring-up from RAM, with USB ACM diagnostics. */
+&mmc0 {
+  status = "disabled";
+};
+
+/* Factory FEX: PB2/PWM0 at 10 kHz, positive duty; PB4 gates the light. */
+&{/backlight} {
+  pwms = <&pwm 0 100000 0>;
+};
+
+/* Keep the peripheral-only VBUS fallback proven by elan-usbtest. */
+&usbphy {
+  /delete-property/ usb0_vbus_det-gpios;
+};
+
+&{/chosen} {
+  pb626,display-bringup;
+};

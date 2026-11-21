@@ -60,6 +60,9 @@ if [ -d "/lib/modules/$(uname -r)" ]; then
   for module in rtl8xxxu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
     modprobe "$module" 2>/dev/null || true
   done
+  if [ -f /sys/firmware/devicetree/base/chosen/pb626,display-bringup ]; then
+    modprobe sun5i_eink || log "failed to load sun5i_eink"
+  fi
 fi
 # Distinct PE8 patterns after the first 30 seconds:
 # 100ms on / 900ms off: no UDC controller registered.

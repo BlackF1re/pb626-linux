@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build four standard RAM DTBs and two separate ELAN safety/USB diagnostic DTBs.
+# Build standard RAM DTBs and ELAN diagnostic DTBs.
 set -euo pipefail
 if (( $# != 3 )); then
   echo 'usage: build-megi-variants.sh LINUX_TREE OUT_DIR REPOSITORY_ROOT' >&2
@@ -17,12 +17,12 @@ original=$(mktemp)
 cp "$src" "$original"
 trap 'cp "$original" "$src"; rm -f "$original"' EXIT
 mkdir -p "$out"
-for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest; do
+for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest elan-display; do
   cp "$original" "$src"
   cat "$repo/board/megi/common-sd.fragment" >> "$src"
   case "$variant" in
     cypress) ;;
-    elan-lightoff|elan-usbtest)
+    elan-lightoff|elan-usbtest|elan-display)
       cat "$repo/board/megi/elan.fragment" >> "$src"
       cat "$repo/board/megi/$variant.fragment" >> "$src"
       ;;
@@ -37,7 +37,11 @@ for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/memory@40000000' device_type)" = memory
   test "$(fdtget -t x "$dtb" '/memory@40000000' reg)" = "40000000 10000000"
   test "$(fdtget -t s "$dtb" '/soc/mmc@1c11000' status)" = disabled
-  test "$(fdtget -t s "$dtb" '/soc/mmc@1c0f000' status)" = okay
+  case "${dtb##*/}" in
+    pb626-elan-display.dtb) sd_status=disabled ;;
+    *) sd_status=okay ;;
+  esac
+  test "$(fdtget -t s "$dtb" '/soc/mmc@1c0f000' status)" = "$sd_status"
   test "$(fdtget -t s "$dtb" '/soc/display-controller@1c0c000' compatible)" = 'custom,pocketbook-touch-lux-3-tcon0-ed060xd4-display'
   # Essential Megi board devices: firmware pinout does not equal driver success.
   test "$(fdtget -t s "$dtb" '/soc/usb@1c13000' dr_mode)" = peripheral
@@ -71,3 +75,18 @@ phy=/soc/phy@1c13400
 test "$(fdtget -t x "$out/pb626-elan-lightoff.dtb" "$phy" usb0_vbus_det-gpios)" = "$(fdtget -t x "$out/pb626-elan.dtb" "$phy" usb0_vbus_det-gpios)"
 # Only the second, separately controlled USB variant bypasses the PG1 input.
 ! fdtget -t x "$out/pb626-elan-usbtest.dtb" "$phy" usb0_vbus_det-gpios >/dev/null 2>&1
+
+display="$out/pb626-elan-display.dtb"
+if fdtget -t x "$display" "$phy" usb0_vbus_det-gpios >/dev/null 2>&1; then
+  echo 'elan-display must use the USB peripheral VBUS fallback' >&2
+  exit 1
+fi
+test "$(fdtget -t s "$display" /soc/pwm@1c20e00 status)" = okay
+read -r pwm channel period flags <<< "$(fdtget -t x "$display" /backlight pwms)"
+test "$pwm" = "$(fdtget -t x "$display" /soc/pwm@1c20e00 phandle)"
+test "$channel $period $flags" = '0 186a0 0'
+read -r gpio bank pin flags <<< "$(fdtget -t x "$display" /backlight enable-gpios)"
+test "$gpio" = "$(fdtget -t x "$display" /soc/pinctrl@1c20800 phandle)"
+test "$bank $pin $flags" = '1 4 0'
+test "$(fdtget -t i "$display" /soc/display-controller@1c0c000 vcom-microvolt)" = 2440000
+fdtget -t x "$display" /chosen pb626,display-bringup >/dev/null

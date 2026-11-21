@@ -103,7 +103,7 @@ jobs:
           grep -q 'sun4i_clkevt_wait_reload' "$f"
           grep -q 'TIMER_SYNC_TICKS + 1' "$f"
           test -f linux/drivers/video/fbdev/sun5i-eink.c
-          test -f linux/drivers/regulator/tp65185x.c
+          test -f linux/drivers/regulator/tps65185.c
           test -f linux/arch/arm/configs/pocketbook_touch_lux_3_defconfig
           test -f linux/arch/arm/boot/dts/allwinner/sun5i-a13-pocketbook-touch-lux-3.dts
           git -C linux apply --check "$GITHUB_WORKSPACE/patches/rtl8xxxu-reset-linktype.patch"
@@ -145,8 +145,9 @@ jobs:
           grep -qx 'CONFIG_EXTCON=y' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_USB_CONFIGFS_ACM=y' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_CMA_SIZE_MBYTES=32' kernel-cache/pb626-megi.config
+          grep -qx 'CONFIG_REGULATOR_TPS65185=y' kernel-cache/pb626-megi.config
           echo "Prebuilt kernel cache hit: ${{ steps.cache.outputs.cache-hit }}"
-      - name: Build six current Device Trees (without kernel recompilation)
+      - name: Build current Device Trees
         run: |
           set -euo pipefail
           export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
@@ -161,7 +162,7 @@ jobs:
           mkdir -p kernel-stage
           cp kernel-cache/* kernel-stage/
           cp dtb-stage/pb626-*.dtb kernel-stage/
-          test "$(find kernel-stage -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 6
+          test "$(find kernel-stage -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 7
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-kernel-stage

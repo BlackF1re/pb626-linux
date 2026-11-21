@@ -93,11 +93,12 @@ Megi mainline Linux 7.2 (2026-09-03), commit facc87117511221bb61410e3f92ad857969
 2026 sun4i timer fixes already upstream.
 The first FEL Linux boot blinked LED but did not enumerate 0525:a4a7.
 This image has new UDC LED codes and an attempted frontlight-off fix.
-Six DTB variants: four standard, plus elan-lightoff and elan-usbtest.
+DTB variants: four standard, plus elan-lightoff, elan-usbtest and elan-display.
 elan-lightoff: disable backlight/PWM and hog PB4 LOW, KEEP factory PG1
 VBUS detect. Test this variant FIRST and verify that frontlight goes off.
 elan-usbtest: same PB4-off configuration, plus experimental PG1 fallback.
 Use it ONLY AFTER the elan-lightoff test is safe and without other changes.
+elan-display: ELAN / ED060XD4 with PWM backlight, USB ACM and both MMC hosts off.
 Never use these experimental DTBs on a reader with unverified GPIO pinout.
 Optional removable rootfs needs explicit pb626.root=sd and is read-only.
 SPL/ARM entry are external lab dependencies and remain unreviewed.

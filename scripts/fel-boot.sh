@@ -23,14 +23,14 @@
 set -Eeuo pipefail
 
 if (( $# < 3 || $# > 4 )); then
-    echo 'Usage: fel-boot.sh IMAGE_DIR elan|elan-lightoff|elan-usbtest|cypress|focaltech|no-touch standard|diagnostic [--no-execute]' >&2
+    echo 'Usage: fel-boot.sh IMAGE_DIR elan|elan-lightoff|elan-usbtest|elan-display|cypress|focaltech|no-touch standard|diagnostic [--no-execute]' >&2
     exit 2
 fi
 imgs=${1%/}
 variant=$2
 profile=$3
 option=${4:-}
-case "$variant" in elan|elan-lightoff|elan-usbtest|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
+case "$variant" in elan|elan-lightoff|elan-usbtest|elan-display|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
 case "$profile" in
   standard) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
   diagnostic) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
@@ -75,6 +75,9 @@ check_sha "$fdt"
 check_sha "$ramfs"
 command -v fdtget >/dev/null || { echo 'Missing fdtget (device-tree-compiler)' >&2; exit 10; }
 [[ $(fdtget -t s "$fdt" /soc/mmc@1c11000 status) == disabled ]] || { echo "UNSAFE: MMC2 enabled" >&2; exit 13; }
+if [[ $variant == elan-display ]]; then
+    [[ $(fdtget -t s "$fdt" /soc/mmc@1c0f000 status) == disabled ]] || { echo "UNSAFE: MMC0 enabled" >&2; exit 13; }
+fi
 [[ $(fdtget -t x "$fdt" /memory@40000000 reg) == "40000000 10000000" ]] || { echo "Wrong RAM FDT" >&2; exit 13; }
 fdt_initrd_start=$(fdtget -t x "$fdt" /chosen linux,initrd-start)
 fdt_initrd_end=$(fdtget -t x "$fdt" /chosen linux,initrd-end)
