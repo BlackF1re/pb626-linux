@@ -73,7 +73,8 @@ sudo chown -R "$USER:$USER" dist
 gzip -t dist/pb626-megi-initramfs.cpio.gz
 gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t > dist/INITRAMFS-CONTENTS.txt 2>/dev/null
 (grep -Fxq 'init' dist/INITRAMFS-CONTENTS.txt || grep -Fxq './init' dist/INITRAMFS-CONTENTS.txt)
-grep -Eq '^(\\./)?(usr/)?lib/firmware/rtlwifi/rtl8188eufw.bin
+grep -F '/rtl8188eufw.bin' dist/INITRAMFS-CONTENTS.txt >/dev/null
+grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F 'lib/modules/' dist/INITRAMFS-CONTENTS.txt >/dev/null
 rm dist/INITRAMFS-CONTENTS.txt
