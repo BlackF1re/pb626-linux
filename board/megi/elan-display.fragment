@@ -3,9 +3,13 @@
   status = "disabled";
 };
 
-/* Factory FEX: PB2/PWM0 at 10 kHz, positive duty; PB4 gates the light. */
+/* Match the factory TPS61161 driver: PWM0 at 10 kHz with active-low duty.
+ * PB4 gates the light after PWM starts and before PWM stops.
+ */
 &{/backlight} {
-  pwms = <&pwm 0 100000 0>;
+  pwms = <&pwm 0 100000 PWM_POLARITY_INVERTED>;
+  post-pwm-on-delay-ms = <1>;
+  pwm-off-delay-ms = <1>;
 };
 
 /* Keep the peripheral-only VBUS fallback proven by elan-usbtest. */

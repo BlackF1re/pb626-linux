@@ -84,7 +84,9 @@ fi
 test "$(fdtget -t s "$display" /soc/pwm@1c20e00 status)" = okay
 read -r pwm channel period flags <<< "$(fdtget -t x "$display" /backlight pwms)"
 test "$pwm" = "$(fdtget -t x "$display" /soc/pwm@1c20e00 phandle)"
-test "$channel $period $flags" = '0 186a0 0'
+test "$channel $period $flags" = '0 186a0 1'
+test "$(fdtget -t u "$display" /backlight post-pwm-on-delay-ms)" = 1
+test "$(fdtget -t u "$display" /backlight pwm-off-delay-ms)" = 1
 read -r gpio bank pin flags <<< "$(fdtget -t x "$display" /backlight enable-gpios)"
 test "$gpio" = "$(fdtget -t x "$display" /soc/pinctrl@1c20800 phandle)"
 test "$bank $pin $flags" = '1 4 0'
