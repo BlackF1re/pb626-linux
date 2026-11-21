@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Join independently built kernel, DTBs, and Alpine ARMv7 root.
-# RAM-only FEL artifact; no commands that write to eMMC.
+# FEL artifacts for RAM boot and explicit eMMC installation.
 set -Eeuo pipefail
 trap 'echo "RAM BUNDLE ASSEMBLY ERROR at line $LINENO: $BASH_COMMAND" >&2' ERR
 echo '=== kernel-stage ==='
@@ -59,16 +59,43 @@ cp kernel-stage/pb626-megi.config dist/
 cp kernel-stage/KERNELRELEASE kernel-stage/KERNEL-SOURCE.txt dist/
 cp kernel-stage/pb626-*.dtb dist/
 
+cp dist/pb626-elan-emmc-install.dtb pb626-emmc-native.dtb
+fdtput -d pb626-emmc-native.dtb /chosen pb626,emmc-backup
+fdtput -t x pb626-emmc-native.dtb /chosen pb626,emmc-root
+fdtput -t s pb626-emmc-native.dtb /chosen bootargs \
+  'console=ttyS0,115200 root=/dev/mmcblk2p8 rootwait rootfstype=ext4 rw init=/sbin/pb626-emmc-init'
+arm-linux-gnueabihf-as boot/pb626-factory-entry.S -o pb626-emmc-entry.o
+arm-linux-gnueabihf-ld -Ttext=0x40008000 -e _start pb626-emmc-entry.o -o pb626-emmc-entry.elf
+arm-linux-gnueabihf-objcopy -O binary -j .text pb626-emmc-entry.elf pb626.bin
+test "$(stat -c '%s' pb626.bin)" -lt $((0x800000))
+
+sudo install -m 755 boot/init-megi rootfs/sbin/pb626-emmc-init
+printf 'pb626-emmc-alpine-v1\n' | sudo tee rootfs/etc/pb626-image-id >/dev/null
+truncate -s $((500736 * 512)) pb626-emmc-root.ext4
+sudo mkfs.ext4 -q -F -L PB626_ROOT -d rootfs pb626-emmc-root.ext4
+gzip -1 pb626-emmc-root.ext4
+sudo rm rootfs/sbin/pb626-emmc-init
+printf 'pb626-external-alpine-v1\n' | sudo tee rootfs/etc/pb626-image-id >/dev/null
+sudo install -D -m 755 scripts/install-pb626-emmc.sh initramfs/usr/sbin/install-pb626-emmc
+sudo install -d initramfs/opt/pb626-install
+sudo install -m 644 pb626.bin pb626-emmc-root.ext4.gz initramfs/opt/pb626-install/
+sha256sum pb626.bin pb626-emmc-root.ext4.gz | sudo tee initramfs/opt/pb626-install/SHA256SUMS >/dev/null
+(cd initramfs && sudo find . -print0 | sudo cpio --null -o --format=newc --quiet) \
+  | gzip -1 > dist/pb626-emmc-installer.cpio.gz
+
 initrd_start=$((0x45000000))
-initrd_size=$(stat -c '%s' dist/pb626-megi-initramfs.cpio.gz)
-initrd_end=$((initrd_start + initrd_size))
-test "$initrd_end" -lt $((0x50000000))
 for dtb in dist/pb626-*.dtb; do
+  initrd=dist/pb626-megi-initramfs.cpio.gz
+  if [[ ${dtb##*/} == pb626-elan-emmc-install.dtb ]]; then
+    initrd=dist/pb626-emmc-installer.cpio.gz
+  fi
+  initrd_end=$((initrd_start + $(stat -c '%s' "$initrd")))
+  test "$initrd_end" -lt $((0x50000000))
   fdtput -t x "$dtb" /chosen linux,initrd-start "$(printf '%x' "$initrd_start")"
   fdtput -t x "$dtb" /chosen linux,initrd-end "$(printf '%x' "$initrd_end")"
   test "$(fdtget -t x "$dtb" /chosen linux,initrd-start)" = "$(printf '%x' "$initrd_start")"
   test "$(fdtget -t x "$dtb" /chosen linux,initrd-end)" = "$(printf '%x' "$initrd_end")"
-  if [[ ${dtb##*/} == pb626-elan-emmc-backup.dtb ]]; then
+  if [[ ${dtb##*/} == pb626-elan-emmc-backup.dtb || ${dtb##*/} == pb626-elan-emmc-install.dtb ]]; then
     test "$(fdtget -t s "$dtb" /soc/mmc@1c11000 status)" = okay
     test "$(fdtget -t s "$dtb" /soc/mmc@1c0f000 status)" = disabled
     fdtget "$dtb" /chosen pb626,emmc-backup >/dev/null
@@ -97,7 +124,7 @@ rm dist/INITRAMFS-CONTENTS.txt
 
 (cd dist && sha256sum pb626-megi-zImage *.dtb *.gz *.config > SHA256SUMS)
 cat > dist/README.txt <<'NOTE'
-EXPERIMENTAL FULL RAM ALPINE. NEVER FLASH INTERNAL EMMC.
+EXPERIMENTAL ALPINE FOR POCKETBOOK 626 PLUS.
 Megi mainline Linux 7.2 (2026-09-03), commit facc87117511221bb61410e3f92ad8579697f736.
 2026 sun4i timer fixes already upstream.
 The first FEL Linux boot blinked LED but did not enumerate 0525:a4a7.
@@ -109,6 +136,7 @@ elan-usbtest: same PB4-off configuration, plus experimental PG1 fallback.
 Use it ONLY AFTER the elan-lightoff test is safe and without other changes.
 elan-display: ELAN / ED060XD4 with PWM backlight, USB ACM and both MMC hosts off.
 elan-emmc-backup: dedicated USB backup from RAM with read-only eMMC and SD off.
+elan-emmc-install: FEL installer, writes eMMC only after install-pb626-emmc CID.
 Never use these experimental DTBs on a reader with unverified GPIO pinout.
 Optional removable rootfs needs explicit pb626.root=sd and is read-only.
 SPL/ARM entry are external lab dependencies and remain unreviewed.

@@ -17,7 +17,7 @@ original=$(mktemp)
 cp "$src" "$original"
 trap 'cp "$original" "$src"; rm -f "$original"' EXIT
 mkdir -p "$out"
-for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest elan-display elan-emmc-backup; do
+for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest elan-display elan-emmc-backup elan-emmc-install; do
   cp "$original" "$src"
   cat "$repo/board/megi/common-sd.fragment" >> "$src"
   case "$variant" in
@@ -28,6 +28,11 @@ for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest elan-d
       ;;
     elan-emmc-backup)
       for fragment in elan elan-usbtest elan-emmc-backup; do
+        cat "$repo/board/megi/$fragment.fragment" >> "$src"
+      done
+      ;;
+    elan-emmc-install)
+      for fragment in elan elan-display elan-emmc-backup; do
         cat "$repo/board/megi/$fragment.fragment" >> "$src"
       done
       ;;
@@ -43,7 +48,7 @@ for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t x "$dtb" '/memory@40000000' reg)" = "40000000 10000000"
   emmc_status=disabled
   case "${dtb##*/}" in
-    pb626-elan-emmc-backup.dtb)
+    pb626-elan-emmc-{backup,install}.dtb)
       emmc_status=okay
       sd_status=disabled
       fdtget "$dtb" /chosen pb626,emmc-backup >/dev/null

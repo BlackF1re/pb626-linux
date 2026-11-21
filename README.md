@@ -2,9 +2,24 @@
 
 **Hardware milestone: 2026-11-21 — interactive Alpine Linux shell reached on one
 PocketBook 626 Plus / Touch Lux 3 (Allwinner A13, ELAN revision) using RAM-only
-USB FEL boot.** This is an experimental Linux bring-up, **not a firmware update
-and not yet an everyday e-reader OS**. Internal factory eMMC must remain
-untouched.
+USB FEL boot.** This is an experimental Linux bring-up. RAM variants leave
+the factory eMMC untouched.
+
+## Install to internal eMMC
+
+For the verified ELAN board with the factory Samsung 8WPD3R layout, save a
+full eMMC backup first. Boot the GitHub Actions bundle into RAM with
+`scripts/Start-PB626.ps1 -BundleDir <bundle> -Variant elan-emmc-install -Profile diagnostic`.
+In the USB serial shell, run `install-pb626-emmc` to see the target CID.
+Run it again with that CID to replace p8 with Alpine and configure the factory
+loader on p2. After it reports completion, run `sync; reboot -f` without
+holding the FEL button. The normal boot uses the existing factory loader and
+mounts p8 as the writable root. The panel waveform is at
+`/lib/firmware/pb626/default.wbf`.
+
+To restore the factory system, boot the FEL restore environment and restore the
+original p8 and the p2 configuration, or use the full backup. The original p2
+configs are saved as `linux.ini.factory` and `normal.ini.factory` in `linux/`.
 
 ## Verified on the physical reader
 
