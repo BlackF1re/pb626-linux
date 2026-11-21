@@ -86,13 +86,14 @@ jobs:
             -e MMC -e MMC_SUNXI -e EXT4_FS -e VFAT_FS \
             -e DEVTMPFS -e DEVTMPFS_MOUNT -e CONFIGFS_FS \
             -e REGULATOR_TP65185X -e BACKLIGHT_PWM \
+            -e MEDIA_SUPPORT -e MEDIA_PLATFORM_SUPPORT -e VIDEO_DEV \
             -e TOUCHSCREEN_CYTTSP4_CORE -e TOUCHSCREEN_CYTTSP4_I2C \
             -e TOUCHSCREEN_ELAN -e TOUCHSCREEN_EDT_FT5X06 \
             -m FB_SUN5I_EINK -m RTL8XXXU
           # Megi's default reserves 128 MiB CMA from only 256 MiB RAM.
           "$c" --file linux/.config --set-val CMA_SIZE_MBYTES 32
           make -C linux olddefconfig
-          for key in USB_MUSB_SUNXI USB_CONFIGFS USB_CONFIGFS_ACM MMC_SUNXI REGULATOR_TP65185X; do
+          for key in USB_MUSB_SUNXI USB_CONFIGFS USB_CONFIGFS_ACM MMC_SUNXI REGULATOR_TP65185X VIDEO_DEV; do
             grep -q "^CONFIG_$key=y$" linux/.config || { echo "Missing required built-in: $key"; exit 1; }
           done
           for key in FB_SUN5I_EINK RTL8XXXU; do
@@ -128,7 +129,7 @@ jobs:
           sudo cp /etc/resolv.conf rootfs/etc/resolv.conf
           sudo chroot rootfs /usr/bin/qemu-arm-static /sbin/apk add --no-cache \
             kmod iw wpa_supplicant linux-firmware-rtlwifi \
-            openssh-server openssh-keygen e2fsprogs usbutils i2c-tools
+            openssh-server openssh-keygen e2fsprogs usbutils i2c-tools v4l-utils
           sudo rm -f rootfs/usr/bin/qemu-arm-static
           sudo install -m 755 boot/pb626-init-megi rootfs/sbin/pb626-init
           sudo install -m 755 scripts/inspect-live.sh rootfs/usr/sbin/inspect-pb626
@@ -179,6 +180,7 @@ jobs:
           test "$(find dist -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 4
           gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t 2>/dev/null | grep -Fx './init' >/dev/null
           test -s dist/KERNEL-SOURCE.txt
+          test -x initramfs/usr/bin/v4l2-ctl
           (cd dist && sha256sum pb626-megi-zImage *.dtb *.gz *.config > SHA256SUMS)
           cat > dist/README.txt <<'NOTE'
           EXPERIMENTAL FULL RAM ALPINE. NEVER FLASH THE INTERNAL EMMC.
