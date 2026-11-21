@@ -6,7 +6,7 @@ matching kernel modules, firmware and inspection tools. Future external rootfs
 handoff is opt-in with `pb626.root=sd` in DTB bootargs; nothing mounts a
 card by default. The factory eMMC and bootloader must remain untouched.
 
-**Current status:** an experimental Megi 5.9 zImage and its ELAN-specific DTB,
+**Historical status (previous local 5.9 experiment):** an experimental Megi 5.9 zImage and its ELAN-specific DTB,
 initramfs and 52-byte entry stub were all transferred and verified in DRAM.
 The CPU left FEL after `execute`, but **Linux USB serial `0525:a4a7` has not
 been observed**. Full Linux boot and all E Ink functions are **not verified**.
@@ -45,8 +45,8 @@ These local binaries have **not yet been brought under reproducible CI**.
 
 The default **standard** image is now a complete RAM Linux environment.
 `-Profile diagnostic` is a backwards-compatible alias for the same image,
-not a separate downloadable ZIP. Download the successful **RAM Linux**
-workflow artifact; do not use the older `pb626-megi-fel-sd-bundle.zip`.
+not a separate downloadable ZIP. Download the successfully built
+**7.2 RAM Linux** workflow artifact, not the older 5.9 bundle.
 
 A future removable rootfs is built as `pb626-megi-rootfs.tar.gz`, but no SD
 disk image is produced in this phase. Use `pb626.root=sd` in DTB `/chosen/bootargs`
