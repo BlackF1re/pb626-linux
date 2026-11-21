@@ -12,7 +12,7 @@ test -s kernel-stage/pb626-megi-zImage
 test -s kernel-stage/kernel-modules.tar.gz
 test -s kernel-stage/KERNELRELEASE
 test -s alpine-base/alpine-rootfs.tar.gz
-test "$(find kernel-stage -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 6
+test -s kernel-stage/pb626-elan-display.dtb
 gzip -t alpine-base/alpine-rootfs.tar.gz
 gzip -t kernel-stage/kernel-modules.tar.gz
 
