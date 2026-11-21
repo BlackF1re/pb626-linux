@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/if_alg.h>

@@ -115,7 +115,7 @@ function Send-ImageBlock($Image, [int]$Index, [byte[]]$Buffer) {
     $encoded = [IO.MemoryStream]::new()
     try {
         $gzip = [IO.Compression.GZipStream]::new(
-            $encoded, [IO.Compression.CompressionLevel]::Fastest, $true
+            $encoded, [IO.Compression.CompressionLevel]::Optimal, $true
         )
         try {
             $gzip.Write($Buffer, 0, $Buffer.Length)
@@ -208,7 +208,8 @@ try {
     Write-Host 'Testing binary USB transfer of 4 MiB to RAM...'
     $test = @(Invoke-Device "$remote test-transfer $blockSize $testHash" -Payload $buffer -TimeoutSeconds 120)
     if ($test -notcontains "BLOCK 0 $testHash") { throw 'RAM transfer or scanner verification failed.' }
-    $null = Invoke-Device "$remote verify boot0" -TimeoutSeconds 45
+    $diskTest = @(Invoke-Device "$remote test-disk")
+    if (!($diskTest -match '^BLOCK 0 [a-f0-9]{64}$')) { throw 'User area read test failed.' }
     Write-Host 'Preflight passed. No eMMC writes performed.'
     if (!$Write) { return }
 

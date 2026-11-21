@@ -43,6 +43,9 @@ jobs:
             echo 'Short read unexpectedly succeeded' >&2
             exit 1
           fi
+          truncate -s 7818182656 sample.img
+          qemu-arm ./pb626-restore-scan verify sample.img 1864 | tail -n1 >actual-large
+          printf 'SHA256 %s\n' "$(sha256sum sample.img | cut -d ' ' -f1)" | diff -u - actual-large
       - name: Test binary transport and parse launcher
         run: |
           gcc -O2 -Wall -Wextra -Werror scripts/restore/pb626-restore-scan.c -o native-scanner

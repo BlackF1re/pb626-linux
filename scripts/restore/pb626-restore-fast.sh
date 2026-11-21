@@ -125,6 +125,10 @@ case "$operation" in
         decode_chunk raw
         "$scanner" scan "$data" 1
         ;;
+    test-disk)
+        test "$(blockdev --getro "$disk")" = 1 || fail "$disk is writable"
+        exec "$scanner" scan "$disk" 1
+        ;;
     scan|verify)
         select_region "$1"
         unmounted
