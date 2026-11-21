@@ -23,14 +23,14 @@
 set -Eeuo pipefail
 
 if (( $# < 3 || $# > 4 )); then
-    echo 'Usage: fel-boot.sh IMAGE_DIR elan|elan-usbtest|cypress|focaltech|no-touch standard|diagnostic [--no-execute]' >&2
+    echo 'Usage: fel-boot.sh IMAGE_DIR elan|elan-lightoff|elan-usbtest|cypress|focaltech|no-touch standard|diagnostic [--no-execute]' >&2
     exit 2
 fi
 imgs=${1%/}
 variant=$2
 profile=$3
 option=${4:-}
-case "$variant" in elan|elan-usbtest|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
+case "$variant" in elan|elan-lightoff|elan-usbtest|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
 case "$profile" in
   standard) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
   diagnostic) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;

@@ -99,3 +99,25 @@ measurements. No eMMC writes or firmware flashing are involved.
 
 A separate LED code can distinguish a USB gadget bound to UDC but never
 advancing from `not attached` to enumerating/configured states.
+
+## 2026-11-21 factory baseline and isolated diagnostic variants
+
+The owner verified that both full-range frontlight (including OFF) and USB
+connection work in the actual manufacturer's firmware. The hardware is
+therefore not evidently broken; our Linux driver/pin-control initialization
+is suspect. The factory FEX also declares PG1 as USB VBUS sense; do not
+assume that overriding PG1 is the correct permanent fix.
+
+Two independent test stages avoid changing USB and backlight simultaneously:
+
+1. `elan-lightoff` retains the stock PG1 VBUS GPIO and changes only the
+   frontlight/PWM path (drivers off; PB4 hog output-low). Test whether light
+   goes off, before waiting for USB or attempting any other variant.
+2. Only if that is safe, `elan-usbtest` uses the SAME light-off configuration
+   and additionally bypasses PG1 VBUS detection, to test whether the modern
+   sun4i PHY's fallback establishes enumeration. This is strictly
+   experimental; no modification to the normal `elan` DTB.
+
+A controlled observation of the frontlight does NOT prove that PB4 is
+correctly wired; if it stays bright, halt the test. The full RAM image
+still never writes to internal eMMC or SPI NOR.

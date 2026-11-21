@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build four standard RAM DTBs and one isolated USB/frontlight diagnostic DTB.
+# Build four standard RAM DTBs and two separate ELAN safety/USB diagnostic DTBs.
 set -euo pipefail
 if (( $# != 3 )); then
   echo 'usage: build-megi-variants.sh LINUX_TREE OUT_DIR REPOSITORY_ROOT' >&2
@@ -17,14 +17,14 @@ original=$(mktemp)
 cp "$src" "$original"
 trap 'cp "$original" "$src"; rm -f "$original"' EXIT
 mkdir -p "$out"
-for variant in cypress elan focaltech no-touch elan-usbtest; do
+for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest; do
   cp "$original" "$src"
   cat "$repo/board/megi/common-sd.fragment" >> "$src"
   case "$variant" in
     cypress) ;;
-    elan-usbtest)
+    elan-lightoff|elan-usbtest)
       cat "$repo/board/megi/elan.fragment" >> "$src"
-      cat "$repo/board/megi/elan-usbtest.fragment" >> "$src"
+      cat "$repo/board/megi/$variant.fragment" >> "$src"
       ;;
     *)
       cat "$repo/board/megi/$variant.fragment" >> "$src"
@@ -55,12 +55,19 @@ for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/leds' compatible)" = gpio-leds
 done
 test "$(fdtget -t s "$out/pb626-elan.dtb" '/soc/i2c@1c2b400/touchscreen@15' compatible)" = 'elan,ekth3500'
-# Verify that the experimental variant cannot accidentally run the stock
-# backlight driver or consume the unverified PG1 VBUS detection signal.
-test "$(fdtget -t s "$out/pb626-elan-usbtest.dtb" /backlight status)" = disabled
-test "$(fdtget -t s "$out/pb626-elan-usbtest.dtb" /soc/pwm@1c20e00 status)" = disabled
-test "$(fdtget -t s "$out/pb626-elan-usbtest.dtb" /soc/pinctrl@1c20800/frontlight-enable-hog line-name)" = pb626-frontlight-forced-off
-test "$(fdtget -t x "$out/pb626-elan-usbtest.dtb" /soc/pinctrl@1c20800/frontlight-enable-hog gpios)" = "1 4 0"
-! fdtget -t x "$out/pb626-elan-usbtest.dtb" /soc/phy@1c13400 usb0_vbus_det-gpios >/dev/null 2>&1
-# Normal ELAN variant must retain the original PG1 path for comparison.
-fdtget -t x "$out/pb626-elan.dtb" /soc/phy@1c13400 usb0_vbus_det-gpios >/dev/null
+# First isolate the physical frontlight-disable hypothesis: both diagnostic
+# DTBs drive PB4 low; ONLY elan-usbtest also bypasses the PG1 VBUS sense.
+for variant in elan-lightoff elan-usbtest; do
+  dtb="$out/pb626-$variant.dtb"
+  test "$(fdtget -t s "$dtb" /backlight status)" = disabled
+  test "$(fdtget -t s "$dtb" /soc/pwm@1c20e00 status)" = disabled
+  hog=/soc/pinctrl@1c20800/frontlight-enable-hog
+  test "$(fdtget -t s "$dtb" "$hog" line-name)" = pb626-frontlight-forced-off
+  test "$(fdtget -t x "$dtb" "$hog" gpios)" = "1 4 0"
+  fdtget -t x "$dtb" "$hog" output-low >/dev/null
+done
+phy=/soc/phy@1c13400
+# Factory FEX and normal ELAN both use PG1. Retain it in lightoff baseline.
+test "$(fdtget -t x "$out/pb626-elan-lightoff.dtb" "$phy" usb0_vbus_det-gpios)" = "$(fdtget -t x "$out/pb626-elan.dtb" "$phy" usb0_vbus_det-gpios)"
+# Only the second, separately controlled USB variant bypasses the PG1 input.
+! fdtget -t x "$out/pb626-elan-usbtest.dtb" "$phy" usb0_vbus_det-gpios >/dev/null 2>&1
