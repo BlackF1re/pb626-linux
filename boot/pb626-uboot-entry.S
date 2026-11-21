@@ -23,10 +23,12 @@ _start:
     subs r2, r2, #1
     bne 1b
     mrc p15, 0, r4, c1, c0, 0
+    .ifndef DIRECT_KERNEL
     ldr r0, =uboot
     ldr r1, =uboot_end
     ldr r2, =0x4a000000
     bl copy_image
+    .endif
     ldr r0, =kernel
     ldr r1, =kernel_end
     ldr r2, =0x42000000
@@ -70,7 +72,18 @@ disable_mmu:
     mcr p15, 0, r0, c7, c5, 0
     dsb
     isb
+    .ifdef DIRECT_KERNEL
+    /* Disarm any watchdog left by the factory loader before decompression. */
+    ldr r2, =0x01c20c94
+    str r0, [r2]
+    dsb
+    /* ARM Linux boot protocol, with the board DTB passed in r2. */
+    mvn r1, #0
+    ldr r2, =0x44800000
+    ldr pc, =0x42000000
+    .else
     ldr pc, =0x4a000000
+    .endif
 
 /* AXP209 data buffer survives an A13 power cycle with the battery fitted.
  * Use the TWI0 configuration left by boot.axf, only if the bus is idle.
@@ -114,7 +127,11 @@ trace_factory_handoff:
     str r2, [r0, #0x08]
     str r1, [r0, #0x0c]
     twi_wait 0x28
-    mov r2, #0x61               @ factory wrapper entered
+    .ifdef DIRECT_KERNEL
+    mov r2, #0x66               @ direct kernel wrapper entered
+    .else
+    mov r2, #0x61               @ U-Boot wrapper entered
+    .endif
     str r2, [r0, #0x08]
     str r1, [r0, #0x0c]
     twi_wait 0x28
@@ -125,10 +142,12 @@ trace_stop:
 
 .ltorg
 .balign 4
+.ifndef DIRECT_KERNEL
 uboot:
     .incbin "u-boot/u-boot.bin"
     .balign 4
 uboot_end:
+.endif
 kernel:
     .incbin "factory-kernel.bin"
     .balign 4

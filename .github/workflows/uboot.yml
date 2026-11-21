@@ -80,8 +80,10 @@ jobs:
             test -s factory-kernel.bin
             cp kernel-bundle/pb626-elan-emmc-backup.dtb native.dtb
             fdtput -d native.dtb /chosen pb626,emmc-backup
-            fdtput -d native.dtb /chosen linux,initrd-start linux,initrd-end
             fdtput -t x native.dtb /chosen pb626,emmc-root
+            fdtput -t x native.dtb /chosen linux,initrd-end 45060000
+            fdtput -t s native.dtb /chosen bootargs \
+              'console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rw'
             dtc -q -I dtb -O dtb -p 4096 -o factory-dtb.bin native.dtb
             mkdir -p early-root/{dev,sys,newroot}
             "${CROSS_COMPILE}gcc" -Os -Wall -Wextra -static -s boot/pb626-emmc-init.c -o early-root/init
@@ -94,7 +96,13 @@ jobs:
           "${CROSS_COMPILE}ld" -Ttext=0x40008000 -e _start uboot-entry.o -o uboot-entry.elf
           "${CROSS_COMPILE}objcopy" -O binary -j .text uboot-entry.elf dist/bImage
           test "$(stat -c '%s' dist/bImage)" -lt $((0x800000))
-          (cd dist && sha256sum bImage u-boot-sunxi-with-spl.bin > SHA256SUMS)
+          if test -d kernel-bundle; then
+            "${CROSS_COMPILE}as" --defsym DIRECT_KERNEL=1 boot/pb626-uboot-entry.S -o direct-entry.o
+            "${CROSS_COMPILE}ld" -Ttext=0x40008000 -e _start direct-entry.o -o direct-entry.elf
+            "${CROSS_COMPILE}objcopy" -O binary -j .text direct-entry.elf dist/bImage-direct
+            test "$(stat -c '%s' dist/bImage-direct)" -lt $((0x800000))
+          fi
+          (cd dist && sha256sum bImage* u-boot-sunxi-with-spl.bin > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-uboot-bimage
