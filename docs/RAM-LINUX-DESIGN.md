@@ -42,3 +42,17 @@ already included in this exact upstream source. We do not apply the old
 
 Only move to on-device experiments after CI passes and inspect the actual
 published artifacts and known-good lab bootloader. Never flash eMMC.
+
+## Video/display implementation detail (Megi 7.2)
+
+The `FB_SUN5I_EINK` Kconfig symbol is historical: in 7.2 its Kconfig
+reads **"eInk display V4L2 output support"**, depends on `VIDEO_DEV`
+and selects `VIDEOBUF2_DMA_CONTIG`. A successful build must verify both
+`CONFIG_VIDEO_DEV=y` and `CONFIG_FB_SUN5I_EINK=m`. The image includes
+`v4l2-ctl` for read-only capability inspection. It does **not** auto-load
+or drive the panel from userspace; panel-safe waveforms still need a separate
+implementation and per-unit VCOM calibration.
+
+The GPIO status LED PE8 blinks rapidly upon reaching PID 1 and changes to
+kernel heartbeat when the RAM shell is ready. This is an independent milestone
+if USB gadget never enumerates. LED behavior still needs physical testing.
