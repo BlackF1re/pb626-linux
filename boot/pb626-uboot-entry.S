@@ -7,6 +7,7 @@
 _start:
     mov r0, #0
     cpsid if, #0x13
+    bl trace_factory_handoff
     /* Mark the factory handoff before touching the U-Boot image. */
     ldr r0, =0x01c208a0          @ PE data register
     ldr r1, [r0]
@@ -51,6 +52,57 @@ disable_mmu:
     dsb
     isb
     ldr pc, =0x4a000000
+
+/* AXP209 data buffer survives an A13 power cycle with the battery fitted.
+ * Use the TWI0 configuration left by boot.axf, only if the bus is idle.
+ */
+.macro twi_wait expected
+    mov r3, #0x20000
+.Lwait\@:
+    ldr r2, [r0, #0x0c]
+    tst r2, #8
+    bne .Lstatus\@
+    subs r3, r3, #1
+    bne .Lwait\@
+    b trace_stop
+.Lstatus\@:
+    ldr r2, [r0, #0x10]
+    cmp r2, #\expected
+    bne trace_stop
+.endm
+
+trace_factory_handoff:
+    ldr r0, =0x01c2006c          @ APB1 gate, bit 0 is TWI0
+    ldr r1, [r0]
+    tst r1, #1
+    bxeq lr
+    ldr r0, =0x01c2ac00          @ TWI0, PB0/PB1
+    ldr r1, [r0, #0x0c]
+    tst r1, #0x40               @ bus enabled
+    bxeq lr
+    ldr r1, [r0, #0x10]
+    cmp r1, #0xf8               @ idle
+    bxne lr
+    mov r1, #0x60               @ START, TWI enabled
+    str r1, [r0, #0x0c]
+    twi_wait 0x08
+    mov r1, #0x68               @ AXP209 address 0x34, write
+    str r1, [r0, #0x08]
+    mov r1, #0x40
+    str r1, [r0, #0x0c]
+    twi_wait 0x18
+    mov r2, #0x0e               @ data buffer register
+    str r2, [r0, #0x08]
+    str r1, [r0, #0x0c]
+    twi_wait 0x28
+    mov r2, #0x61               @ factory wrapper entered
+    str r2, [r0, #0x08]
+    str r1, [r0, #0x0c]
+    twi_wait 0x28
+trace_stop:
+    mov r1, #0x50               @ STOP, TWI enabled
+    str r1, [r0, #0x0c]
+    bx lr
 
 .ltorg
 .balign 4

@@ -33,12 +33,13 @@ jobs:
           sed -i '/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;/{N;s/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;\n[[:blank:]]*writel(rval, \&priv->reg->clkcr);/clrbits_le32(\&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);/;}' u-boot/drivers/mmc/sunxi_mmc.c
           grep -F 'clrbits_le32(&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);' u-boot/drivers/mmc/sunxi_mmc.c
           make -C u-boot pocketbook_touch_lux_3_defconfig
-          sed -i -E '/^(# )?CONFIG_(SYS_TEXT_BASE|USE_BOOTCOMMAND|BOOTCOMMAND|CMD_GPIO|ENV_IS_NOWHERE|ENV_IS_IN_MMC|ENV_IS_IN_FAT|ENV_IS_IN_SPI_FLASH)(=| is not set)/d' u-boot/.config
+          sed -i -E '/^(# )?CONFIG_(SYS_TEXT_BASE|USE_BOOTCOMMAND|BOOTCOMMAND|CMD_GPIO|CMD_I2C|ENV_IS_NOWHERE|ENV_IS_IN_MMC|ENV_IS_IN_FAT|ENV_IS_IN_SPI_FLASH)(=| is not set)/d' u-boot/.config
           cat >> u-boot/.config <<'EOF'
           CONFIG_SYS_TEXT_BASE=0x4a000000
           CONFIG_USE_BOOTCOMMAND=y
           CONFIG_CMD_GPIO=y
-          CONFIG_BOOTCOMMAND="gpio clear PE8; sleep 2; gpio set PE8; sleep 2; if fatload mmc 1:2 0x42000000 linux/bImage; then gpio clear PE8; sleep 2; gpio set PE8; bootz 0x42000000; fi; gpio clear PE8"
+          CONFIG_CMD_I2C=y
+          CONFIG_BOOTCOMMAND="if i2c dev 0; then i2c mw 0x34 0x0e 0x62 1; fi; gpio clear PE8; sleep 2; gpio set PE8; sleep 2; if fatload mmc 1:2 0x42000000 linux/bImage; then i2c mw 0x34 0x0e 0x63 1; gpio clear PE8; sleep 2; gpio set PE8; bootz 0x42000000; i2c mw 0x34 0x0e 0x6f 1; else i2c mw 0x34 0x0e 0x6e 1; fi; gpio clear PE8"
           CONFIG_ENV_IS_NOWHERE=y
           # CONFIG_ENV_IS_IN_MMC is not set
           # CONFIG_ENV_IS_IN_FAT is not set
@@ -49,6 +50,7 @@ jobs:
           grep -Fx 'CONFIG_SPL=y' u-boot/.config
           grep -F 'fatload mmc 1:2 0x42000000 linux/bImage' u-boot/.config
           grep -Fx 'CONFIG_CMD_BOOTZ=y' u-boot/.config
+          grep -Fx 'CONFIG_CMD_I2C=y' u-boot/.config
           grep -Fx 'CONFIG_CMD_SLEEP=y' u-boot/.config
           make -C u-boot -j"$(nproc)"
           mkdir dist
