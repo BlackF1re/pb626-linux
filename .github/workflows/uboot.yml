@@ -38,7 +38,7 @@ jobs:
           CONFIG_SYS_TEXT_BASE=0x4a000000
           CONFIG_USE_BOOTCOMMAND=y
           CONFIG_CMD_GPIO=y
-          CONFIG_BOOTCOMMAND="gpio clear PE8; if fatload mmc 1:2 0x42000000 linux/bImage; then gpio set PE8; bootz 0x42000000; gpio clear PE8; fi"
+          CONFIG_BOOTCOMMAND="gpio clear PE8; sleep 2; gpio set PE8; sleep 2; if fatload mmc 1:2 0x42000000 linux/bImage; then gpio clear PE8; sleep 2; gpio set PE8; bootz 0x42000000; fi; gpio clear PE8"
           CONFIG_ENV_IS_NOWHERE=y
           # CONFIG_ENV_IS_IN_MMC is not set
           # CONFIG_ENV_IS_IN_FAT is not set
@@ -49,6 +49,7 @@ jobs:
           grep -Fx 'CONFIG_SPL=y' u-boot/.config
           grep -F 'fatload mmc 1:2 0x42000000 linux/bImage' u-boot/.config
           grep -Fx 'CONFIG_CMD_BOOTZ=y' u-boot/.config
+          grep -Fx 'CONFIG_CMD_SLEEP=y' u-boot/.config
           make -C u-boot -j"$(nproc)"
           mkdir dist
           cp u-boot/u-boot-sunxi-with-spl.bin dist/

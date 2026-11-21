@@ -7,6 +7,20 @@
 _start:
     mov r0, #0
     cpsid if, #0x13
+    /* Mark the factory handoff before touching the U-Boot image. */
+    ldr r0, =0x01c208a0          @ PE data register
+    ldr r1, [r0]
+    orr r1, r1, #(1 << 8)       @ PE8 LED off
+    str r1, [r0]
+    ldr r2, [r0, #-8]           @ PE_CFG2
+    bic r2, r2, #7
+    orr r2, r2, #1              @ PE8 output
+    str r2, [r0, #-8]
+    /* The stock loader may leave the timer clock gated. */
+    mov r2, #0x10000000
+1:
+    subs r2, r2, #1
+    bne 1b
     mrc p15, 0, r4, c1, c0, 0
     ldr r0, =uboot
     ldr r1, =uboot_end
