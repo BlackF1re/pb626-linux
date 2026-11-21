@@ -24,7 +24,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-arm-linux-gnueabihf bc bison flex libssl-dev python3-pyelftools
+            gcc-arm-linux-gnueabihf bc bison flex libssl-dev python3-pyelftools python3-setuptools
           git init u-boot
           git -C u-boot fetch --depth=1 https://codeberg.org/megi/u-boot.git "$UBOOT_REV"
           git -C u-boot checkout --detach FETCH_HEAD
@@ -49,7 +49,7 @@ jobs:
           grep -Fx 'CONFIG_SPL=y' u-boot/.config
           grep -F 'CONFIG_BOOTCOMMAND="gpio clear PE8; if fatload mmc 1:2 ' u-boot/.config
           grep -Fx 'CONFIG_CMD_BOOTZ=y' u-boot/.config
-          make -C u-boot -j"$(nproc)" u-boot-sunxi-with-spl.bin
+          make -C u-boot -j"$(nproc)"
           mkdir dist
           cp u-boot/u-boot-sunxi-with-spl.bin dist/
           test "$(dd if=dist/u-boot-sunxi-with-spl.bin bs=1 skip=4 count=8 status=none)" = 'eGON.BT0'
