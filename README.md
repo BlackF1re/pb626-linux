@@ -27,11 +27,9 @@ to 8 MiB of raw ARM code from `/linux/bImage` at `0x40008000`. BT1
 disables the MMU and caches before calling that address with ATAGs at
 `0x40000100`. The factory kernel uses p7 as its root.
 
-The installer keeps the single-segment layout and raises its limit to
-9 MiB for a `bImage` containing the entry stub, zImage, DTB and initramfs.
-After BT1 hands off, the stub pulses the status LED twice and copies
-the payloads to the addresses used by the FEL loader. The initramfs
-mounts Alpine from p8. The stock application also lives on p8, so
+The installer keeps the 8 MiB single-segment layout. The ARM zImage
+reads its appended board DTB and mounts Alpine from p8 directly.
+The stock application also lives on p8, so
 restoring only the stock kernel can cause the factory OS to start
 its automatic updater.
 

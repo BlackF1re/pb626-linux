@@ -63,7 +63,11 @@ cp dist/pb626-elan-emmc-install.dtb pb626-emmc-native.dtb
 fdtput -d pb626-emmc-native.dtb /chosen pb626,emmc-backup
 fdtput -t x pb626-emmc-native.dtb /chosen pb626,emmc-root
 fdtput -t s pb626-emmc-native.dtb /chosen bootargs \
-  'console=ttyS0,115200 root=/dev/mmcblk2p8 rootfstype=ext4 rw'
+  'console=ttyS0,115200 root=/dev/mmcblk2p8 rootfstype=ext4 rootwait rw init=/sbin/pb626-emmc-init'
+cat kernel-stage/pb626-megi-zImage pb626-emmc-native.dtb > bImage
+test "$(stat -c '%s' bImage)" -le $((0x800000))
+# Reserve a zero word at the appended-DTB probe address in FEL images.
+printf '\0\0\0\0' >> dist/pb626-megi-zImage
 cp dist/pb626-elan-emmc-backup.dtb dist/pb626-elan-emmc-install.dtb
 fdtput -t x dist/pb626-elan-emmc-install.dtb /chosen pb626,emmc-install
 
@@ -85,24 +89,7 @@ for applet in sh hostname mkdir grep mount umount cat blockdev sleep setsid ln \
   ln -s busybox "installer/bin/$applet"
 done
 sudo mknod -m 666 installer/dev/null c 1 3
-sudo cp -a installer native-ram
-sudo mkdir -p native-ram/{sbin,newroot}
-sudo mknod -m 600 native-ram/dev/console c 5 1
-sudo install -m 755 boot/init-emmc native-ram/init
-sudo install -m 755 boot/init-megi native-ram/sbin/pb626-rescue
-(cd native-ram && sudo find . -print0 | sudo cpio --null --owner=0:0 -o --format=newc --quiet) \
-  | gzip -9 > pb626rd.gz
 initrd_start=$((0x45000000))
-native_initrd_size=$(stat -c '%s' pb626rd.gz)
-test "$native_initrd_size" -lt $((0x400000))
-fdtput -t x pb626-emmc-native.dtb /chosen linux,initrd-start "$(printf '%x' "$initrd_start")"
-fdtput -t x pb626-emmc-native.dtb /chosen linux,initrd-end "$(printf '%x' "$((initrd_start + native_initrd_size))")"
-arm-linux-gnueabihf-as boot/pb626-factory-entry.S -o pb626-emmc-entry.o
-arm-linux-gnueabihf-ld -Ttext=0x40008000 -e _start pb626-emmc-entry.o -o pb626-emmc-entry.elf
-arm-linux-gnueabihf-objcopy -O binary -j .text pb626-emmc-entry.elf bImage
-test "$(stat -c '%s' bImage)" -le $((0x900000))
-test "$(stat -c '%s' dist/pb626-megi-zImage)" -lt $((0x800000))
-test "$(stat -c '%s' pb626-emmc-native.dtb)" -lt $((0x10000))
 
 install -m 755 boot/init-megi installer/init
 install -m 755 scripts/install-pb626-emmc.sh installer/usr/sbin/install-pb626-emmc

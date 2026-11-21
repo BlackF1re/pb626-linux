@@ -103,12 +103,11 @@ for name in linux normal; do
   awk '
     BEGIN { ORS = "\r\n" }
     { sub(/\r$/, "") }
-    /^img_size / { $0 = "img_size = 0x900000" }
     /^logo_show / { $0 = "logo_show = 0" }
     { print }
   ' "$config.factory" > "$config.new"
   grep -qiF 'img_name = c:\linux\bImage' "$config.new"
-  grep -qF 'img_size = 0x900000' "$config.new"
+  grep -qF 'img_size = 0x800000' "$config.new"
 done
 sync
 if [ ! -e "$target/bImage.pb" ]; then
@@ -122,7 +121,7 @@ sync
 umount "$mountpoint"
 mount -t vfat -o ro "$boot" "$mountpoint"
 cmp bImage "$target/bImage"
-grep -qF 'img_size = 0x900000' "$target/linux.ini"
+grep -qF 'img_size = 0x800000' "$target/linux.ini"
 cleanup
 trap - EXIT
 echo 'PB626 INSTALL COMPLETE. Reboot without FEL.'
