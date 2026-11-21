@@ -5,7 +5,7 @@ PocketBook 626 Plus / Touch Lux 3 (Allwinner A13, ELAN revision) using RAM-only
 USB FEL boot.** This is an experimental Linux bring-up. RAM variants leave
 the factory eMMC untouched.
 
-## Install to internal eMMC
+## Experimental installation to internal eMMC
 
 For the verified ELAN board with the factory Samsung 8WPD3R layout, save a
 full eMMC backup first. Boot the GitHub Actions bundle into RAM with
@@ -13,9 +13,17 @@ full eMMC backup first. Boot the GitHub Actions bundle into RAM with
 In the USB serial shell, run `install-pb626-emmc` to see the target CID.
 Run it again with that CID to replace p8 with Alpine and configure the factory
 loader on p2. After it reports completion, run `sync; reboot -f` without
-holding the FEL button. The normal boot uses the existing factory loader and
-mounts p8 as the writable root. The panel waveform is at
-`/lib/firmware/pb626/default.wbf`.
+holding the FEL button. Installation and read-back of the files have been
+verified. Cold boot into the installed Alpine system is still unresolved.
+The panel waveform is at `/lib/firmware/pb626/default.wbf`.
+
+The ELAN factory dump contains `eGON.BT0` at byte offset `0x2000` and two
+identical `eGON.BT1` copies at `0x012a6000` and `0x012e6000` in the eMMC
+user area. The factory stages load `/boot.axf` from the FAT16 bootloader
+partition (p2, LBA 73728). This AXF reads `/linux/linux.ini` for normal boot
+or `/linux/recovery.ini` for recovery. The stock normal configuration loads
+`/linux/bImage` as raw ARM code at `0x40008000`. The installer uses that
+entry point and p8 for Alpine.
 
 To restore the factory system, use the full backup or restore the original
 p8 and the boot files in p2's `linux/` directory from FEL. Rename
