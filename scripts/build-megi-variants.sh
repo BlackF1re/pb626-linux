@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build four RAM-only DTBs from the pinned Megi 7.2 mainline device tree.
+# Build four standard RAM DTBs and one isolated USB/frontlight diagnostic DTB.
 set -euo pipefail
 if (( $# != 3 )); then
   echo 'usage: build-megi-variants.sh LINUX_TREE OUT_DIR REPOSITORY_ROOT' >&2
@@ -17,12 +17,19 @@ original=$(mktemp)
 cp "$src" "$original"
 trap 'cp "$original" "$src"; rm -f "$original"' EXIT
 mkdir -p "$out"
-for variant in cypress elan focaltech no-touch; do
+for variant in cypress elan focaltech no-touch elan-usbtest; do
   cp "$original" "$src"
   cat "$repo/board/megi/common-sd.fragment" >> "$src"
-  if [[ $variant != cypress ]]; then
-    cat "$repo/board/megi/$variant.fragment" >> "$src"
-  fi
+  case "$variant" in
+    cypress) ;;
+    elan-usbtest)
+      cat "$repo/board/megi/elan.fragment" >> "$src"
+      cat "$repo/board/megi/elan-usbtest.fragment" >> "$src"
+      ;;
+    *)
+      cat "$repo/board/megi/$variant.fragment" >> "$src"
+      ;;
+  esac
   make -C "$linux" -j2 "$target"
   cp "$linux/arch/arm/boot/dts/$target" "$out/pb626-$variant.dtb"
 done
@@ -48,3 +55,12 @@ for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/leds' compatible)" = gpio-leds
 done
 test "$(fdtget -t s "$out/pb626-elan.dtb" '/soc/i2c@1c2b400/touchscreen@15' compatible)" = 'elan,ekth3500'
+# Verify that the experimental variant cannot accidentally run the stock
+# backlight driver or consume the unverified PG1 VBUS detection signal.
+test "$(fdtget -t s "$out/pb626-elan-usbtest.dtb" /backlight status)" = disabled
+test "$(fdtget -t s "$out/pb626-elan-usbtest.dtb" /soc/pwm@1c20e00 status)" = disabled
+test "$(fdtget -t s "$out/pb626-elan-usbtest.dtb" /soc/pinctrl@1c20800/frontlight-enable-hog line-name)" = pb626-frontlight-forced-off
+test "$(fdtget -t x "$out/pb626-elan-usbtest.dtb" /soc/pinctrl@1c20800/frontlight-enable-hog gpios)" = "1 4 0"
+! fdtget -t x "$out/pb626-elan-usbtest.dtb" /soc/phy@1c13400 usb0_vbus_det-gpios >/dev/null 2>&1
+# Normal ELAN variant must retain the original PG1 path for comparison.
+fdtget -t x "$out/pb626-elan.dtb" /soc/phy@1c13400 usb0_vbus_det-gpios >/dev/null
