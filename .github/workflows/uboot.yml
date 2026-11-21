@@ -30,14 +30,19 @@ jobs:
           git -C u-boot checkout --detach FETCH_HEAD
           test "$(git -C u-boot rev-parse HEAD)" = "$UBOOT_REV"
           make -C u-boot pocketbook_touch_lux_3_defconfig
-          u-boot/scripts/config --file u-boot/.config \
-            --set-val TEXT_BASE 0x4a000000 \
-            --enable USE_BOOTCOMMAND --enable ENV_IS_NOWHERE \
-            --disable ENV_IS_IN_MMC --disable ENV_IS_IN_FAT \
-            --disable ENV_IS_IN_SPI_FLASH \
-            --set-str BOOTCOMMAND 'if fatload mmc 1:2 0x42000000 linux/pbkern.bin && fatload mmc 1:2 0x43200000 linux/pbdt.bin && fatload mmc 1:2 0x45000000 linux/pb626rd.gz; then bootz 0x42000000 0x45000000:${filesize} 0x43200000; fi'
+          sed -i -E '/^(# )?CONFIG_(SYS_TEXT_BASE|USE_BOOTCOMMAND|BOOTCOMMAND|ENV_IS_NOWHERE|ENV_IS_IN_MMC|ENV_IS_IN_FAT|ENV_IS_IN_SPI_FLASH)(=| is not set)/d' u-boot/.config
+          cat >> u-boot/.config <<'EOF'
+          CONFIG_SYS_TEXT_BASE=0x4a000000
+          CONFIG_USE_BOOTCOMMAND=y
+          CONFIG_BOOTCOMMAND="if fatload mmc 1:2 0x42000000 linux/pbkern.bin && fatload mmc 1:2 0x43200000 linux/pbdt.bin && fatload mmc 1:2 0x45000000 linux/pb626rd.gz; then bootz 0x42000000 0x45000000:${filesize} 0x43200000; fi"
+          CONFIG_ENV_IS_NOWHERE=y
+          # CONFIG_ENV_IS_IN_MMC is not set
+          # CONFIG_ENV_IS_IN_FAT is not set
+          # CONFIG_ENV_IS_IN_SPI_FLASH is not set
+          EOF
           make -C u-boot olddefconfig
-          grep -Fx 'CONFIG_TEXT_BASE=0x4a000000' u-boot/.config
+          grep -Fx 'CONFIG_SYS_TEXT_BASE=0x4a000000' u-boot/.config
+          grep -F 'CONFIG_BOOTCOMMAND="if fatload mmc 1:2 ' u-boot/.config
           grep -Fx 'CONFIG_CMD_BOOTZ=y' u-boot/.config
           make -C u-boot -j"$(nproc)" u-boot.bin
           mkdir dist
