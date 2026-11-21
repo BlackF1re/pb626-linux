@@ -1,0 +1,53 @@
+name: PocketBook 626 U-Boot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/uboot.yml'
+      - 'boot/pb626-uboot-entry.S'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CROSS_COMPILE: arm-linux-gnueabihf-
+      UBOOT_REV: 96c08df75f632622c57954940d6a1a6c20062e18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Megi U-Boot for the PocketBook
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-linux-gnueabihf bc bison flex libssl-dev python3-pyelftools
+          git init u-boot
+          git -C u-boot fetch --depth=1 https://codeberg.org/megi/u-boot.git "$UBOOT_REV"
+          git -C u-boot checkout --detach FETCH_HEAD
+          test "$(git -C u-boot rev-parse HEAD)" = "$UBOOT_REV"
+          make -C u-boot pocketbook_touch_lux_3_defconfig
+          u-boot/scripts/config --file u-boot/.config \
+            --set-val TEXT_BASE 0x4a000000 \
+            --enable USE_BOOTCOMMAND --enable ENV_IS_NOWHERE \
+            --disable ENV_IS_IN_MMC --disable ENV_IS_IN_FAT \
+            --disable ENV_IS_IN_SPI_FLASH \
+            --set-str BOOTCOMMAND 'if fatload mmc 1:2 0x42000000 linux/pbkern.bin && fatload mmc 1:2 0x43200000 linux/pbdt.bin && fatload mmc 1:2 0x45000000 linux/pb626rd.gz; then bootz 0x42000000 0x45000000:${filesize} 0x43200000; fi'
+          make -C u-boot olddefconfig
+          grep -Fx 'CONFIG_TEXT_BASE=0x4a000000' u-boot/.config
+          grep -Fx 'CONFIG_CMD_BOOTZ=y' u-boot/.config
+          make -C u-boot -j"$(nproc)" u-boot.bin
+          mkdir dist
+          "${CROSS_COMPILE}as" boot/pb626-uboot-entry.S -o uboot-entry.o
+          "${CROSS_COMPILE}ld" -Ttext=0x40008000 -e _start uboot-entry.o -o uboot-entry.elf
+          "${CROSS_COMPILE}objcopy" -O binary -j .text uboot-entry.elf dist/bImage
+          test "$(stat -c '%s' dist/bImage)" -lt $((0x800000))
+          (cd dist && sha256sum bImage > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-uboot-bimage
+          path: dist/
+          if-no-files-found: error
