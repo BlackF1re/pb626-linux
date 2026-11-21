@@ -2,6 +2,11 @@
 # Join independently built kernel, DTBs, and Alpine ARMv7 root.
 # RAM-only FEL artifact; no commands that write to eMMC.
 set -Eeuo pipefail
+trap 'echo "RAM BUNDLE ASSEMBLY ERROR at line $LINENO: $BASH_COMMAND" >&2' ERR
+echo '=== kernel-stage ==='
+find kernel-stage -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
+echo '=== alpine-base ==='
+find alpine-base -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
 mkdir -p dist rootfs initramfs
 test -s kernel-stage/pb626-megi-zImage
 test -s kernel-stage/kernel-modules.tar.gz
