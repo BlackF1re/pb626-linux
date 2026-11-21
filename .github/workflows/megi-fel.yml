@@ -182,7 +182,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cpio device-tree-compiler kmod
+            cpio device-tree-compiler kmod zstd
       - name: Assemble full Alpine RAM image from independent stages
         run: bash scripts/assemble-megi-ram.sh
       - uses: actions/upload-artifact@v4

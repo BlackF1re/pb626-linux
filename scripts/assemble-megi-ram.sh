@@ -22,6 +22,16 @@ kernel_release=$(cat kernel-stage/KERNELRELEASE)
 test -d "rootfs/lib/modules/$kernel_release"
 sudo depmod -b rootfs "$kernel_release"
 
+# Alpine 3.24 ships Realtek firmware as .zst, but our downstream A13
+# kernel does not currently load it. The reader's RTL8188EU (0bda:8179)
+# needs the uncompressed firmware BEFORE rtl8xxxu probes during /init.
+firmware=rootfs/lib/firmware/rtlwifi/rtl8188eufw.bin
+if [ -s "$firmware.zst" ]; then
+  sudo zstd --decompress --force --quiet --output="$firmware" "$firmware.zst"
+fi
+test -s "$firmware"
+echo "RTL8188EU uncompressed firmware staged: $(stat -c '%s' "$firmware") bytes"
+
 sudo install -d rootfs/sbin rootfs/usr/sbin rootfs/etc
 sudo install -m 755 boot/pb626-init-megi rootfs/sbin/pb626-init
 sudo install -m 755 scripts/inspect-live.sh rootfs/usr/sbin/inspect-pb626
@@ -63,6 +73,33 @@ sudo chown -R "$USER:$USER" dist
 gzip -t dist/pb626-megi-initramfs.cpio.gz
 gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t > dist/INITRAMFS-CONTENTS.txt 2>/dev/null
 (grep -Fxq 'init' dist/INITRAMFS-CONTENTS.txt || grep -Fxq './init' dist/INITRAMFS-CONTENTS.txt)
+grep -Eq '^(\\./)?(usr/)?lib/firmware/rtlwifi/rtl8188eufw.bin
+grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
+grep -F 'lib/modules/' dist/INITRAMFS-CONTENTS.txt >/dev/null
+rm dist/INITRAMFS-CONTENTS.txt
+
+(cd dist && sha256sum pb626-megi-zImage *.dtb *.gz *.config > SHA256SUMS)
+cat > dist/README.txt <<'NOTE'
+EXPERIMENTAL FULL RAM ALPINE. NEVER FLASH INTERNAL EMMC.
+Megi mainline Linux 7.2 (2026-09-03), commit facc87117511221bb61410e3f92ad8579697f736.
+2026 sun4i timer fixes already upstream.
+The first FEL Linux boot blinked LED but did not enumerate 0525:a4a7.
+This image has new UDC LED codes and an attempted frontlight-off fix.
+Six DTB variants: four standard, plus elan-lightoff and elan-usbtest.
+elan-lightoff: disable backlight/PWM and hog PB4 LOW, KEEP factory PG1
+VBUS detect. Test this variant FIRST and verify that frontlight goes off.
+elan-usbtest: same PB4-off configuration, plus experimental PG1 fallback.
+Use it ONLY AFTER the elan-lightoff test is safe and without other changes.
+Never use these experimental DTBs on a reader with unverified GPIO pinout.
+Optional removable rootfs needs explicit pb626.root=sd and is read-only.
+SPL/ARM entry are external lab dependencies and remain unreviewed.
+NOTE
+test -s dist/pb626-megi-zImage
+test -s dist/pb626-megi-initramfs.cpio.gz
+test -s dist/pb626-megi-rootfs.tar.gz
+test -s dist/KERNEL-SOURCE.txt
+echo 'FULL RAM BUNDLE VERIFIED'
+ dist/INITRAMFS-CONTENTS.txt
 grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F 'lib/modules/' dist/INITRAMFS-CONTENTS.txt >/dev/null
