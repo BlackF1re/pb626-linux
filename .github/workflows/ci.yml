@@ -29,6 +29,9 @@ jobs:
           sh -n boot/init-megi
           sh -n boot/pb626-init-megi
           bash -n scripts/fel-boot.sh
+          bash -n scripts/configure-megi-kernel.sh
+          bash -n scripts/build-alpine-rootfs.sh
+          bash -n scripts/assemble-megi-ram.sh
           shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh
           shellcheck -s bash scripts/fel-boot.sh
       - name: Test hardware inventory

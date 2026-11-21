@@ -1,0 +1,35 @@
+/* Experimental FEL RAM-only ELAN diagnostic overlay.
+ * Same panel/touch calibration as elan.fragment. Changes:
+ *  - Force the PocketBook frontlight enable PB4 LOW from GPIO-controller probe.
+ *  - Ignore unverified PG1 VBUS-detect GPIO; sun4i PHY then falls back
+ *    to device mode + connected VBUS while running as a USB peripheral.
+ *    Not a production DTS: do not use without a plugged-in host.
+ *
+ * No eMMC, SPI, panel voltage, or persistent storage writes.
+ */
+
+/* Disallow any other driver from racing the PB4 hog or PWM output. */
+&{/backlight} {
+  status = "disabled";
+};
+
+&pwm {
+  status = "disabled";
+};
+
+&pio {
+  pb626_frontlight_off: frontlight-enable-hog {
+    gpio-hog;
+    gpios = <1 4 GPIO_ACTIVE_HIGH>; /* PB4, documented active-high enable */
+    output-low;
+    line-name = "pb626-frontlight-forced-off";
+  };
+};
+
+/* Device-only USB0: the megi board DTS labels PG1 as unverified.
+ * With no VBUS GPIO/power-supply reference, sun4i_usb_phy0_get_vbus_det
+ * returns high; never route PHY0 to USB host or enable VBUS output.
+ */
+&usbphy {
+  /delete-property/ usb0_vbus_det-gpios;
+};

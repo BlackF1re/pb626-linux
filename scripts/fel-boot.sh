@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PocketBook 626 Plus / Touch Lux 3: canonical Megi 5.9 RAM-only FEL uploader.
+# PocketBook 626 Plus / Touch Lux 3: Megi mainline 7.2 RAM-only FEL uploader.
 #
 # Why this loader differs from stock sunxi-fel:
 #   * The board's BROM starts with MMU enabled. Restoring it after SPL can make
@@ -23,14 +23,14 @@
 set -Eeuo pipefail
 
 if (( $# < 3 || $# > 4 )); then
-    echo 'Usage: fel-boot.sh IMAGE_DIR elan|cypress|focaltech|no-touch standard|diagnostic [--no-execute]' >&2
+    echo 'Usage: fel-boot.sh IMAGE_DIR elan|elan-lightoff|elan-usbtest|cypress|focaltech|no-touch standard|diagnostic [--no-execute]' >&2
     exit 2
 fi
 imgs=${1%/}
 variant=$2
 profile=$3
 option=${4:-}
-case "$variant" in elan|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
+case "$variant" in elan|elan-lightoff|elan-usbtest|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
 case "$profile" in
   standard) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
   diagnostic) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
@@ -121,7 +121,7 @@ upload_verified() {
     rm -f "$run"/chunk-*
     echo "SUCCESS: $label"
 }
-upload_verified 'MEGI zImage' "$kernel" 0x42000000
+upload_verified 'MAINLINE zImage' "$kernel" 0x42000000
 upload_verified "DEVICE TREE $variant" "$fdt" 0x43200000
 upload_verified 'RAM INITRAMFS' "$ramfs" 0x45000000
 upload_verified 'ARM ENTRY STUB' "$entry" 0x41000000

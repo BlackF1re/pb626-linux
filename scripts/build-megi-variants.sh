@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build four FEL-only DTBs from Megi's original complete device tree.
+# Build four standard RAM DTBs and two separate ELAN safety/USB diagnostic DTBs.
 set -euo pipefail
 if (( $# != 3 )); then
   echo 'usage: build-megi-variants.sh LINUX_TREE OUT_DIR REPOSITORY_ROOT' >&2
@@ -9,19 +9,29 @@ linux=$(realpath "$1")
 out=$(realpath -m "$2")
 repo=$(realpath "$3")
 export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
-src="$linux/arch/arm/boot/dts/sun5i-a13-pocketbook-touch-lux-3.dts"
+# Megi Linux >=6.5 moves the board DTS under the allwinner directory.
+src="$linux/arch/arm/boot/dts/allwinner/sun5i-a13-pocketbook-touch-lux-3.dts"
+test -f "$src"
+target=allwinner/sun5i-a13-pocketbook-touch-lux-3.dtb
 original=$(mktemp)
 cp "$src" "$original"
 trap 'cp "$original" "$src"; rm -f "$original"' EXIT
 mkdir -p "$out"
-for variant in cypress elan focaltech no-touch; do
+for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest; do
   cp "$original" "$src"
   cat "$repo/board/megi/common-sd.fragment" >> "$src"
-  if [[ $variant != cypress ]]; then
-    cat "$repo/board/megi/$variant.fragment" >> "$src"
-  fi
-  make -C "$linux" -j2 sun5i-a13-pocketbook-touch-lux-3.dtb
-  cp "$linux/arch/arm/boot/dts/sun5i-a13-pocketbook-touch-lux-3.dtb" "$out/pb626-$variant.dtb"
+  case "$variant" in
+    cypress) ;;
+    elan-lightoff|elan-usbtest)
+      cat "$repo/board/megi/elan.fragment" >> "$src"
+      cat "$repo/board/megi/$variant.fragment" >> "$src"
+      ;;
+    *)
+      cat "$repo/board/megi/$variant.fragment" >> "$src"
+      ;;
+  esac
+  make -C "$linux" -j2 "$target"
+  cp "$linux/arch/arm/boot/dts/$target" "$out/pb626-$variant.dtb"
 done
 for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/memory@40000000' device_type)" = memory
@@ -38,8 +48,26 @@ for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/soc/spi@1c17000/flash@0' compatible)" = 'macronix,mx25u4033 jedec,spi-nor'
   test "$(fdtget -t s "$dtb" '/soc/i2c@1c2ac00/pmic@34' compatible)" = x-powers,axp209
   test "$(fdtget -t s "$dtb" '/soc/i2c@1c2b000/rtc@51' compatible)" = nxp,pcf8563
-  test "$(fdtget -t s "$dtb" '/soc/i2c@1c2b000/regulator@68' compatible)" = tp,tp65185x
+  test "$(fdtget -t s "$dtb" '/soc/i2c@1c2b000/pmic@68' compatible)" = ti,tps65185
   test "$(fdtget -t s "$dtb" '/backlight' compatible)" = pwm-backlight
+  test "$(fdtget -t x "$dtb" '/backlight' default-brightness-level)" = 0
+  fdtget -t x "$dtb" '/backlight' brightness-levels > /dev/null
   test "$(fdtget -t s "$dtb" '/leds' compatible)" = gpio-leds
 done
 test "$(fdtget -t s "$out/pb626-elan.dtb" '/soc/i2c@1c2b400/touchscreen@15' compatible)" = 'elan,ekth3500'
+# First isolate the physical frontlight-disable hypothesis: both diagnostic
+# DTBs drive PB4 low; ONLY elan-usbtest also bypasses the PG1 VBUS sense.
+for variant in elan-lightoff elan-usbtest; do
+  dtb="$out/pb626-$variant.dtb"
+  test "$(fdtget -t s "$dtb" /backlight status)" = disabled
+  test "$(fdtget -t s "$dtb" /soc/pwm@1c20e00 status)" = disabled
+  hog=/soc/pinctrl@1c20800/frontlight-enable-hog
+  test "$(fdtget -t s "$dtb" "$hog" line-name)" = pb626-frontlight-forced-off
+  test "$(fdtget -t x "$dtb" "$hog" gpios)" = "1 4 0"
+  fdtget -t x "$dtb" "$hog" output-low >/dev/null
+done
+phy=/soc/phy@1c13400
+# Factory FEX and normal ELAN both use PG1. Retain it in lightoff baseline.
+test "$(fdtget -t x "$out/pb626-elan-lightoff.dtb" "$phy" usb0_vbus_det-gpios)" = "$(fdtget -t x "$out/pb626-elan.dtb" "$phy" usb0_vbus_det-gpios)"
+# Only the second, separately controlled USB variant bypasses the PG1 input.
+! fdtget -t x "$out/pb626-elan-usbtest.dtb" "$phy" usb0_vbus_det-gpios >/dev/null 2>&1

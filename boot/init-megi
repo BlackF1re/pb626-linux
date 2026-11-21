@@ -14,6 +14,35 @@ log() {
   echo "pb626: $*" >/dev/kmsg 2>/dev/null || true
 }
 log "RAM Linux reached /init, kernel $(uname -r)"
+# PE8 LED gives read-only boot status without UART/USB. Do not touch
+# other GPIOs or eMMC. Linux triggers are implemented by the kernel.
+led_pattern() {
+  for led in /sys/class/leds/*; do
+    [ -w "$led/trigger" ] || continue
+    echo timer > "$led/trigger" 2>/dev/null || true
+    echo "$1" > "$led/delay_on" 2>/dev/null || true
+    echo "$2" > "$led/delay_off" 2>/dev/null || true
+  done
+}
+led_heartbeat() {
+  for led in /sys/class/leds/*; do
+    [ -w "$led/trigger" ] && echo heartbeat > "$led/trigger" 2>/dev/null || true
+  done
+}
+# 150/150 = PID1 reached; later LED codes diagnose the gadget stage.
+led_pattern 150 150
+# The vendor PWM/backlight driver can initialize to a nonzero value even
+# when the DTB sets a zero default. Force off, but never turn it on.
+for bl in /sys/class/backlight/*; do
+  [ -d "$bl" ] || continue
+  if [ -w "$bl/brightness" ]; then
+    echo 0 > "$bl/brightness" 2>/dev/null || true
+  fi
+  if [ -w "$bl/bl_power" ]; then
+    echo 4 > "$bl/bl_power" 2>/dev/null || true
+  fi
+  log "frontlight-off attempted: $bl brightness=$(cat "$bl/brightness" 2>/dev/null) power=$(cat "$bl/bl_power" 2>/dev/null)"
+done
 unsafe=0
 for type in /sys/block/mmcblk*/device/type; do
   [ -r "$type" ] || continue
@@ -24,35 +53,92 @@ for type in /sys/block/mmcblk*/device/type; do
 done
 # Modules are included in RAM, so no SD card is required for any driver.
 if [ -d "/lib/modules/$(uname -r)" ]; then
-  for module in r8188eu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
+  for module in rtl8xxxu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
     modprobe "$module" 2>/dev/null || true
   done
 fi
-mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
-G=/sys/kernel/config/usb_gadget/pb626
-if [ -d /sys/kernel/config/usb_gadget ]; then
-  mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409" "$G/functions/acm.usb0"
-  echo 0x0525 > "$G/idVendor"
-  echo 0xa4a7 > "$G/idProduct"
-  echo 0x02 > "$G/bDeviceClass"
-  echo 0x02 > "$G/bDeviceSubClass"
-  echo PB626RAM01 > "$G/strings/0x409/serialnumber"
-  echo PocketBook > "$G/strings/0x409/manufacturer"
-  echo 'PocketBook RAM Linux Console' > "$G/strings/0x409/product"
-  echo 'USB ACM console' > "$G/configs/c.1/strings/0x409/configuration"
-  ln -s "$G/functions/acm.usb0" "$G/configs/c.1/acm.usb0" 2>/dev/null || true
-  (
-    n=0
-    while [ "$n" -lt 30 ]; do
-      for udc in /sys/class/udc/*; do
-        [ -e "$udc" ] || continue
-        echo "${udc##*/}" >"$G/UDC" && { log "USB gadget bound"; exit 0; }
+# Distinct PE8 patterns after the first 30 seconds:
+# 100ms on / 900ms off: no UDC controller registered.
+# 300ms on / 700ms off: CONFIGFS / ACM gadget setup failed.
+# 700ms on / 300ms off: UDC exists, but bind failed.
+# 100ms/400ms: UDC bound, but bus remains not attached/unknown.
+# 500ms/500ms: bus saw host activity but was not configured.
+# heartbeat (double pulse): UDC reached CONFIGURED state.
+if mount -t configfs configfs /sys/kernel/config 2>/dev/null ||
+   grep -q ' /sys/kernel/config configfs ' /proc/mounts; then
+  G=/sys/kernel/config/usb_gadget/pb626
+  if [ -d /sys/kernel/config/usb_gadget ] &&
+     mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409" "$G/functions/acm.usb0" &&
+     echo 0x0525 > "$G/idVendor" &&
+     echo 0xa4a7 > "$G/idProduct" &&
+     echo 0x02 > "$G/bDeviceClass" &&
+     echo 0x02 > "$G/bDeviceSubClass" &&
+     echo PB626RAM01 > "$G/strings/0x409/serialnumber" &&
+     echo PocketBook > "$G/strings/0x409/manufacturer" &&
+     echo 'PocketBook RAM Linux Console' > "$G/strings/0x409/product" &&
+     echo 'USB ACM console' > "$G/configs/c.1/strings/0x409/configuration" &&
+     ln -s "$G/functions/acm.usb0" "$G/configs/c.1/acm.usb0"; then
+    log "CONFIGFS ACM gadget created"
+    (
+      n=0
+      saw_udc=0
+      while [ "$n" -lt 30 ]; do
+        for udc in /sys/class/udc/*; do
+          [ -d "$udc" ] || continue
+          saw_udc=1
+          log "UDC detected: ${udc##*/}"
+          if echo "${udc##*/}" > "$G/UDC"; then
+            log "USB gadget bound to ${udc##*/}"
+            # The bind call alone does not imply a physical USB session.
+            # Observe the UDC's state without changing USB registers or VBUS.
+            (
+              n=0
+              activity=0
+              while [ "$n" -lt 25 ]; do
+                state=$(cat "$udc/state" 2>/dev/null || echo unknown)
+                case "$state" in
+                  configured)
+                    log "USB UDC CONFIGURED by host"
+                    led_heartbeat
+                    exit 0
+                    ;;
+                  powered|default|addressed|suspended)
+                    activity=1
+                    ;;
+                esac
+                n=$((n + 1))
+                sleep 1
+              done
+              if [ "$activity" -eq 1 ]; then
+                log "USB UDC did not configure despite host activity"
+                led_pattern 500 500
+              else
+                log "USB UDC bound but no session detected"
+                led_pattern 100 400
+              fi
+            ) &
+            exit 0
+          fi
+          log "USB bind rejected by kernel"
+        done
+        n=$((n + 1))
+        sleep 1
       done
-      n=$((n + 1))
-      sleep 1
-    done
-    log "USB UDC unavailable"
-  ) &
+      if [ "$saw_udc" = 1 ]; then
+        log "USB UDC exists but bind FAILED"
+        led_pattern 700 300
+      else
+        log "USB UDC controller absent after 30s"
+        led_pattern 100 900
+      fi
+    ) &
+  else
+    log "CONFIGFS gadget/ACM creation FAILED"
+    led_pattern 300 700
+  fi
+else
+  log "CONFIGFS mounting FAILED"
+  led_pattern 300 700
 fi
 # Never auto-probe removable storage. A future persistent rootfs can be
 # selected by the explicit pb626.root=sd kernel command-line argument.
@@ -98,7 +184,7 @@ if [ "$external" = 1 ] && [ "$unsafe" = 0 ]; then
   fi
   log "External root not available; retaining full RAM root"
 fi
-log "RAM Linux ready; inspect-pb626 and probe-pb626 available"
+log "RAM Linux userspace initialized; waiting for gadget UDC"
 cd /root || exit 1
 while :; do
   if [ -c /dev/ttyGS0 ]; then
