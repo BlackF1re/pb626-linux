@@ -84,6 +84,7 @@ jobs:
             -e USB_EHCI_HCD -e USB_EHCI_HCD_PLATFORM \
             -e USB_OHCI_HCD -e USB_OHCI_HCD_PLATFORM \
             -e MMC -e MMC_SUNXI -e EXT4_FS -e VFAT_FS \
+            -e BLK_DEV_INITRD -e RD_GZIP \
             -e DEVTMPFS -e DEVTMPFS_MOUNT -e CONFIGFS_FS \
             -e REGULATOR_TP65185X -e BACKLIGHT_PWM \
             -e MEDIA_SUPPORT -e MEDIA_PLATFORM_SUPPORT -e VIDEO_DEV \
@@ -93,7 +94,7 @@ jobs:
           # Megi's default reserves 128 MiB CMA from only 256 MiB RAM.
           "$c" --file linux/.config --set-val CMA_SIZE_MBYTES 32
           make -C linux olddefconfig
-          for key in USB_MUSB_SUNXI USB_CONFIGFS USB_CONFIGFS_ACM MMC_SUNXI REGULATOR_TP65185X VIDEO_DEV; do
+          for key in USB_MUSB_SUNXI USB_CONFIGFS USB_CONFIGFS_ACM MMC_SUNXI REGULATOR_TP65185X VIDEO_DEV BLK_DEV_INITRD RD_GZIP; do
             grep -q "^CONFIG_$key=y$" linux/.config || { echo "Missing required built-in: $key"; exit 1; }
           done
           for key in FB_SUN5I_EINK RTL8XXXU; do
