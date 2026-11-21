@@ -83,7 +83,7 @@ mkdir -p installer/{bin,lib,etc,dev,proc,sys,run,root,usr/sbin,opt/pb626-install
 cp -a rootfs/bin/busybox installer/bin/
 cp -a rootfs/lib/{ld-musl-armhf.so.1,libc.musl-armv7.so.1} installer/lib/
 cp rootfs/etc/{passwd,group} installer/etc/
-for applet in sh hostname mkdir grep mount umount cat blockdev sleep setsid \
+for applet in sh hostname mkdir grep mount umount cat blockdev sleep setsid ln \
   uname ls sha256sum mountpoint install gzip sync cp cmp mv sed reboot poweroff; do
   ln -s busybox "installer/bin/$applet"
 done
