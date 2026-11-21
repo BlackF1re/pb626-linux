@@ -140,7 +140,7 @@ jobs:
           grep -qx 'CONFIG_USB_CONFIGFS_ACM=y' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_CMA_SIZE_MBYTES=32' kernel-cache/pb626-megi.config
           echo "Prebuilt kernel cache hit: ${{ steps.cache.outputs.cache-hit }}"
-      - name: Build four current Device Trees (without kernel recompilation)
+      - name: Build five current Device Trees (without kernel recompilation)
         run: |
           set -euo pipefail
           export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
@@ -155,7 +155,7 @@ jobs:
           mkdir -p kernel-stage
           cp kernel-cache/* kernel-stage/
           cp dtb-stage/pb626-*.dtb kernel-stage/
-          test "$(find kernel-stage -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 4
+          test "$(find kernel-stage -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 5
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-kernel-stage
