@@ -51,7 +51,11 @@ for name in linux normal; do
     grep -iqF 'img_name = c:\linux\bImage' "$config" ||
     fail "Unexpected factory configuration: $name.ini"
 done
-test -s "$mountpoint/linux/bImage"
+if [ -e "$mountpoint/linux/bImage.pb" ]; then
+  test -s "$mountpoint/linux/bImage.pb"
+else
+  test -s "$mountpoint/linux/bImage"
+fi
 [ "$boot_only" = 1 ] || install -m 644 "$mountpoint/default.wbf" /run/pb626-factory.wbf
 umount "$mountpoint"
 
@@ -78,10 +82,19 @@ blockdev --setrw "$disk"
 blockdev --setrw "$boot"
 mount -t vfat "$boot" "$mountpoint"
 target="$mountpoint/linux"
-echo 'PB626 INSTALL: staging kernel on p2'
-for file in pb626.bin pb626rd.gz; do
+echo 'PB626 INSTALL: staging Linux boot files on p2'
+for file in bImage pbkern.bin pbdt.bin pb626rd.gz; do
   cp "$file" "$target/$file.new"
   cmp "$file" "$target/$file.new"
+done
+for name in recovery calibrate; do
+  config="$target/$name.ini"
+  if [ ! -e "$config.factory" ]; then
+    cp "$config" "$config.backup"
+    mv "$config.backup" "$config.factory"
+  fi
+  sed 's/\\bImage/\\bImage.pb/' "$config.factory" > "$config.new"
+  grep -qiF 'img_name = c:\linux\bImage.pb' "$config.new"
 done
 for name in linux normal; do
   config="$target/$name.ini"
@@ -91,28 +104,40 @@ for name in linux normal; do
   fi
   awk '
     BEGIN { ORS = "\r\n" }
-    { sub(/\r$/, "") }
-    /^\[script_info\]$/ {
+    function segment(name, size, address) {
       print "[segment]"
-      print "img_name = c:\\linux\\pb626rd.gz"
-      print "img_size = 0x400000"
-      print "img_base = 0x45000000"
+      print "img_name = c:\\linux\\" name
+      print "img_size = " size
+      print "img_base = " address
       print ""
     }
-    /^img_name / { $0 = "img_name = c:\\linux\\pb626.bin" }
+    { sub(/\r$/, "") }
+    /^\[script_info\]$/ {
+      segment("pbkern.bin", "0x800000", "0x42000000")
+      segment("pbdt.bin", "0x10000", "0x43200000")
+      segment("pb626rd.gz", "0x400000", "0x45000000")
+    }
+    /^img_size / { $0 = "img_size = 0x1000" }
     /^logo_show / { $0 = "logo_show = 0" }
     { print }
   ' "$config.factory" > "$config.new"
-  grep -qF 'img_name = c:\linux\pb626.bin' "$config.new"
-  grep -qF 'img_name = c:\linux\pb626rd.gz' "$config.new"
+  for file in bImage pbkern.bin pbdt.bin pb626rd.gz; do
+    grep -qiF 'img_name = c:\linux\'"$file" "$config.new"
+  done
 done
 sync
-for file in pb626.bin pb626rd.gz; do
+if [ ! -e "$target/bImage.pb" ]; then
+  mv "$target/bImage" "$target/bImage.pb"
+fi
+for file in bImage pbkern.bin pbdt.bin pb626rd.gz; do
   mv -f "$target/$file.new" "$target/$file"
 done
-for name in linux normal; do
+for name in linux normal recovery calibrate; do
   mv -f "$target/$name.ini.new" "$target/$name.ini"
 done
+if [ -e "$target/pb626.bin" ]; then
+  mv -f "$target/pb626.bin" "$target/pb626.old"
+fi
 sync
 cleanup
 trap - EXIT

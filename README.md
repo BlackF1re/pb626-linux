@@ -17,9 +17,10 @@ holding the FEL button. The normal boot uses the existing factory loader and
 mounts p8 as the writable root. The panel waveform is at
 `/lib/firmware/pb626/default.wbf`.
 
-To restore the factory system, boot the FEL restore environment and restore the
-original p8 and the p2 configuration, or use the full backup. The original p2
-configs are saved as `linux.ini.factory` and `normal.ini.factory` in `linux/`.
+To restore the factory system, use the full backup or restore the original
+p8 and the boot files in p2's `linux/` directory from FEL. Rename
+`bImage.pb` to `bImage` and restore each `*.ini.factory` as its matching
+`*.ini` file.
 
 ## Verified on the physical reader
 

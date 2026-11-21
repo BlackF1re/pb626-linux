@@ -99,16 +99,21 @@ fdtput -t x pb626-emmc-native.dtb /chosen linux,initrd-start "$(printf '%x' "$in
 fdtput -t x pb626-emmc-native.dtb /chosen linux,initrd-end "$(printf '%x' "$((initrd_start + native_initrd_size))")"
 arm-linux-gnueabihf-as boot/pb626-factory-entry.S -o pb626-emmc-entry.o
 arm-linux-gnueabihf-ld -Ttext=0x40008000 -e _start pb626-emmc-entry.o -o pb626-emmc-entry.elf
-arm-linux-gnueabihf-objcopy -O binary -j .text pb626-emmc-entry.elf pb626.bin
-test "$(stat -c '%s' pb626.bin)" -lt $((0x800000))
+arm-linux-gnueabihf-objcopy -O binary -j .text pb626-emmc-entry.elf bImage
+test "$(stat -c '%s' bImage)" -lt $((0x1000))
+test "$(stat -c '%s' dist/pb626-megi-zImage)" -lt $((0x800000))
+test "$(stat -c '%s' pb626-emmc-native.dtb)" -lt $((0x10000))
 
 install -m 755 boot/init-megi installer/init
 install -m 755 scripts/install-pb626-emmc.sh installer/usr/sbin/install-pb626-emmc
-install -m 644 pb626.bin pb626rd.gz pb626-emmc-root.ext4.gz installer/opt/pb626-install/
-sha256sum pb626.bin pb626rd.gz > installer/opt/pb626-install/BOOT-SHA256SUMS
+install -m 644 bImage pb626rd.gz pb626-emmc-root.ext4.gz installer/opt/pb626-install/
+install -m 644 dist/pb626-megi-zImage installer/opt/pb626-install/pbkern.bin
+install -m 644 pb626-emmc-native.dtb installer/opt/pb626-install/pbdt.bin
+(cd installer/opt/pb626-install && sha256sum bImage pbkern.bin pbdt.bin pb626rd.gz) \
+  > installer/opt/pb626-install/BOOT-SHA256SUMS
 sha256sum pb626-emmc-root.ext4.gz > installer/opt/pb626-install/SHA256SUMS
 tar -czf dist/pb626-emmc-boot.tar.gz -C installer/opt/pb626-install \
-  pb626.bin pb626rd.gz BOOT-SHA256SUMS -C "$PWD/scripts" install-pb626-emmc.sh
+  bImage pbkern.bin pbdt.bin pb626rd.gz BOOT-SHA256SUMS -C "$PWD/scripts" install-pb626-emmc.sh
 (cd installer && sudo find . -print0 | sudo cpio --null --owner=0:0 -o --format=newc --quiet) \
   | gzip -1 > dist/pb626-emmc-installer.cpio.gz
 
