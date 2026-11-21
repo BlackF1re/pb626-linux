@@ -23,7 +23,9 @@ user area. The factory stages load `/boot.axf` from the FAT16 bootloader
 partition (p2, LBA 73728). This AXF reads `/linux/linux.ini` for normal boot
 or `/linux/recovery.ini` for recovery. The stock normal configuration loads
 `/linux/bImage` as raw ARM code at `0x40008000`. The installer uses that
-entry point and p8 for Alpine.
+entry point and p8 for Alpine. It loads the Linux zImage at `0x41000000`,
+the stock recovery payload address, so it fits below the active `boot1`
+at `0x42400000`.
 
 To restore the factory system, use the full backup or restore the original
 p8 and the boot files in p2's `linux/` directory from FEL. Rename

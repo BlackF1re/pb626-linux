@@ -113,7 +113,8 @@ for name in linux normal; do
     }
     { sub(/\r$/, "") }
     /^\[script_info\]$/ {
-      segment("pbkern.bin", "0x800000", "0x42000000")
+      # Factory recovery uses this range. Boot1 is still live at 0x42400000.
+      segment("pbkern.bin", "0x800000", "0x41000000")
       segment("pbdt.bin", "0x10000", "0x43200000")
       segment("pb626rd.gz", "0x400000", "0x45000000")
     }

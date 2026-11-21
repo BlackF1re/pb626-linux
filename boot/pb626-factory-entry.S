@@ -11,8 +11,8 @@ _start:
     mrc p15, 0, r0, c1, c0, 0
     tst r0, #4
     beq disable_mmu
-    ldr r1, =0x42000000
-    ldr r2, =0x42800000
+    ldr r1, =0x41000000
+    ldr r2, =0x41800000
     bl clean_range
     ldr r1, =0x43200000
     ldr r2, =0x43210000
@@ -49,7 +49,7 @@ disable_mmu:
     mov r0, #0
     mvn r1, #0
     ldr r2, =0x43200000
-    ldr pc, =0x42000000
+    ldr pc, =0x41000000
 
 clean_range:
     mcr p15, 0, r1, c7, c10, 1  @ clean to PoC by MVA
