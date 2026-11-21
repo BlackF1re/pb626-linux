@@ -1,0 +1,14 @@
+diff --git a/drivers/net/wireless/realtek/rtl8xxxu/core.c b/drivers/net/wireless/realtek/rtl8xxxu/core.c
+--- a/drivers/net/wireless/realtek/rtl8xxxu/core.c
++++ b/drivers/net/wireless/realtek/rtl8xxxu/core.c
+@@ -6803,4 +6803,10 @@
+ 	dev_dbg(&priv->udev->dev, "%s\n", __func__);
+ 
++	/* A removed STA must not leave the Realtek MAC in station link mode.
++	 * Otherwise a subsequent monitor-only interface may receive no frames
++	 * until the device is reinitialized or another STA associates.
++	 */
++	rtl8xxxu_set_linktype(priv, NL80211_IFTYPE_UNSPECIFIED,
++			      rtlvif->port_num);
+ 	priv->vifs[rtlvif->port_num] = NULL;
+ }

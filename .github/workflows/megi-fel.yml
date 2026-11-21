@@ -9,6 +9,7 @@ on:
       - 'boot/**'
       - 'scripts/build-megi-variants.sh'
       - 'scripts/configure-megi-kernel.sh'
+      - 'patches/**'
       - 'scripts/build-alpine-rootfs.sh'
       - 'scripts/assemble-megi-ram.sh'
       - 'scripts/probe-device.sh'
@@ -20,6 +21,7 @@ on:
       - 'boot/**'
       - 'scripts/build-megi-variants.sh'
       - 'scripts/configure-megi-kernel.sh'
+      - 'patches/**'
       - 'scripts/build-alpine-rootfs.sh'
       - 'scripts/assemble-megi-ram.sh'
       - 'scripts/probe-device.sh'
@@ -88,7 +90,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kernel-cache
-          key: pb626-megi-kernel-v2-facc87117511221-${{ runner.os }}-${{ runner.arch }}-gcc${{ steps.compiler.outputs.version }}-${{ hashFiles('scripts/configure-megi-kernel.sh') }}
+          key: pb626-megi-kernel-v2-facc87117511221-${{ runner.os }}-${{ runner.arch }}-gcc${{ steps.compiler.outputs.version }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch') }}
       - name: Fetch pinned Megi 7.2 source and verify A13 drivers
         run: |
           set -euo pipefail
@@ -104,6 +106,9 @@ jobs:
           test -f linux/drivers/regulator/tp65185x.c
           test -f linux/arch/arm/configs/pocketbook_touch_lux_3_defconfig
           test -f linux/arch/arm/boot/dts/allwinner/sun5i-a13-pocketbook-touch-lux-3.dts
+          git -C linux apply --check "$GITHUB_WORKSPACE/patches/rtl8xxxu-reset-linktype.patch"
+          git -C linux apply "$GITHUB_WORKSPACE/patches/rtl8xxxu-reset-linktype.patch"
+          grep -A 13 '^static void rtl8xxxu_remove_interface' linux/drivers/net/wireless/realtek/rtl8xxxu/core.c | grep -Fq 'NL80211_IFTYPE_UNSPECIFIED'
       - name: Compile zImage and all modules only on cache miss
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -123,6 +128,7 @@ jobs:
           printf '%s\n' 'Tag: orange-pi-7.2-20260903-2131' \
             'Git commit: facc87117511221bb61410e3f92ad8579697f736' \
             'Maintainer: Ondrej Jirman (megi); mirror: Arnavion/linux' > kernel-cache/KERNEL-SOURCE.txt
+          echo 'Experimental local patch: patches/rtl8xxxu-reset-linktype.patch' >> kernel-cache/KERNEL-SOURCE.txt
       - name: Check cached or newly compiled zImage, modules and USB contract
         run: |
           set -euo pipefail

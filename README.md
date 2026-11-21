@@ -149,3 +149,24 @@ Radiotap with RSSI/channel/TSFT) and an Aircrack-ng directed probe test against
 user-owned AP `ACCESS_POINT` returned **30/30 responses (100%)** on channel 11.
 Those results demonstrate basic injection but do not guarantee the distinct
 802.11 operations used by hcxdumptool will succeed with `rtl8xxxu`.
+
+## Experimental RTL8188EU monitor-only RX regression test (2026-11-21)
+
+On the physical reader, RTL8188EU + `rtl8xxxu` under Megi 7.2 successfully
+captured Beacon frames with a separately created `mon0`, and probe injection
+returned 30/30 replies. But converting the existing `wlan0` from managed
+to monitor yielded **zero received frames**, including with `tcpdump` and
+`hcxdumptool`. Reapplying `iw ... set monitor control otherbss` did not
+resolve the failure. Re-association in managed mode and reloading the module
+both restored reception.
+
+A **test-only, unverified** kernel patch
+`patches/rtl8xxxu-reset-linktype.patch` clears the hardware link type to
+`MSR_LINKTYPE_NONE` in `rtl8xxxu_remove_interface()` after removal of a
+managed VIF. It addresses the observation that `rtl8xxxu_add_interface()`
+sets station link type, but removal previously cleared only the software VIF
+pointer. This is a hypothesis, **not an established root cause**. Never
+assume the patch works until the on-device negative/positive test is repeated.
+
+This patch changes only the external RAM boot kernel and is pinned and built
+in CI. Original DTB eMMC-disabled and frontlight safety checks remain in place.
