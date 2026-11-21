@@ -38,7 +38,7 @@ jobs:
           CONFIG_SYS_TEXT_BASE=0x4a000000
           CONFIG_USE_BOOTCOMMAND=y
           CONFIG_CMD_GPIO=y
-          CONFIG_BOOTCOMMAND="gpio clear PE8; if fatload mmc 1:2 0x42000000 linux/pbkern.bin && fatload mmc 1:2 0x43200000 linux/pbdt.bin && fatload mmc 1:2 0x45000000 linux/pb626rd.gz; then gpio set PE8; bootz 0x42000000 0x45000000:${filesize} 0x43200000; gpio clear PE8; fi"
+          CONFIG_BOOTCOMMAND="gpio clear PE8; if fatload mmc 1:2 0x42000000 linux/bImage; then gpio set PE8; bootz 0x42000000; gpio clear PE8; fi"
           CONFIG_ENV_IS_NOWHERE=y
           # CONFIG_ENV_IS_IN_MMC is not set
           # CONFIG_ENV_IS_IN_FAT is not set
@@ -47,7 +47,7 @@ jobs:
           make -C u-boot olddefconfig
           grep -Fx 'CONFIG_SYS_TEXT_BASE=0x4a000000' u-boot/.config
           grep -Fx 'CONFIG_SPL=y' u-boot/.config
-          grep -F 'CONFIG_BOOTCOMMAND="gpio clear PE8; if fatload mmc 1:2 ' u-boot/.config
+          grep -F 'fatload mmc 1:2 0x42000000 linux/bImage' u-boot/.config
           grep -Fx 'CONFIG_CMD_BOOTZ=y' u-boot/.config
           make -C u-boot -j"$(nproc)"
           mkdir dist
