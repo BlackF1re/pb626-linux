@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PocketBook 626 Plus / Touch Lux 3: canonical Megi 5.9 RAM-only FEL uploader.
+# PocketBook 626 Plus / Touch Lux 3: Megi mainline 7.2 RAM-only FEL uploader.
 #
 # Why this loader differs from stock sunxi-fel:
 #   * The board's BROM starts with MMU enabled. Restoring it after SPL can make
@@ -121,7 +121,7 @@ upload_verified() {
     rm -f "$run"/chunk-*
     echo "SUCCESS: $label"
 }
-upload_verified 'MEGI zImage' "$kernel" 0x42000000
+upload_verified 'MAINLINE zImage' "$kernel" 0x42000000
 upload_verified "DEVICE TREE $variant" "$fdt" 0x43200000
 upload_verified 'RAM INITRAMFS' "$ramfs" 0x45000000
 upload_verified 'ARM ENTRY STUB' "$entry" 0x41000000

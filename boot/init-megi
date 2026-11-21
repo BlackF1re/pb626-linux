@@ -24,7 +24,7 @@ for type in /sys/block/mmcblk*/device/type; do
 done
 # Modules are included in RAM, so no SD card is required for any driver.
 if [ -d "/lib/modules/$(uname -r)" ]; then
-  for module in r8188eu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
+  for module in rtl8xxxu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
     modprobe "$module" 2>/dev/null || true
   done
 fi

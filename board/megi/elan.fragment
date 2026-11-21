@@ -29,7 +29,10 @@
 /* This observed unit's factory /boot/vcom is -2440 mV.
  * Megi's TP65185 regulator driver uses the positive magnitude in uV.
  */
-&tp65185x {
-  regulator-min-microvolt = <2440000>;
-  regulator-max-microvolt = <2440000>;
+/* 7.2 uses a panel-specific VCOM property, not the old regulator
+ * node alias. -2440 mV is ONLY from this reader's factory /boot/vcom.
+ * Do not use this calibrated DTB with other units without verifying VCOM.
+ */
+&{/soc/display-controller@1c0c000} {
+  vcom-microvolt = <2440000>;
 };

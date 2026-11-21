@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build four FEL-only DTBs from Megi's original complete device tree.
+# Build four RAM-only DTBs from the pinned Megi 7.2 mainline device tree.
 set -euo pipefail
 if (( $# != 3 )); then
   echo 'usage: build-megi-variants.sh LINUX_TREE OUT_DIR REPOSITORY_ROOT' >&2
@@ -9,7 +9,10 @@ linux=$(realpath "$1")
 out=$(realpath -m "$2")
 repo=$(realpath "$3")
 export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
-src="$linux/arch/arm/boot/dts/sun5i-a13-pocketbook-touch-lux-3.dts"
+# Megi Linux >=6.5 moves the board DTS under the allwinner directory.
+src="$linux/arch/arm/boot/dts/allwinner/sun5i-a13-pocketbook-touch-lux-3.dts"
+test -f "$src"
+target=allwinner/sun5i-a13-pocketbook-touch-lux-3.dtb
 original=$(mktemp)
 cp "$src" "$original"
 trap 'cp "$original" "$src"; rm -f "$original"' EXIT
@@ -20,8 +23,8 @@ for variant in cypress elan focaltech no-touch; do
   if [[ $variant != cypress ]]; then
     cat "$repo/board/megi/$variant.fragment" >> "$src"
   fi
-  make -C "$linux" -j2 sun5i-a13-pocketbook-touch-lux-3.dtb
-  cp "$linux/arch/arm/boot/dts/sun5i-a13-pocketbook-touch-lux-3.dtb" "$out/pb626-$variant.dtb"
+  make -C "$linux" -j2 "$target"
+  cp "$linux/arch/arm/boot/dts/$target" "$out/pb626-$variant.dtb"
 done
 for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/memory@40000000' device_type)" = memory
@@ -38,7 +41,7 @@ for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/soc/spi@1c17000/flash@0' compatible)" = 'macronix,mx25u4033 jedec,spi-nor'
   test "$(fdtget -t s "$dtb" '/soc/i2c@1c2ac00/pmic@34' compatible)" = x-powers,axp209
   test "$(fdtget -t s "$dtb" '/soc/i2c@1c2b000/rtc@51' compatible)" = nxp,pcf8563
-  test "$(fdtget -t s "$dtb" '/soc/i2c@1c2b000/regulator@68' compatible)" = tp,tp65185x
+  test "$(fdtget -t s "$dtb" '/soc/i2c@1c2b000/pmic@68' compatible)" = ti,tps65185
   test "$(fdtget -t s "$dtb" '/backlight' compatible)" = pwm-backlight
   test "$(fdtget -t s "$dtb" '/leds' compatible)" = gpio-leds
 done

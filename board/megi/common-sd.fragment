@@ -1,4 +1,4 @@
-/* Development boot via FEL + microSD. Never enumerate the factory MMC2. */
+/* Development boot via FEL into RAM. Never enumerate factory eMMC/MMC2. */
 
 /*
  * The Megi board DTS does not declare system RAM. U-Boot normally patches
@@ -15,3 +15,7 @@
 
 &mmc0 { max-frequency = <12000000>; };
 &mmc2 { status = "disabled"; };
+/* Do not illuminate the panel at first boot. */
+&{/backlight} {
+  default-brightness-level = <0>;
+};

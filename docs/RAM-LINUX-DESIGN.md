@@ -19,15 +19,14 @@ automount and no flashing.
 
 ## Pinned source and 2026 backports
 
-Linux 5.9 Megi commit e98db7f114d7602c6b847d76e183787f0c97cf5b.
-Backports:
-- Ondrej Jirman, A13 pending-reload timer fix (2026-07-25):
-  https://lore-kernel.gnuweeb.org/lkml/9e9003b7-0331-4b37-9b06-5e9de887199e@oss.qualcomm.com/T/
-- Linux d21808328225ab8cee46885bf9a0dffcefbe630e, minimum timer delta.
+Megi mainline-based Linux 7.2 tag orange-pi-7.2-20260903-2131,
+published 2026-09-03 and pinned to exact commit
+facc87117511221bb61410e3f92ad8579697f736.
+Mirror: https://github.com/Arnavion/linux/tree/orange-pi-7.2-20260903-2131
 
-Do not claim these are **all** megi fixes published since 2020; that requires
-an independently versioned audit of all his later branches and mailing-list
-patch series.
+Both the 2026 sun4i timer reload race fix and timer minimum-delta fix are
+already included in this exact upstream source. We do not apply the old
+5.9 patches a second time. The tree includes E Ink, TPS65185 and RTL8XXXU.
 
 ## Remaining bring-up blockers
 
@@ -37,7 +36,9 @@ patch series.
 * ELAN KTF2K protocol vs elants EKTH3500 is unverified.
 * E Ink panel waveforms and userspace refresh, frontlight, GPIO keys, RTC,
   Wi-Fi USB host, power, battery and suspend/resume require real hardware tests.
-* Linux 5.9 is end-of-life. Long-term kernel modernization is separate.
+* Linux 7.2 is mainline-based, **not unmodified upstream**: E Ink remains
+  megi-specific. No claim of functional screen refresh without userspace
+  waveforms, temperature compensation and panel-safe calibration.
 
 Only move to on-device experiments after CI passes and inspect the actual
 published artifacts and known-good lab bootloader. Never flash eMMC.

@@ -1,4 +1,4 @@
-# PocketBook 626 Plus / Touch Lux 3 — Megi Linux 5.9
+# PocketBook 626 Plus / Touch Lux 3 — Megi mainline Linux 7.2
 
 Development Linux for the Allwinner A13 (256 MiB), booted **into RAM using FEL**.
 The current branch builds a **complete Alpine RAM root filesystem** containing
@@ -28,7 +28,7 @@ Prerequisites: `usbipd` on Windows; WSL2 distribution `XperiaDev` with
 boot files `pb626-spl.bin` and `direct-entry.bin` at `/root/pb626-lab`.
 These local binaries have **not yet been brought under reproducible CI**.
 
-1. Download the latest `pb626-megi-fel-sd-bundle` artifact from a successful
+1. Download the latest `pb626-mainline-7.2-ram-bundle` artifact from a successful
    [Megi workflow](.github/workflows/megi-fel.yml) and extract it to
    `C:\PB626\bundle`. Use a new successful RAM Linux build containing the fixed `/memory` node,
    `/chosen/linux,initrd-start/end` and matching RAM modules.
@@ -71,3 +71,16 @@ SPL, 52-byte entry stub and patched FEL tool still exist outside source
 control in the developer's WSL lab. Do not interpret passing CI as proof
 of working E Ink, ELAN touch, frontlight or system boot. Refer to
 [RAM Linux design](docs/RAM-LINUX-DESIGN.md) for risks and milestones.
+
+## Source of modern mainline-based kernel
+
+Experimental source: megi's **7.2** release `orange-pi-7.2-20260903-2131`,
+mirrored on GitHub at https://github.com/Arnavion/linux/tree/orange-pi-7.2-20260903-2131
+and pinned to commit `facc87117511221bb61410e3f92ad8579697f736`.
+This is mainline **plus out-of-tree PocketBook drivers**, not pristine
+`torvalds/linux`. Both 2026 sun4i timer fixes are already included.
+The historical 5.9 backport patches must not be reapplied.
+
+For the known ELAN unit the E Ink VCOM magnitude was recorded from its factory
+config as 2440 mV. The resulting ELAN DTB is calibrated for **that unit**;
+it must not be used for an unverified reader with a different panel VCOM.
