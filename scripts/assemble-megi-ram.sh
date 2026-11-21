@@ -68,7 +68,13 @@ for dtb in dist/pb626-*.dtb; do
   fdtput -t x "$dtb" /chosen linux,initrd-end "$(printf '%x' "$initrd_end")"
   test "$(fdtget -t x "$dtb" /chosen linux,initrd-start)" = "$(printf '%x' "$initrd_start")"
   test "$(fdtget -t x "$dtb" /chosen linux,initrd-end)" = "$(printf '%x' "$initrd_end")"
-  test "$(fdtget -t s "$dtb" /soc/mmc@1c11000 status)" = disabled
+  if [[ ${dtb##*/} == pb626-elan-emmc-backup.dtb ]]; then
+    test "$(fdtget -t s "$dtb" /soc/mmc@1c11000 status)" = okay
+    test "$(fdtget -t s "$dtb" /soc/mmc@1c0f000 status)" = disabled
+    fdtget "$dtb" /chosen pb626,emmc-backup >/dev/null
+  else
+    test "$(fdtget -t s "$dtb" /soc/mmc@1c11000 status)" = disabled
+  fi
   test "$(fdtget -t x "$dtb" /backlight default-brightness-level)" = 0
 done
 
@@ -102,6 +108,7 @@ VBUS detect. Test this variant FIRST and verify that frontlight goes off.
 elan-usbtest: same PB4-off configuration, plus experimental PG1 fallback.
 Use it ONLY AFTER the elan-lightoff test is safe and without other changes.
 elan-display: ELAN / ED060XD4 with PWM backlight, USB ACM and both MMC hosts off.
+elan-emmc-backup: dedicated USB backup from RAM with read-only eMMC and SD off.
 Never use these experimental DTBs on a reader with unverified GPIO pinout.
 Optional removable rootfs needs explicit pb626.root=sd and is read-only.
 SPL/ARM entry are external lab dependencies and remain unreviewed.

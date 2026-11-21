@@ -1,0 +1,14 @@
+&mmc0 {
+  status = "disabled";
+};
+
+&mmc2 {
+  max-frequency = <25000000>;
+  no-sd;
+  no-sdio;
+  status = "okay";
+};
+
+&{/chosen} {
+  pb626,emmc-backup;
+};

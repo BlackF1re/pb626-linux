@@ -17,7 +17,7 @@ original=$(mktemp)
 cp "$src" "$original"
 trap 'cp "$original" "$src"; rm -f "$original"' EXIT
 mkdir -p "$out"
-for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest elan-display; do
+for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest elan-display elan-emmc-backup; do
   cp "$original" "$src"
   cat "$repo/board/megi/common-sd.fragment" >> "$src"
   case "$variant" in
@@ -25,6 +25,11 @@ for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest elan-d
     elan-lightoff|elan-usbtest|elan-display)
       cat "$repo/board/megi/elan.fragment" >> "$src"
       cat "$repo/board/megi/$variant.fragment" >> "$src"
+      ;;
+    elan-emmc-backup)
+      for fragment in elan elan-usbtest elan-emmc-backup; do
+        cat "$repo/board/megi/$fragment.fragment" >> "$src"
+      done
       ;;
     *)
       cat "$repo/board/megi/$variant.fragment" >> "$src"
@@ -36,11 +41,17 @@ done
 for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/memory@40000000' device_type)" = memory
   test "$(fdtget -t x "$dtb" '/memory@40000000' reg)" = "40000000 10000000"
-  test "$(fdtget -t s "$dtb" '/soc/mmc@1c11000' status)" = disabled
+  emmc_status=disabled
   case "${dtb##*/}" in
+    pb626-elan-emmc-backup.dtb)
+      emmc_status=okay
+      sd_status=disabled
+      fdtget "$dtb" /chosen pb626,emmc-backup >/dev/null
+      ;;
     pb626-elan-display.dtb) sd_status=disabled ;;
     *) sd_status=okay ;;
   esac
+  test "$(fdtget -t s "$dtb" '/soc/mmc@1c11000' status)" = "$emmc_status"
   test "$(fdtget -t s "$dtb" '/soc/mmc@1c0f000' status)" = "$sd_status"
   test "$(fdtget -t s "$dtb" '/soc/display-controller@1c0c000' compatible)" = 'custom,pocketbook-touch-lux-3-tcon0-ed060xd4-display'
   # Essential Megi board devices: firmware pinout does not equal driver success.

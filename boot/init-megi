@@ -48,13 +48,40 @@ for bl in /sys/class/backlight/*; do
   log "frontlight-off attempted: $bl brightness=$(cat "$bl/brightness" 2>/dev/null) power=$(cat "$bl/bl_power" 2>/dev/null)"
 done
 unsafe=0
-for type in /sys/block/mmcblk*/device/type; do
-  [ -r "$type" ] || continue
-  if [ "$(cat "$type")" = MMC ]; then
-    unsafe=1
-    log "SAFETY ERROR: MMC-type device visible: $type"
+emmc_backup=0
+if [ -f /sys/firmware/devicetree/base/chosen/pb626,emmc-backup ]; then
+  emmc_backup=1
+  emmc=
+  n=0
+  while [ -z "$emmc" ] && [ "$n" -lt 15 ]; do
+    for path in /sys/bus/mmc/devices/mmc2:*/block/mmcblk*; do
+      [ -b "/dev/${path##*/}" ] && emmc=${path##*/}
+    done
+    [ -n "$emmc" ] && break
+    n=$((n + 1))
+    sleep 1
+  done
+  if [ -n "$emmc" ]; then
+    for dev in "/dev/$emmc" "/dev/${emmc}boot0" "/dev/${emmc}boot1" /dev/"${emmc}"gp* /dev/"${emmc}"p*; do
+      [ -b "$dev" ] || continue
+      if ! blockdev --setro "$dev" || [ "$(blockdev --getro "$dev")" != 1 ]; then
+        log "Cannot enforce read-only access to $dev"
+        exit 1
+      fi
+    done
+    log "eMMC backup: /dev/$emmc and its block partitions are read-only"
+  else
+    log "eMMC backup: MMC2 card did not enumerate"
   fi
-done
+else
+  for type in /sys/block/mmcblk*/device/type; do
+    [ -r "$type" ] || continue
+    if [ "$(cat "$type")" = MMC ]; then
+      unsafe=1
+      log "SAFETY ERROR: MMC-type device visible: $type"
+    fi
+  done
+fi
 # Modules are included in RAM, so no SD card is required for any driver.
 if [ -d "/lib/modules/$(uname -r)" ]; then
   for module in rtl8xxxu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
@@ -153,7 +180,7 @@ external=0
 for arg in $(cat /proc/cmdline); do
   [ "$arg" = pb626.root=sd ] && external=1
 done
-if [ "$external" = 1 ] && [ "$unsafe" = 0 ]; then
+if [ "$external" = 1 ] && [ "$unsafe" = 0 ] && [ "$emmc_backup" = 0 ]; then
   log "Opt-in external removable SD root requested"
   (
     n=0
@@ -195,7 +222,7 @@ log "RAM Linux userspace initialized; waiting for gadget UDC"
 # Optional per-boot private WLAN configuration. No Wi-Fi credentials
 # belong in public source or downloaded CI artifacts. Network startup
 # is non-blocking and is skipped unless a local RAM secret is provisioned.
-if [ -s /etc/pb626/wpa_supplicant.conf ] && [ -x /usr/sbin/pb626-network ]; then
+if [ "$emmc_backup" = 0 ] && [ -s /etc/pb626/wpa_supplicant.conf ] && [ -x /usr/sbin/pb626-network ]; then
   /usr/sbin/pb626-network >>/run/pb626-network.log 2>&1 &
 fi
 cd /root || exit 1
