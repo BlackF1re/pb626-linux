@@ -61,7 +61,9 @@ fi
 # 100ms on / 900ms off: no UDC controller registered.
 # 300ms on / 700ms off: CONFIGFS / ACM gadget setup failed.
 # 700ms on / 300ms off: UDC exists, but bind failed.
-# heartbeat (double pulse): UDC bind succeeded (NOT proof of enumeration).
+# 100ms/400ms: UDC bound, but bus remains not attached/unknown.
+# 500ms/500ms: bus saw host activity but was not configured.
+# heartbeat (double pulse): UDC reached CONFIGURED state.
 if mount -t configfs configfs /sys/kernel/config 2>/dev/null ||
    grep -q ' /sys/kernel/config configfs ' /proc/mounts; then
   G=/sys/kernel/config/usb_gadget/pb626
@@ -87,7 +89,34 @@ if mount -t configfs configfs /sys/kernel/config 2>/dev/null ||
           log "UDC detected: ${udc##*/}"
           if echo "${udc##*/}" > "$G/UDC"; then
             log "USB gadget bound to ${udc##*/}"
-            led_heartbeat
+            # The bind call alone does not imply a physical USB session.
+            # Observe the UDC's state without changing USB registers or VBUS.
+            (
+              n=0
+              activity=0
+              while [ "$n" -lt 25 ]; do
+                state=$(cat "$udc/state" 2>/dev/null || echo unknown)
+                case "$state" in
+                  configured)
+                    log "USB UDC CONFIGURED by host"
+                    led_heartbeat
+                    exit 0
+                    ;;
+                  powered|default|addressed|suspended)
+                    activity=1
+                    ;;
+                esac
+                n=$((n + 1))
+                sleep 1
+              done
+              if [ "$activity" -eq 1 ]; then
+                log "USB UDC did not configure despite host activity"
+                led_pattern 500 500
+              else
+                log "USB UDC bound but no session detected"
+                led_pattern 100 400
+              fi
+            ) &
             exit 0
           fi
           log "USB bind rejected by kernel"
