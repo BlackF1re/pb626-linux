@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/uboot.yml'
       - 'boot/pb626-uboot-entry.S'
+      - 'boot/pb626-emmc-init.c'
   workflow_dispatch:
     inputs:
       kernel_run_id:
@@ -36,7 +37,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-arm-linux-gnueabihf bc bison flex libssl-dev python3-pyelftools python3-setuptools
+            gcc-arm-linux-gnueabihf libc6-dev-armhf-cross bc bison flex libssl-dev \
+            python3-pyelftools python3-setuptools device-tree-compiler cpio
           git init u-boot
           git -C u-boot fetch --depth=1 https://codeberg.org/megi/u-boot.git "$UBOOT_REV"
           git -C u-boot checkout --detach FETCH_HEAD
@@ -51,7 +53,7 @@ jobs:
           CONFIG_USE_BOOTCOMMAND=y
           CONFIG_CMD_GPIO=y
           CONFIG_CMD_I2C=y
-          CONFIG_BOOTCOMMAND="if i2c dev 0; then i2c mw 0x34 0x0e 0x62 1; fi; gpio clear PE8; if itest.l *0x42000024 == 0x016f2818; then i2c mw 0x34 0x0e 0x64 1; bootz 0x42000000; i2c mw 0x34 0x0e 0x6f 1; elif fatload mmc 1:2 0x42000000 linux/bImage; then i2c mw 0x34 0x0e 0x63 1; bootz 0x42000000; i2c mw 0x34 0x0e 0x6f 1; else i2c mw 0x34 0x0e 0x6e 1; fi"
+          CONFIG_BOOTCOMMAND="if i2c dev 0; then i2c mw 0x34 0x0e 0x62 1; fi; gpio clear PE8; if itest.l *0x42000024 == 0x016f2818 && itest.l *0x44800000 == 0xedfe0dd0; then i2c mw 0x34 0x0e 0x65 1; setenv fdt_high 0xffffffff; setenv initrd_high 0xffffffff; setenv bootargs console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rw; bootz 0x42000000 0x45000000:0x60000 0x44800000; i2c mw 0x34 0x0e 0x6f 1; elif fatload mmc 1:2 0x42000000 linux/bImage; then i2c mw 0x34 0x0e 0x63 1; bootz 0x42000000; i2c mw 0x34 0x0e 0x6f 1; else i2c mw 0x34 0x0e 0x6e 1; fi"
           CONFIG_ENV_IS_NOWHERE=y
           # CONFIG_ENV_IS_IN_MMC is not set
           # CONFIG_ENV_IS_IN_FAT is not set
@@ -62,6 +64,7 @@ jobs:
           grep -Fx 'CONFIG_SPL=y' u-boot/.config
           grep -F 'fatload mmc 1:2 0x42000000 linux/bImage' u-boot/.config
           grep -Fx 'CONFIG_CMD_BOOTZ=y' u-boot/.config
+          grep -Fx 'CONFIG_OF_LIBFDT=y' u-boot/.config
           grep -Fx 'CONFIG_CMD_I2C=y' u-boot/.config
           grep -Fx 'CONFIG_CMD_ITEST=y' u-boot/.config
           grep -Fx 'CONFIG_CMD_SLEEP=y' u-boot/.config
@@ -70,11 +73,22 @@ jobs:
           cp u-boot/u-boot-sunxi-with-spl.bin dist/
           test "$(dd if=dist/u-boot-sunxi-with-spl.bin bs=1 skip=4 count=8 status=none)" = 'eGON.BT0'
           test "$(stat -c '%s' dist/u-boot-sunxi-with-spl.bin)" -le $((0x100000))
-          touch factory-kernel.bin
+          touch factory-kernel.bin factory-dtb.bin factory-initrd.bin
           if test -d kernel-bundle; then
             (cd kernel-bundle && sha256sum -c SHA256SUMS)
-            tar -xOf kernel-bundle/pb626-emmc-boot.tar.gz bImage > factory-kernel.bin
+            cp kernel-bundle/pb626-megi-zImage factory-kernel.bin
             test -s factory-kernel.bin
+            cp kernel-bundle/pb626-elan-emmc-backup.dtb native.dtb
+            fdtput -d native.dtb /chosen pb626,emmc-backup
+            fdtput -d native.dtb /chosen linux,initrd-start linux,initrd-end
+            fdtput -t x native.dtb /chosen pb626,emmc-root
+            dtc -q -I dtb -O dtb -p 4096 -o factory-dtb.bin native.dtb
+            mkdir -p early-root/{dev,sys,newroot}
+            "${CROSS_COMPILE}gcc" -Os -Wall -Wextra -static -s boot/pb626-emmc-init.c -o early-root/init
+            (cd early-root && find . -print0 | cpio --null -o -H newc --owner=0:0 --quiet) \
+              | gzip -9 > factory-initrd.bin
+            test "$(stat -c '%s' factory-initrd.bin)" -le $((0x60000))
+            truncate -s $((0x60000)) factory-initrd.bin
           fi
           "${CROSS_COMPILE}as" boot/pb626-uboot-entry.S -o uboot-entry.o
           "${CROSS_COMPILE}ld" -Ttext=0x40008000 -e _start uboot-entry.o -o uboot-entry.elf

@@ -31,6 +31,14 @@ _start:
     ldr r1, =kernel_end
     ldr r2, =0x42000000
     bl copy_image
+    ldr r0, =devicetree
+    ldr r1, =devicetree_end
+    ldr r2, =0x44800000
+    bl copy_image
+    ldr r0, =ramdisk
+    ldr r1, =ramdisk_end
+    ldr r2, =0x45000000
+    bl copy_image
     b disable_mmu
 
 /* Copy an image and publish it even if the factory loader left D-cache on. */
@@ -125,3 +133,11 @@ kernel:
     .incbin "factory-kernel.bin"
     .balign 4
 kernel_end:
+devicetree:
+    .incbin "factory-dtb.bin"
+    .balign 4
+devicetree_end:
+ramdisk:
+    .incbin "factory-initrd.bin"
+    .balign 4
+ramdisk_end:
