@@ -179,7 +179,13 @@ jobs:
           test -s dist/pb626-megi-initramfs.cpio.gz
           test -s dist/pb626-megi-rootfs.tar.gz
           test "$(find dist -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 4
-          gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t 2>/dev/null | grep -Fx './init' >/dev/null
+          # Avoid SIGPIPE from grep -q / early exit while cpio is still reading.
+          gzip -t dist/pb626-megi-initramfs.cpio.gz
+          gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t > dist/INITRAMFS-CONTENTS.txt 2>/dev/null
+          grep -Fx './init' dist/INITRAMFS-CONTENTS.txt >/dev/null
+          grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
+          grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
+          rm dist/INITRAMFS-CONTENTS.txt
           test -s dist/KERNEL-SOURCE.txt
           test -x initramfs/usr/bin/v4l2-ctl
           (cd dist && sha256sum pb626-megi-zImage *.dtb *.gz *.config > SHA256SUMS)
