@@ -1,4 +1,4 @@
-name: Megi Linux 5.9 FEL and microSD bundle
+name: Megi Linux 5.9 RAM Linux
 
 on:
   push:
@@ -9,8 +9,11 @@ on:
       - 'boot/init-megi'
       - 'boot/pb626-init-megi'
       - 'scripts/build-megi-variants.sh'
-      - 'scripts/make-sd-image.sh'
+      - 'patches/megi-timer-reload-2026.patch'
+      - 'patches/sun4i-min-delta-2026.patch'
+      - 'scripts/probe-device.sh'
       - 'scripts/inspect-live.sh'
+      - 'boot/init-megi'
   workflow_dispatch:
 
 concurrency:
@@ -40,6 +43,15 @@ jobs:
           git clone --depth 1 --branch orange-pi-5.9 \
             https://github.com/sailfish-on-dontbeevil/kernel-megi.git linux
           test "$(git -C linux rev-parse HEAD)" = e98db7f114d7602c6b847d76e183787f0c97cf5b
+      - name: Apply verified 2026 A13 clocksource backports
+        shell: bash
+        run: |
+          set -euo pipefail
+          for patch in patches/megi-timer-reload-2026.patch patches/sun4i-min-delta-2026.patch; do
+            git -C linux apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C linux apply "$GITHUB_WORKSPACE/$patch"
+          done
+          git -C linux diff --check
       - name: Configure full PB626 support without external boot-time modules
         shell: bash
         run: |
@@ -75,7 +87,7 @@ jobs:
           bash scripts/build-megi-variants.sh linux dist "$PWD"
           cp linux/.config dist/pb626-megi.config
           make -s -C linux kernelrelease > dist/KERNELRELEASE
-      - name: Assemble Alpine rootfs and independent RAM rescue initramfs
+      - name: Assemble Alpine rootfs and full RAM initramfs
         shell: bash
         run: |
           set -euo pipefail
@@ -86,24 +98,6 @@ jobs:
           sha256sum -c "$f.sha256"
           mkdir -p rootfs initramfs
           sudo tar --numeric-owner -xzf "$f" -C rootfs
-          sudo tar --numeric-owner -xzf "$f" -C initramfs
-          sudo install -m 755 boot/init-megi initramfs/init
-          sudo mkdir -p initramfs/newroot initramfs/run initramfs/sys/kernel/config
-          (cd initramfs && sudo find . -print0 | sudo cpio --null -o --format=newc --quiet) \
-            | gzip -9 > dist/pb626-megi-initramfs.cpio.gz
-          # The FEL entry stub stages this compressed archive at 0x45000000.
-          # On DT boot, Linux needs /chosen/linux,initrd-{start,end}. Old
-          # bootstrap-specific ATAG initrd arguments are not sufficient.
-          initrd_start=$((0x45000000))
-          initrd_size=$(stat -c '%s' dist/pb626-megi-initramfs.cpio.gz)
-          initrd_end=$((initrd_start + initrd_size))
-          test "$initrd_end" -lt $((0x50000000))  # 256 MiB DRAM window
-          for dtb in dist/pb626-*.dtb; do
-            fdtput -t x "$dtb" /chosen linux,initrd-start "$(printf '%x' "$initrd_start")"
-            fdtput -t x "$dtb" /chosen linux,initrd-end "$(printf '%x' "$initrd_end")"
-            test "$(fdtget -t x "$dtb" /chosen linux,initrd-start)" = "$(printf '%x' "$initrd_start")"
-            test "$(fdtget -t x "$dtb" /chosen linux,initrd-end)" = "$(printf '%x' "$initrd_end")"
-          done
           sudo install -d rootfs/usr/bin rootfs/dev rootfs/proc rootfs/sys rootfs/run rootfs/root rootfs/media/pb626-config
           test -e rootfs/dev/null || sudo mknod -m 666 rootfs/dev/null c 1 3
           sudo cp /usr/bin/qemu-arm-static rootfs/usr/bin/qemu-arm-static
@@ -125,9 +119,31 @@ jobs:
           printf '%s\n' "$kernel_release" > dist/KERNELRELEASE
           sudo make -C linux modules_install KERNELRELEASE="$kernel_release" INSTALL_MOD_PATH="$PWD/rootfs" DEPMOD=true
           sudo depmod -b rootfs "$kernel_release"
+          # The RAM initramfs is a full Alpine rootfs with matching modules.
+          sudo cp -a rootfs/. initramfs/
+          sudo install -m 755 boot/init-megi initramfs/init
+          sudo install -m 755 scripts/inspect-live.sh initramfs/usr/sbin/inspect-pb626
+          sudo install -m 755 scripts/probe-device.sh initramfs/usr/sbin/probe-pb626
+          sudo mkdir -p initramfs/newroot initramfs/sys/kernel/config
+          test -e initramfs/dev/null || sudo mknod -m 666 initramfs/dev/null c 1 3
+          (cd initramfs && sudo find . -print0 | sudo cpio --null -o --format=newc --quiet) \
+            | gzip -9 > dist/pb626-megi-initramfs.cpio.gz
+          # The direct ARM stub does not apply U-Boot FDT fixups.
+          initrd_start=$((0x45000000))
+          initrd_size=$(stat -c '%s' dist/pb626-megi-initramfs.cpio.gz)
+          initrd_end=$((initrd_start + initrd_size))
+          test "$initrd_end" -lt $((0x50000000))
+          for dtb in dist/pb626-*.dtb; do
+            fdtput -t x "$dtb" /chosen linux,initrd-start "$(printf '%x' "$initrd_start")"
+            fdtput -t x "$dtb" /chosen linux,initrd-end "$(printf '%x' "$initrd_end")"
+            test "$(fdtget -t x "$dtb" /chosen linux,initrd-start)" = "$(printf '%x' "$initrd_start")"
+            test "$(fdtget -t x "$dtb" /chosen linux,initrd-end)" = "$(printf '%x' "$initrd_end")"
+            test "$(fdtget -t s "$dtb" /soc/mmc@1c11000 status)" = disabled
+          done
+          # An ordinary persistent rootfs archive can be prepared later,
+          # but remains independent of the default RAM-only boot.
+          sudo tar -C rootfs -czf dist/pb626-megi-rootfs.tar.gz .
           sudo tar -C rootfs -czf dist/pb626-megi-modules.tar.gz lib/modules
-          sudo bash scripts/make-sd-image.sh rootfs dist/pb626-megi-sd.img
-          sudo gzip -1 -n dist/pb626-megi-sd.img
           sudo chown -R "$USER:$USER" dist
       - name: Verify build outputs and publish checksums
         shell: bash
@@ -135,17 +151,17 @@ jobs:
           set -euo pipefail
           test -s dist/pb626-megi-zImage
           test -s dist/pb626-megi-initramfs.cpio.gz
-          test -s dist/pb626-megi-sd.img.gz
+          test -s dist/pb626-megi-rootfs.tar.gz
           test "$(find dist -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 4
           (cd dist && sha256sum pb626-megi-zImage *.dtb *.gz *.config > SHA256SUMS)
           cat > dist/README.txt <<'NOTE'
-          EXPERIMENTAL FEL + microSD ONLY. NEVER FLASH THE INTERNAL EMMC.
+          EXPERIMENTAL FULL RAM ALPINE. NEVER FLASH THE INTERNAL EMMC.
           Source: Megi Linux 5.9 pinned e98db7f114d7602c6b847d76e183787f0c97cf5b.
           Select one DTB: cypress / elan / focaltech / no-touch.
           ELAN/FocalTech protocols unverified. E Ink requires waveform-aware userspace.
-          RAM initramfs has USB serial recovery when microSD is unavailable.
+          Full RAM Alpine initramfs includes matching modules and USB ACM shell.
           Use zImage + initramfs + DTB with the proven FEL SPL/entry loader.
-          SD .img.gz is for removable microSD only and contains matching modules.
+          Future rootfs handoff is explicitly opt-in; no SD disk image is generated.
           NOTE
       - uses: actions/upload-artifact@v4
         with:

@@ -1,66 +1,108 @@
 #!/bin/sh
-# Megi Linux 5.9 RAM initramfs; no eMMC, no auto display updates.
+# Full Alpine rootfs in RAM. External removable rootfs is OPT-IN.
 set -u
-export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-mkdir -p /dev /proc /sys /run /newroot /sys/kernel/config
-mount -t devtmpfs devtmpfs /dev
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t tmpfs tmpfs /run
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin HOME=/root TERM=vt100
+mkdir -p /dev /proc /sys /run /newroot /dev/pts /sys/kernel/config
+mount -t devtmpfs devtmpfs /dev || exit 1
+mount -t proc proc /proc || exit 1
+mount -t sysfs sysfs /sys || exit 1
+mount -t tmpfs tmpfs /run || exit 1
+mount -t devpts devpts /dev/pts 2>/dev/null || true
 exec >/run/pb626-boot.log 2>&1
-echo "PB626 Megi FEL kernel $(uname -r)"
-mount -t configfs configfs /sys/kernel/config || true
+log() {
+  echo "pb626: $*"
+  echo "pb626: $*" >/dev/kmsg 2>/dev/null || true
+}
+log "RAM Linux reached /init, kernel $(uname -r)"
+unsafe=0
+for type in /sys/block/mmcblk*/device/type; do
+  [ -r "$type" ] || continue
+  if [ "$(cat "$type")" = MMC ]; then
+    unsafe=1
+    log "SAFETY ERROR: MMC-type device visible: $type"
+  fi
+done
+# Modules are included in RAM, so no SD card is required for any driver.
+if [ -d "/lib/modules/$(uname -r)" ]; then
+  for module in r8188eu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
+    modprobe "$module" 2>/dev/null || true
+  done
+fi
+mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
 G=/sys/kernel/config/usb_gadget/pb626
 if [ -d /sys/kernel/config/usb_gadget ]; then
-  mkdir -p "$G"
+  mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409" "$G/functions/acm.usb0"
   echo 0x0525 > "$G/idVendor"
   echo 0xa4a7 > "$G/idProduct"
   echo 0x02 > "$G/bDeviceClass"
   echo 0x02 > "$G/bDeviceSubClass"
-  mkdir -p "$G/strings/0x409" "$G/configs/c.1" "$G/functions/acm.usb0"
-  echo PB626FEL01 > "$G/strings/0x409/serialnumber"
+  echo PB626RAM01 > "$G/strings/0x409/serialnumber"
   echo PocketBook > "$G/strings/0x409/manufacturer"
-  echo 'PB626 Megi Linux USB Console' > "$G/strings/0x409/product"
+  echo 'PocketBook RAM Linux Console' > "$G/strings/0x409/product"
+  echo 'USB ACM console' > "$G/configs/c.1/strings/0x409/configuration"
   ln -s "$G/functions/acm.usb0" "$G/configs/c.1/acm.usb0" 2>/dev/null || true
-  for n in 1 2 3 4 5 6 7 8 9 10; do
-    for ctl in /sys/class/udc/*; do
-      if [ -e "$ctl" ]; then
-        echo "$(basename "$ctl")" > "$G/UDC" && break 2
-      fi
+  (
+    n=0
+    while [ "$n" -lt 30 ]; do
+      for udc in /sys/class/udc/*; do
+        [ -e "$udc" ] || continue
+        echo "${udc##*/}" >"$G/UDC" && { log "USB gadget bound"; exit 0; }
+      done
+      n=$((n + 1))
+      sleep 1
     done
-    sleep 1
-  done
+    log "USB UDC unavailable"
+  ) &
 fi
-# A microSD mount can block in uninterruptible I/O: keep PID1 responsive.
-(
+# Never auto-probe removable storage. A future persistent rootfs can be
+# selected by the explicit pb626.root=sd kernel command-line argument.
+external=0
+for arg in $(cat /proc/cmdline); do
+  [ "$arg" = pb626.root=sd ] && external=1
+done
+if [ "$external" = 1 ] && [ "$unsafe" = 0 ]; then
+  log "Opt-in external removable SD root requested"
+  (
+    n=0
+    while [ "$n" -lt 10 ]; do
+      for sysdev in /sys/block/mmcblk*; do
+        [ -r "$sysdev/device/type" ] || continue
+        [ "$(cat "$sysdev/device/type")" = SD ] || continue
+        [ "$(cat "$sysdev/removable" 2>/dev/null)" = 1 ] || continue
+        dev=/dev/${sysdev##*/}p1
+        [ -b "$dev" ] || continue
+        if mount -t ext4 -o ro,noload "$dev" /newroot; then
+          if [ "$(cat /newroot/etc/pb626-image-id 2>/dev/null)" = pb626-external-alpine-v1 ] &&
+             [ -x /newroot/sbin/pb626-init ]; then
+            touch /run/pb626-root-ready
+            exit 0
+          fi
+          umount /newroot || true
+        fi
+      done
+      n=$((n + 1))
+      sleep 1
+    done
+  ) >/run/pb626-sd.log 2>&1 &
   n=0
-  while [ "$n" -lt 10 ]; do
-    if [ -b /dev/mmcblk0p1 ]; then
-      if mount -t ext4 -o ro,noload /dev/mmcblk0p1 /newroot &&
-        [ "$(cat /newroot/etc/pb626-image-id 2>/dev/null)" = pb626-external-alpine-v1 ]; then
-        touch /run/pb626-root-ready
-        exit 0
-      fi
-      mountpoint -q /newroot && umount /newroot
-    fi
+  while [ "$n" -lt 15 ]; do
+    [ -f /run/pb626-root-ready ] && break
     n=$((n + 1))
     sleep 1
   done
-) >/run/pb626-sd.log 2>&1 &
-for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-  [ -f /run/pb626-root-ready ] && break
-  sleep 1
-done
-if [ -f /run/pb626-root-ready ]; then
-  echo 'microSD root verified, starting Alpine'
-  for fs in dev proc sys; do mount -o move "/$fs" "/newroot/$fs"; done
-  mount -o move /run /newroot/run
-  exec switch_root /newroot /sbin/pb626-init
+  if [ -f /run/pb626-root-ready ]; then
+    log "Switching to verified read-only removable rootfs"
+    for fs in dev proc sys; do mount -o move "/$fs" "/newroot/$fs"; done
+    mount -o move /run /newroot/run
+    exec switch_root /newroot /sbin/pb626-init
+  fi
+  log "External root not available; retaining full RAM root"
 fi
-echo 'No microSD root: RAM rescue USB serial shell. Factory eMMC not enumerated.'
+log "RAM Linux ready; inspect-pb626 and probe-pb626 available"
+cd /root || exit 1
 while :; do
   if [ -c /dev/ttyGS0 ]; then
-    setsid -c sh -c 'cat /run/pb626-boot.log; cat /run/pb626-sd.log; exec sh -i' </dev/ttyGS0 >/dev/ttyGS0 2>&1
+    setsid -c sh -c 'printf "\r\nPB626 RAM Linux\r\n"; cat /run/pb626-boot.log; exec sh -i' </dev/ttyGS0 >/dev/ttyGS0 2>&1 || true
   fi
   sleep 1
 done
