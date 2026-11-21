@@ -24,6 +24,25 @@ sudo chroot rootfs /usr/bin/qemu-arm-static /sbin/apk add --no-cache \
   openssh-server openssh-keygen e2fsprogs usbutils i2c-tools \
   lm-sensors iproute2 tcpdump aircrack-ng v4l-utils
 
+# Build hcxdumptool 7.1.2 as native Alpine/musl ARMv7 on the CI runner
+# under QEMU; do NOT install the large compiler toolchain onto the reader.
+# Pin upstream commit and verify exactly what source we compile.
+hcx_revision=10aa88d3e955f507f56d24d3779ac251c4004c1c
+git clone --quiet https://github.com/ZerBea/hcxdumptool.git hcx-source
+test "$(git -C hcx-source rev-parse "$hcx_revision^{commit}")" = "$hcx_revision"
+git -C hcx-source checkout --quiet --detach "$hcx_revision"
+sudo install -d rootfs/tmp/hcxdumptool
+sudo cp -a hcx-source/. rootfs/tmp/hcxdumptool/
+sudo chroot rootfs /usr/bin/qemu-arm-static /sbin/apk add --no-cache libpcap
+sudo chroot rootfs /usr/bin/qemu-arm-static /sbin/apk add --no-cache \
+  --virtual .pb626-hcx-build build-base linux-headers libpcap-dev openssl-dev
+sudo chroot rootfs /usr/bin/qemu-arm-static /usr/bin/make -C /tmp/hcxdumptool -j1
+sudo chroot rootfs /usr/bin/qemu-arm-static /usr/bin/make -C /tmp/hcxdumptool install
+sudo chroot rootfs /usr/bin/qemu-arm-static /usr/bin/hcxdumptool -v
+test -s rootfs/usr/bin/hcxdumptool
+sudo chroot rootfs /usr/bin/qemu-arm-static /sbin/apk del .pb626-hcx-build
+sudo rm -rf rootfs/tmp/hcxdumptool hcx-source
+
 sudo rm -f rootfs/usr/bin/qemu-arm-static
 printf 'nameserver 1.1.1.1\n' | sudo tee rootfs/etc/resolv.conf >/dev/null
 sudo chmod 1777 rootfs/tmp

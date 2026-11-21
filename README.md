@@ -130,3 +130,22 @@ with verified packet injection.
 `power_supply` separately exports battery charge state/capacity. OpenSSH
 is installed but no TCP listener was present; no unrestricted root SSH
 service is enabled. Avoid starting unauthenticated root SSH on Wi-Fi.
+
+## hcxdumptool lab-only diagnostics
+
+The ARMv7 Alpine RAM image also contains **hcxdumptool 7.1.2**, built from
+ZerBea upstream Git revision `10aa88d3e955f507f56d24d3779ac251c4004c1c`
+under QEMU; no compiler, build dependencies, or tools are installed to factory
+flash. The bundled tool is not launched automatically. Its default operation
+includes active Wi-Fi interaction, possibly disconnecting stations and
+recording authentication-related data. Use only in a radio-shielded, fully
+owned lab. The project intentionally retains the USB CDC console as the
+control channel while hcxdumptool takes exclusive control of the real
+`wlan0`; do **not** run it on `mon0` or concurrently with
+`wpa_supplicant`/Aircrack-ng. A user must start/stop it explicitly.
+
+A prior live experiment confirmed RTL8188EU monitor reception (20 Beacon frames,
+Radiotap with RSSI/channel/TSFT) and an Aircrack-ng directed probe test against
+user-owned AP `ACCESS_POINT` returned **30/30 responses (100%)** on channel 11.
+Those results demonstrate basic injection but do not guarantee the distinct
+802.11 operations used by hcxdumptool will succeed with `rtl8xxxu`.
