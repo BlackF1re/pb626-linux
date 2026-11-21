@@ -83,10 +83,8 @@ blockdev --setrw "$boot"
 mount -t vfat "$boot" "$mountpoint"
 target="$mountpoint/linux"
 echo 'PB626 INSTALL: staging Linux boot files on p2'
-for file in bImage pbkern.bin pbdt.bin pb626rd.gz; do
-  cp "$file" "$target/$file.new"
-  cmp "$file" "$target/$file.new"
-done
+cp bImage "$target/bImage.new"
+cmp bImage "$target/bImage.new"
 for name in recovery calibrate; do
   config="$target/$name.ini"
   if [ ! -e "$config.factory" ]; then
@@ -104,40 +102,27 @@ for name in linux normal; do
   fi
   awk '
     BEGIN { ORS = "\r\n" }
-    function segment(name, size, address) {
-      print "[segment]"
-      print "img_name = c:\\linux\\" name
-      print "img_size = " size
-      print "img_base = " address
-      print ""
-    }
     { sub(/\r$/, "") }
-    /^\[script_info\]$/ {
-      # Factory recovery uses this range. Boot1 is still live at 0x42400000.
-      segment("pbkern.bin", "0x800000", "0x41000000")
-      segment("pbdt.bin", "0x10000", "0x43200000")
-      segment("pb626rd.gz", "0x400000", "0x45000000")
-    }
-    /^img_size / { $0 = "img_size = 0x1000" }
+    /^img_size / { $0 = "img_size = 0x900000" }
     /^logo_show / { $0 = "logo_show = 0" }
     { print }
   ' "$config.factory" > "$config.new"
-  for file in bImage pbkern.bin pbdt.bin pb626rd.gz; do
-    grep -qiF 'img_name = c:\linux\'"$file" "$config.new"
-  done
+  grep -qiF 'img_name = c:\linux\bImage' "$config.new"
+  grep -qF 'img_size = 0x900000' "$config.new"
 done
 sync
 if [ ! -e "$target/bImage.pb" ]; then
   mv "$target/bImage" "$target/bImage.pb"
 fi
-for file in bImage pbkern.bin pbdt.bin pb626rd.gz; do
-  mv -f "$target/$file.new" "$target/$file"
-done
+mv -f "$target/bImage.new" "$target/bImage"
 for name in linux normal recovery calibrate; do
   mv -f "$target/$name.ini.new" "$target/$name.ini"
 done
 sync
-rm -f "$target/pb626.bin"
+umount "$mountpoint"
+mount -t vfat -o ro "$boot" "$mountpoint"
+cmp bImage "$target/bImage"
+grep -qF 'img_size = 0x900000' "$target/linux.ini"
 cleanup
 trap - EXIT
 echo 'PB626 INSTALL COMPLETE. Reboot without FEL.'
