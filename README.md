@@ -17,18 +17,19 @@ untouched.
   - `uname -a`: `Linux (none) 7.2.0-gfacc87117511 ... armv7l Linux`.
   - `/etc/os-release`: `Alpine Linux v3.24.4`.
   - `cat /sys/class/udc/*/state`: `configured`.
-- Frontlight control requires further driver work. On this unit the
-  `elan-lightoff` and `elan-usbtest` DTBs disable the PWM/backlight drivers
-  and hold active-high enable PB4 LOW: this **physically extinguished** the
-  frontlight in a real boot. The stock `elan` DTB left it brightly lit.
+- The `elan-display` variant boots with the frontlight off. Two brightness
+  levels and switch-off were verified through `/sys/class/backlight`.
+- The ED060XD4 panel cleared to white and displayed a portrait monochrome
+  image via the `sun5i-eink` V4L2 output at `/dev/video0`. This used
+  the factory RESET and DU waveforms and the unit's calibrated VCOM.
 - USB with factory-compatible PG1 VBUS sensing did **not** enumerate. The
   `elan-usbtest` variant, which removes that sensing GPIO and uses the
   sun4i PHY fallback, **did enumerate**. This diagnoses a likely modern-driver
   VBUS-detection problem but is not proof PG1 is miswired. The factory OS
   successfully uses the same PG1 GPIO.
 
-**Not yet verified:** E Ink display refresh and waveform driving, touch
-input, battery/power management, suspend, Wi-Fi, removable SD root, panel
+**Not yet verified:** E Ink grayscale refresh, touch input, battery/power
+management, suspend, Wi-Fi, removable SD root, panel
 voltage safety on other units, or boot without the local FEL tools.
 
 ## RAM-only safety boundary
@@ -62,14 +63,14 @@ local FEL tools/SPL/stub.
    one another at `C:\PB626`.
 3. Fully power off, disconnect USB, then enter FEL using the far-right
    **Menu** button while reconnecting the USB cable.
-4. For the **specific already-verified ELAN reader**, use the experimental
-   USB/frontlight diagnostic variant:
+4. For the **specific already-verified ELAN reader**, use the display
+   diagnostic variant:
 
    ```powershell
    powershell.exe -NoProfile -ExecutionPolicy Bypass `
      -File C:\PB626\Start-PB626.ps1 `
      -BundleDir C:\PB626\bundle `
-     -Variant elan-usbtest -Profile standard -Distro XperiaDev
+     -Variant elan-display -Profile diagnostic -Distro XperiaDev
    ```
 
    `elan-lightoff` leaves factory PG1 USB sensing in place, turning off
@@ -91,6 +92,17 @@ local FEL tools/SPL/stub.
 If the frontlight stays at maximum unexpectedly, promptly power down; do
 not leave an unverified image running. Do not assume an `execute` return code
 proves Linux booted: verify the console and kernel output.
+
+To reproduce the monochrome panel test, run
+`python scripts/render-pb626-epd.py default.wbf TEMPERATURE_MC image.png panel`
+on the host with Pillow. Use the factory waveform from the offline dump and
+the current TPS65185 temperature from hwmon. Transfer the two resulting
+streams to RAM, decompress them, and stream RESET first and DU second with
+`v4l2-ctl -d /dev/video0 --set-fmt-video-out=width=304,height=767,pixelformat=EPDW`.
+For each stream also pass `--stream-from-hdr=FILE`, the printed buffer count
+as `--stream-out-mmap=N`, and allow queued updates to finish with
+`--stream-sleep=count=0,sleep=MS,mode=0`. At 40 °C, RESET used 12 buffers
+and 1800 ms, and DU used 2 buffers and 450 ms.
 
 ## Development / build
 
