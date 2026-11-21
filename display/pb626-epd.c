@@ -5,7 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <glob.h>
-#include <linux/videodev2.h>
+#include <linux/sun5i-eink.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -20,7 +20,8 @@
 
 enum { SOURCES = 1024, GATES = 758, PIXELS = SOURCES * GATES,
        CLOCKS = 304, ROWS = 767, DATA_ROW = 6, DATA_CLOCK = 40,
-       GATE_HIGH_CLOCKS = 85, GROUPS = SOURCES / 4, HEADER_WORDS = 16,
+       GATE_HIGH_CLOCKS = 85, GROUPS = SOURCES / 4,
+       HEADER_WORDS = SUN5I_EINK_HDR_SIZE / sizeof(uint32_t),
        FRAME_WORDS = HEADER_WORDS + CLOCKS * ROWS, FRAME_BYTES = FRAME_WORDS * 4,
        LEVELS = 16, WHITE = LEVELS - 1, TRANSITIONS = LEVELS * LEVELS,
        LUT_BYTES = TRANSITIONS / 4, MAX_PHASES = 256, QUEUE_SIZE = 12 };
@@ -150,7 +151,7 @@ static void load_waveform(struct waveform *wbf, const char *path)
 
 	const uint8_t *data = wbf->data;
 	if (le_value(data + 4, 4) != wbf->size || le_value(data, 4) != wbf_crc(data, wbf->size) ||
-	    data[0x10] != 0x23 || data[0x24] != 0 || data[0x27] != 1 ||
+	    data[0x10] != 0x23 || data[0x18] != 85 || data[0x24] != 0 || data[0x27] != 1 ||
 	    data[0x28] != 255 || data[0x29] != 252)
 		fail("expected the factory 16-level WBF, mode version 0x23");
 
@@ -325,7 +326,7 @@ static void scan_template(uint32_t *frame)
 	/* ED060XD4 geometry and control sequences from Megi's fixed-panel driver. */
 	const unsigned int third = CLOCKS / 3;
 	uint32_t *out = frame + HEADER_WORDS;
-	frame[0] = htole32(0x46445045);
+	frame[0] = htole32(SUN5I_EINK_HDR_MAGIC);
 	out = span(out, 20, IDLE);
 	out = span(out, 2 * third, IDLE | G_CLK);
 	out = span(out, CLOCKS - 20 - 2 * third, IDLE);
@@ -475,7 +476,7 @@ int main(int argc, char **argv)
 		fail("could not acquire the sun5i-eink output");
 
 	struct v4l2_format fmt = { .type = type, .fmt.pix = {
-		.width = CLOCKS, .height = ROWS, .pixelformat = v4l2_fourcc('E','P','D','W'),
+		.width = CLOCKS, .height = ROWS, .pixelformat = SUN5I_EINK_FMT_PIN32,
 	} };
 	if (retry_ioctl(fd, VIDIOC_S_FMT, &fmt) || fmt.fmt.pix.sizeimage != FRAME_BYTES ||
 	    fmt.fmt.pix.bytesperline != CLOCKS * 4)
@@ -483,6 +484,15 @@ int main(int argc, char **argv)
 
 	struct waveform wbf;
 	load_waveform(&wbf, argv[1]);
+	/* The stock WBF targets 85 scans/s. The A13 clock tree supplies
+	 * 22.5 MHz here, giving 84.5 scans/s with Megi's porch settings.
+	 */
+	struct sun5i_eink_timing timing = {
+		.sclk_hz = 135000000, .dclk_div = 6,
+		.hbp = 40, .vbp = 1, .hsync = 1, .vsync = 1, .clk_delay = 3,
+	};
+	if (retry_ioctl(fd, SUN5I_EINK_S_TIMING, &timing))
+		fail("could not select the factory WBF scan rate");
 	uint8_t *target = malloc(PIXELS), *transitions = malloc(PIXELS);
 	uint32_t *neutral = calloc(FRAME_WORDS, sizeof(*neutral));
 	if (!target || !transitions || !neutral)
