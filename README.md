@@ -1,7 +1,10 @@
 # PocketBook 626 Plus / Touch Lux 3 — Megi Linux 5.9
 
 Development Linux for the Allwinner A13 (256 MiB), booted **into RAM using FEL**.
-The factory eMMC and bootloader must remain untouched.
+The current branch builds a **complete Alpine RAM root filesystem** containing
+matching kernel modules, firmware and inspection tools. Future external rootfs
+handoff is opt-in with `pb626.root=sd` in DTB bootargs; nothing mounts a
+card by default. The factory eMMC and bootloader must remain untouched.
 
 **Current status:** an experimental Megi 5.9 zImage and its ELAN-specific DTB,
 initramfs and 52-byte entry stub were all transferred and verified in DRAM.
@@ -25,10 +28,10 @@ Prerequisites: `usbipd` on Windows; WSL2 distribution `XperiaDev` with
 boot files `pb626-spl.bin` and `direct-entry.bin` at `/root/pb626-lab`.
 These local binaries have **not yet been brought under reproducible CI**.
 
-1. Download `pb626-megi-fel-sd-bundle.zip` from the successful
+1. Download the latest `pb626-megi-fel-sd-bundle` artifact from a successful
    [Megi workflow](.github/workflows/megi-fel.yml) and extract it to
-   `C:\PB626\bundle`. Use a build containing the fixed `/memory` node and
-   `/chosen/linux,initrd-start/end`, not the older 2026-11-20 artifacts.
+   `C:\PB626\bundle`. Use a new successful RAM Linux build containing the fixed `/memory` node,
+   `/chosen/linux,initrd-start/end` and matching RAM modules.
 2. Save **both** loader scripts in `C:\PB626` (side by side).
 3. Power off the reader completely, enter FEL using the far-right Menu
    button, then execute in PowerShell:
@@ -40,11 +43,17 @@ These local binaries have **not yet been brought under reproducible CI**.
      -Variant elan -Profile standard
    ```
 
-For the **RAM-only diagnostic** archive (no microSD access), extract it to
-`C:\PB626\memfix` and substitute `-BundleDir C:\PB626\memfix -Profile diagnostic`.
-A standard Megi initramfs attempts removable microSD root read-only; it does
-**not** install onto the internal eMMC. If an SD image is flashed, do it only
-onto a physically removable microSD in a PC card reader.
+The default **standard** image is now a complete RAM Linux environment.
+`-Profile diagnostic` is a backwards-compatible alias for the same image,
+not a separate downloadable ZIP. Download the successful **RAM Linux**
+workflow artifact; do not use the older `pb626-megi-fel-sd-bundle.zip`.
+
+A future removable rootfs is built as `pb626-megi-rootfs.tar.gz`, but no SD
+disk image is produced in this phase. Use `pb626.root=sd` in DTB `/chosen/bootargs`
+only when deliberately testing removable rootfs. MMC2/eMMC stays disabled.
+
+The WSL FEL uploader now requires `fdtget` (package `device-tree-compiler`)
+for pre-execute RAM, initrd and MMC2 checks.
 
 **To connect:** only after Linux gadget `0525:a4a7` is actually present, open
 its COM port in PuTTY at 115200 8N1 (press Enter), or attach the gadget to WSL
@@ -55,3 +64,10 @@ See [`docs/MEGI-BOOT-AND-HARDWARE.md`](docs/MEGI-BOOT-AND-HARDWARE.md)
 for the pinned Megi source revision, provenance, limitations and the full
 boot boundary. Full upstream driver source is fetched from the **pinned
 Megi repository**; it is not copied wholesale into this repo.
+## Development readiness
+
+The WIP pull request is **not** a confirmed bootable release. Current
+SPL, 52-byte entry stub and patched FEL tool still exist outside source
+control in the developer's WSL lab. Do not interpret passing CI as proof
+of working E Ink, ELAN touch, frontlight or system boot. Refer to
+[RAM Linux design](docs/RAM-LINUX-DESIGN.md) for risks and milestones.
