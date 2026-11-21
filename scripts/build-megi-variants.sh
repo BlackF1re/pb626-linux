@@ -48,7 +48,7 @@ for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t x "$dtb" '/memory@40000000' reg)" = "40000000 10000000"
   emmc_status=disabled
   case "${dtb##*/}" in
-    pb626-elan-emmc-{backup,install}.dtb)
+    pb626-elan-emmc-backup.dtb|pb626-elan-emmc-install.dtb)
       emmc_status=okay
       sd_status=disabled
       fdtget "$dtb" /chosen pb626,emmc-backup >/dev/null
