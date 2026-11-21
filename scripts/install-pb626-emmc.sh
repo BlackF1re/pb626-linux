@@ -135,10 +135,8 @@ done
 for name in linux normal recovery calibrate; do
   mv -f "$target/$name.ini.new" "$target/$name.ini"
 done
-if [ -e "$target/pb626.bin" ]; then
-  mv -f "$target/pb626.bin" "$target/pb626.old"
-fi
 sync
+rm -f "$target/pb626.bin"
 cleanup
 trap - EXIT
 echo 'PB626 INSTALL COMPLETE. Reboot without FEL.'
