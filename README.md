@@ -17,15 +17,20 @@ holding the FEL button. Installation and read-back of the files have been
 verified. Cold boot into the installed Alpine system is still unresolved.
 The panel waveform is at `/lib/firmware/pb626/default.wbf`.
 
-The ELAN factory dump contains `eGON.BT0` at byte offset `0x2000` and two
-identical `eGON.BT1` copies at `0x012a6000` and `0x012e6000` in the eMMC
-user area. The factory stages load `/boot.axf` from the FAT16 bootloader
-partition (p2, LBA 73728). This AXF reads `/linux/linux.ini` for normal boot
-or `/linux/recovery.ini` for recovery. The stock normal configuration loads
-`/linux/bImage` as raw ARM code at `0x40008000`. The installer uses that
-entry point and p8 for Alpine. It loads the Linux zImage at `0x41000000`,
-the stock recovery payload address, so it fits below the active `boot1`
-at `0x42400000`.
+The BootROM reads `eGON.BT0` at byte offset `0x2000` in the eMMC user area.
+BT0 reads and checksums `eGON.BT1` from LBA 38192 (`0x012a6000`) and runs
+it at `0x42400000`. The dump also contains an identical copy at
+`0x012e6000`. BT1 loads `/boot.axf` from the FAT16 bootloader partition
+(p2, LBA 73728). The AXF reads `/linux/linux.ini` for normal boot or
+`/linux/recovery.ini` for recovery. The normal configuration loads up
+to 8 MiB of raw ARM code from `/linux/bImage` at `0x40008000`. BT1
+disables the MMU and caches before calling that address with ATAGs at
+`0x40000100`. The factory kernel uses p7 as its root.
+
+The installer places an ARM entry stub at the same entry address. The
+stub passes a DTB to Linux, and the initramfs mounts Alpine from p8.
+The zImage loads at `0x41000000`, the stock recovery payload address,
+which keeps it below the running BT1.
 
 To restore the factory system, use the full backup or restore the original
 p8 and the boot files in p2's `linux/` directory from FEL. Rename
