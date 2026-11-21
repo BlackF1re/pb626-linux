@@ -6,7 +6,7 @@ https://lore-kernel.gnuweeb.org/lkml/9e9003b7-0331-4b37-9b06-5e9de887199e@oss.qu
 diff --git a/drivers/clocksource/timer-sun4i.c b/drivers/clocksource/timer-sun4i.c
 --- a/drivers/clocksource/timer-sun4i.c
 +++ b/drivers/clocksource/timer-sun4i.c
-@@ -39,6 +39,9 @@
+@@ -39,4 +39,7 @@
  #define TIMER_SYNC_TICKS	3
  
 +/* Reload clears a couple of source clock cycles after it is set. */
@@ -14,7 +14,7 @@ diff --git a/drivers/clocksource/timer-sun4i.c b/drivers/clocksource/timer-sun4i
 +
  /*
   * When we disable a timer, we need to wait at least for 2 cycles of
-@@ -53,9 +56,29 @@ static void sun4i_clkevt_sync(void __iomem *base)
+@@ -53,9 +56,27 @@ static void sun4i_clkevt_sync(void __iomem *base)
  		cpu_relax();
  }
  
