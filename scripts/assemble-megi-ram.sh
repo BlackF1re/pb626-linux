@@ -27,7 +27,7 @@ sudo depmod -b rootfs "$kernel_release"
 # needs the uncompressed firmware BEFORE rtl8xxxu probes during /init.
 firmware=rootfs/lib/firmware/rtlwifi/rtl8188eufw.bin
 if [ -s "$firmware.zst" ]; then
-  sudo zstd --decompress --force --quiet --output="$firmware" "$firmware.zst"
+  sudo zstd -d -f -q "$firmware.zst" -o "$firmware"
 fi
 test -s "$firmware"
 echo "RTL8188EU uncompressed firmware staged: $(stat -c '%s' "$firmware") bytes"
