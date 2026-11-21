@@ -17,5 +17,11 @@
 &mmc2 { status = "disabled"; };
 /* Do not illuminate the panel at first boot. */
 &{/backlight} {
+  /* IMPORTANT: pwm_bl ignores default-brightness-level when it
+   * generates a CIE table because brightness-levels are absent.
+   * Provide a short explicit table so the zero default takes effect.
+   * /init separately sets brightness=0 and bl_power=4.
+   */
+  brightness-levels = <0 10 20 30 40 50 60 70 80 90 100>;
   default-brightness-level = <0>;
 };
