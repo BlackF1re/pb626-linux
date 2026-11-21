@@ -13,6 +13,7 @@ test -s kernel-stage/kernel-modules.tar.gz
 test -s kernel-stage/KERNELRELEASE
 test -s alpine-base/alpine-rootfs.tar.gz
 test -s kernel-stage/pb626-elan-display.dtb
+test -s pb626-epd
 gzip -t alpine-base/alpine-rootfs.tar.gz
 gzip -t kernel-stage/kernel-modules.tar.gz
 
@@ -36,6 +37,7 @@ sudo install -d rootfs/sbin rootfs/usr/sbin rootfs/etc
 sudo install -m 755 boot/pb626-init-megi rootfs/sbin/pb626-init
 sudo install -m 755 scripts/inspect-live.sh rootfs/usr/sbin/inspect-pb626
 sudo install -m 755 scripts/pb626-network.sh rootfs/usr/sbin/pb626-network
+sudo install -m 755 pb626-epd rootfs/usr/bin/pb626-epd
 printf 'pb626-external-alpine-v1\n' | sudo tee rootfs/etc/pb626-image-id > /dev/null
 
 sudo cp -a rootfs/. initramfs/
@@ -80,6 +82,7 @@ grep -F '/rtl8188eufw.bin' dist/INITRAMFS-CONTENTS.txt >/dev/null
 (grep -Fxq 'etc/pb626/wpa_supplicant.conf' dist/INITRAMFS-CONTENTS.txt || \
  grep -Fxq './etc/pb626/wpa_supplicant.conf' dist/INITRAMFS-CONTENTS.txt)
 grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
+grep -F '/pb626-epd' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/aireplay-ng' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/hcxdumptool' dist/INITRAMFS-CONTENTS.txt >/dev/null

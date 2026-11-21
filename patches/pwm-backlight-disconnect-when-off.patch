@@ -1,0 +1,78 @@
+diff --git a/drivers/video/backlight/pwm_bl.c b/drivers/video/backlight/pwm_bl.c
+--- a/drivers/video/backlight/pwm_bl.c
++++ b/drivers/video/backlight/pwm_bl.c
+@@ -13,6 +13,8 @@
+ #include <linux/platform_device.h>
+ #include <linux/backlight.h>
+ #include <linux/err.h>
++#include <linux/pinctrl/consumer.h>
++#include <linux/property.h>
+ #include <linux/pwm.h>
+ #include <linux/pwm_backlight.h>
+ #include <linux/regulator/consumer.h>
+@@ -21,6 +23,8 @@
+ struct pwm_bl_data {
+ 	struct pwm_device	*pwm;
+ 	struct device		*dev;
++	struct pinctrl		*pinctrl;
++	struct pinctrl_state	*pwm_on;
+ 	unsigned int		lth_brightness;
+ 	unsigned int		*levels;
+ 	bool			enabled;
+@@ -67,6 +71,8 @@
+ 	if (pb->pwm_off_delay)
+ 		msleep(pb->pwm_off_delay);
+ 
++	if (pb->pwm_on && pinctrl_pm_select_default_state(pb->dev))
++		dev_err(pb->dev, "failed to disconnect backlight PWM pin\n");
+ 	if (pb->power_supply)
+ 		regulator_disable(pb->power_supply);
+ 	pb->enabled = false;
+@@ -93,6 +99,7 @@
+ 	struct pwm_bl_data *pb = bl_get_data(bl);
+ 	int brightness = backlight_get_brightness(bl);
+ 	struct pwm_state state;
++	int ret;
+ 
+ 	if (pb->notify)
+ 		brightness = pb->notify(pb->dev, brightness);
+@@ -101,7 +108,17 @@
+ 		pwm_get_state(pb->pwm, &state);
+ 		state.duty_cycle = compute_duty_cycle(pb, brightness, &state);
+ 		state.enabled = true;
+-		pwm_apply_might_sleep(pb->pwm, &state);
++		ret = pwm_apply_might_sleep(pb->pwm, &state);
++		if (ret)
++			return ret;
++		if (pb->pwm_on && !pb->enabled) {
++			ret = pinctrl_select_state(pb->pinctrl, pb->pwm_on);
++			if (ret) {
++				state.enabled = false;
++				pwm_apply_might_sleep(pb->pwm, &state);
++				return ret;
++			}
++		}
+ 
+ 		pwm_backlight_power_on(pb);
+ 	} else {
+@@ -533,6 +550,20 @@
+ 	pb->post_pwm_on_delay = data->post_pwm_on_delay;
+ 	pb->pwm_off_delay = data->pwm_off_delay;
+ 
++	/* Boards with a shared control line can disconnect PWM when off. */
++	if (device_property_match_string(pb->dev, "pinctrl-names", "pwm-on") >= 0) {
++		pb->pinctrl = devm_pinctrl_get(pb->dev);
++		if (IS_ERR(pb->pinctrl)) {
++			ret = PTR_ERR(pb->pinctrl);
++			goto err_alloc;
++		}
++		pb->pwm_on = pinctrl_lookup_state(pb->pinctrl, "pwm-on");
++		if (IS_ERR(pb->pwm_on)) {
++			ret = PTR_ERR(pb->pwm_on);
++			goto err_alloc;
++		}
++	}
++
+ 	pb->enable_gpio = devm_gpiod_get_optional(&pdev->dev, "enable",
+ 						  GPIOD_ASIS);
+ 	if (IS_ERR(pb->enable_gpio)) {

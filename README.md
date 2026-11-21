@@ -19,17 +19,17 @@ untouched.
   - `cat /sys/class/udc/*/state`: `configured`.
 - The `elan-display` variant boots with the frontlight off. Two brightness
   levels and switch-off were verified through `/sys/class/backlight`.
-- The ED060XD4 panel cleared to white and displayed a portrait monochrome
-  image via the `sun5i-eink` V4L2 output at `/dev/video0`. This used
-  the factory RESET and DU waveforms and the unit's calibrated VCOM.
+- The ED060XD4 panel cleared to white, displayed monochrome and 16-level
+  grayscale patterns, and updated a region through the `sun5i-eink` V4L2
+  output at `/dev/video0`. Tests used factory waveforms and calibrated VCOM.
 - USB with factory-compatible PG1 VBUS sensing did **not** enumerate. The
   `elan-usbtest` variant, which removes that sensing GPIO and uses the
   sun4i PHY fallback, **did enumerate**. This diagnoses a likely modern-driver
   VBUS-detection problem but is not proof PG1 is miswired. The factory OS
   successfully uses the same PG1 GPIO.
 
-**Not yet verified:** E Ink grayscale refresh, touch input, battery/power
-management, suspend, Wi-Fi, removable SD root, panel
+**Not yet verified:** touch input, battery/power management, suspend, Wi-Fi,
+removable SD root, panel
 voltage safety on other units, or boot without the local FEL tools.
 
 ## RAM-only safety boundary
@@ -93,16 +93,14 @@ If the frontlight stays at maximum unexpectedly, promptly power down; do
 not leave an unverified image running. Do not assume an `execute` return code
 proves Linux booted: verify the console and kernel output.
 
-To reproduce the monochrome panel test, run
-`python scripts/render-pb626-epd.py default.wbf TEMPERATURE_MC image.png panel`
-on the host with Pillow. Use the factory waveform from the offline dump and
-the current TPS65185 temperature from hwmon. Transfer the two resulting
-streams to RAM, decompress them, and stream RESET first and DU second with
-`v4l2-ctl -d /dev/video0 --set-fmt-video-out=width=304,height=767,pixelformat=EPDW`.
-For each stream also pass `--stream-from-hdr=FILE`, the printed buffer count
-as `--stream-out-mmap=N`, and allow queued updates to finish with
-`--stream-sleep=count=0,sleep=MS,mode=0`. At 40 °C, RESET used 12 buffers
-and 1800 ms, and DU used 2 buffers and 450 ms.
+Copy the panel's factory `default.wbf` from the offline dump into `/run`.
+On the reader, run `pb626-epd /run/default.wbf full /run/page.pgm` for
+GC16 or use `partial` for GL16 over changed pixels. Supply a binary PGM
+(P5) at 758 × 1024 in portrait orientation. The utility reads the TPS65185
+temperature and resets an unknown screen state to white before updating.
+It also accepts `reset`, `du`, `a2`, and `du4`. The three fast modes
+require transitions supported by their factory tables. If another program
+uses the raw V4L2 output, run `reset` before resuming with `pb626-epd`.
 
 ## Development / build
 

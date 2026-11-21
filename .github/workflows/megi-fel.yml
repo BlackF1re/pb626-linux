@@ -7,6 +7,7 @@ on:
       - '.github/workflows/megi-fel.yml'
       - 'board/megi/**'
       - 'boot/**'
+      - 'display/**'
       - 'scripts/build-megi-variants.sh'
       - 'scripts/configure-megi-kernel.sh'
       - 'patches/**'
@@ -19,6 +20,7 @@ on:
       - '.github/workflows/megi-fel.yml'
       - 'board/megi/**'
       - 'boot/**'
+      - 'display/**'
       - 'scripts/build-megi-variants.sh'
       - 'scripts/configure-megi-kernel.sh'
       - 'patches/**'
@@ -90,7 +92,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kernel-cache
-          key: pb626-megi-kernel-v2-facc87117511221-${{ runner.os }}-${{ runner.arch }}-gcc${{ steps.compiler.outputs.version }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch') }}
+          key: pb626-megi-kernel-v2-facc87117511221-${{ runner.os }}-${{ runner.arch }}-gcc${{ steps.compiler.outputs.version }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch', 'patches/pwm-backlight-disconnect-when-off.patch') }}
       - name: Fetch pinned Megi 7.2 source and verify A13 drivers
         run: |
           set -euo pipefail
@@ -108,6 +110,7 @@ jobs:
           test -f linux/arch/arm/boot/dts/allwinner/sun5i-a13-pocketbook-touch-lux-3.dts
           git -C linux apply --check "$GITHUB_WORKSPACE/patches/rtl8xxxu-reset-linktype.patch"
           git -C linux apply "$GITHUB_WORKSPACE/patches/rtl8xxxu-reset-linktype.patch"
+          git -C linux apply "$GITHUB_WORKSPACE/patches/pwm-backlight-disconnect-when-off.patch"
           grep -A 13 '^static void rtl8xxxu_remove_interface' linux/drivers/net/wireless/realtek/rtl8xxxu/core.c | grep -Fq 'NL80211_IFTYPE_UNSPECIFIED'
       - name: Compile zImage and all modules only on cache miss
         if: steps.cache.outputs.cache-hit != 'true'
@@ -129,6 +132,7 @@ jobs:
             'Git commit: facc87117511221bb61410e3f92ad8579697f736' \
             'Maintainer: Ondrej Jirman (megi); mirror: Arnavion/linux' > kernel-cache/KERNEL-SOURCE.txt
           echo 'Experimental local patch: patches/rtl8xxxu-reset-linktype.patch' >> kernel-cache/KERNEL-SOURCE.txt
+          echo 'Local patch: patches/pwm-backlight-disconnect-when-off.patch' >> kernel-cache/KERNEL-SOURCE.txt
       - name: Check cached or newly compiled zImage, modules and USB contract
         run: |
           set -euo pipefail
@@ -185,11 +189,15 @@ jobs:
         with:
           name: pb626-alpine-base-stage
           path: alpine-base
-      - name: Install only packaging tools
+      - name: Install packaging tools and the display utility cross-compiler
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cpio device-tree-compiler kmod zstd
+            cpio device-tree-compiler kmod zstd gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+      - name: Compile the ARMv7 E Ink display utility
+        run: |
+          arm-linux-gnueabihf-gcc -O3 -Wall -Wextra -Werror -static \
+            display/pb626-epd.c -o pb626-epd
       - name: Assemble full Alpine RAM image from independent stages
         run: bash scripts/assemble-megi-ram.sh
       - uses: actions/upload-artifact@v4

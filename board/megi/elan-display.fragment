@@ -3,11 +3,29 @@
   status = "disabled";
 };
 
-/* Match the factory TPS61161 driver: PWM0 at 10 kHz with active-low duty.
- * PB4 gates the light after PWM starts and before PWM stops.
+&pio {
+  pb626_backlight_off: pb626-backlight-off-pins {
+    pins = "PB2";
+    function = "gpio_in";
+    bias-disable;
+  };
+};
+
+&pwm {
+  /delete-property/ pinctrl-names;
+  /delete-property/ pinctrl-0;
+};
+
+/* The factory driver subtracts brightness from the active-low duty.
+ * Express the same increasing high time directly with pwm-backlight.
+ * In the off state disconnect PWM so PB4 can hold the control line low.
  */
 &{/backlight} {
-  pwms = <&pwm 0 100000 PWM_POLARITY_INVERTED>;
+  pinctrl-names = "default", "pwm-on";
+  pinctrl-0 = <&pb626_backlight_off>;
+  pinctrl-1 = <&pwm0_pin>;
+  pwms = <&pwm 0 100000 0>;
+  /delete-property/ lth-brightness;
   post-pwm-on-delay-ms = <1>;
   pwm-off-delay-ms = <1>;
 };
