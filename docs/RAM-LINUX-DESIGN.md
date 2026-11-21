@@ -77,3 +77,25 @@ For one controlled test, observe PE8 *after 30 seconds*:
 Do not conflate gadget binding with host USB enumeration. If the frontlight
 remains intense after the off-request, **stop the test and power down**.
 No persistent storage access is required and no flashing mechanism is added.
+
+## Third FEL boot: UDC bound, no host enumeration; frontlight still on
+
+On 2026-11-21 the second RAM test with 7.2 reached kernel LED heartbeat
+**after ConfigFS UDC bind**, yet Windows and WSL saw no USB descriptor,
+and the frontlight remained fully illuminated despite PWM backlight=0.
+
+This narrows USB to PHY/session detection, pull-up, or host path; does not
+prove PG1 is the cause. Upstream megi PocketBook DTS declares PG1 as VBUS
+sense with a warning `might not work, need to test`. The sun4i_usb_phy
+source trusts this GPIO; when unconfigured, it defaults to VBUS present.
+
+**Experimental `elan-usbtest` DTB only:** remove the unverified PG1
+`usb0_vbus_det-gpios` so PHY VBUS detection takes its fallback; keep
+`dr_mode=peripheral`. Disable the PWM/backlight drivers and reserve PB4,
+the documented active-high frontlight enable, as a GPIO hog driven LOW.
+This is a test, not a permanent board definition. If the frontlight remains
+bright, stop the experiment and power off; do not invert PB4 without more
+measurements. No eMMC writes or firmware flashing are involved.
+
+A separate LED code can distinguish a USB gadget bound to UDC but never
+advancing from `not attached` to enumerating/configured states.
