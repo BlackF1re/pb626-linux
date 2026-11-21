@@ -35,7 +35,7 @@ _start:
     bl copy_image
     ldr r0, =devicetree
     ldr r1, =devicetree_end
-    ldr r2, =0x44800000
+    ldr r2, =0x43200000
     bl copy_image
     ldr r0, =ramdisk
     ldr r1, =ramdisk_end
@@ -65,7 +65,7 @@ disable_mmu:
     dsb
     bic r4, r4, #1
     bic r4, r4, #4
-    bic r4, r4, #0x1000
+    bic r4, r4, #0x1800
     mcr p15, 0, r4, c1, c0, 0
     isb
     mov r0, #0
@@ -79,7 +79,7 @@ disable_mmu:
     dsb
     /* ARM Linux boot protocol, with the board DTB passed in r2. */
     mvn r1, #0
-    ldr r2, =0x44800000
+    ldr r2, =0x43200000
     ldr pc, =0x42000000
     .else
     ldr pc, =0x4a000000

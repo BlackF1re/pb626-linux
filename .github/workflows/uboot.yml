@@ -53,7 +53,7 @@ jobs:
           CONFIG_USE_BOOTCOMMAND=y
           CONFIG_CMD_GPIO=y
           CONFIG_CMD_I2C=y
-          CONFIG_BOOTCOMMAND="if i2c dev 0; then i2c mw 0x34 0x0e 0x62 1; fi; gpio clear PE8; if itest.l *0x42000024 == 0x016f2818 && itest.l *0x44800000 == 0xedfe0dd0; then i2c mw 0x34 0x0e 0x65 1; setenv fdt_high 0xffffffff; setenv initrd_high 0xffffffff; setenv bootargs console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rw; bootz 0x42000000 0x45000000:0x60000 0x44800000; i2c mw 0x34 0x0e 0x6f 1; elif fatload mmc 1:2 0x42000000 linux/bImage; then i2c mw 0x34 0x0e 0x63 1; bootz 0x42000000; i2c mw 0x34 0x0e 0x6f 1; else i2c mw 0x34 0x0e 0x6e 1; fi"
+          CONFIG_BOOTCOMMAND="if i2c dev 0; then i2c mw 0x34 0x0e 0x62 1; fi; gpio clear PE8; if itest.l *0x42000024 == 0x016f2818 && itest.l *0x43200000 == 0xedfe0dd0; then i2c mw 0x34 0x0e 0x65 1; setenv fdt_high 0xffffffff; setenv initrd_high 0xffffffff; setenv bootargs console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rw; bootz 0x42000000 0x45000000:0x60000 0x43200000; i2c mw 0x34 0x0e 0x6f 1; elif fatload mmc 1:2 0x42000000 linux/bImage; then i2c mw 0x34 0x0e 0x63 1; bootz 0x42000000; i2c mw 0x34 0x0e 0x6f 1; else i2c mw 0x34 0x0e 0x6e 1; fi"
           CONFIG_ENV_IS_NOWHERE=y
           # CONFIG_ENV_IS_IN_MMC is not set
           # CONFIG_ENV_IS_IN_FAT is not set
