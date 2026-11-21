@@ -1,0 +1,67 @@
+name: PocketBook 626 fast restore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/restore.yml'
+      - 'scripts/restore/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ARM recovery helper
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            busybox gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user
+          arm-linux-gnueabihf-gcc -O2 -Wall -Wextra -Werror -static -s \
+            scripts/restore/pb626-restore-scan.c -o pb626-restore-scan
+      - name: Verify scans and full readback on a temporary image
+        run: |
+          set -euo pipefail
+          dd if=/dev/zero of=sample.img bs=4M count=1 status=none
+          dd if=/dev/urandom of=sample.img bs=4M count=1 oflag=append conv=notrunc status=none
+          for index in 0 1; do
+            printf 'BLOCK %s ' "$index"
+            dd if=sample.img bs=4M skip="$index" count=1 status=none | sha256sum | cut -d ' ' -f1
+          done >expected-scan
+          qemu-arm ./pb626-restore-scan scan sample.img 2 | diff -u expected-scan -
+          {
+            printf 'PROGRESS 2\nSHA256 '
+            sha256sum sample.img | cut -d ' ' -f1
+          } >expected-verify
+          qemu-arm ./pb626-restore-scan verify sample.img 2 | diff -u expected-verify -
+          if qemu-arm ./pb626-restore-scan verify sample.img 3; then
+            echo 'Short read unexpectedly succeeded' >&2
+            exit 1
+          fi
+      - name: Test binary transport and parse launcher
+        run: |
+          gcc -O2 -Wall -Wextra -Werror scripts/restore/pb626-restore-scan.c -o native-scanner
+          busybox sh -n scripts/restore/pb626-restore-fast.sh
+          python3 scripts/restore/test-transport.py ./native-scanner
+          pwsh -NoProfile -Command '
+            $tokens = $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              "$PWD/scripts/restore/Restore-PB626Fast.ps1", [ref]$tokens, [ref]$errors)
+            if ($errors) { $errors; exit 1 }
+          '
+      - name: Package fast restore
+        run: |
+          mkdir dist
+          cp scripts/restore/{Restore-PB626Fast.ps1,pb626-restore-fast.sh} dist/
+          gzip -n -9 -c pb626-restore-scan >dist/pb626-restore-scan.gz
+          (cd dist && sha256sum pb626-restore-scan.gz >SHA256SUMS.fast)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-fast-restore
+          path: dist/
+          if-no-files-found: error
