@@ -121,3 +121,32 @@ Two independent test stages avoid changing USB and backlight simultaneously:
 A controlled observation of the frontlight does NOT prove that PB4 is
 correctly wired; if it stays bright, halt the test. The full RAM image
 still never writes to internal eMMC or SPI NOR.
+
+## Hardware milestone confirmed: Alpine 3.24.4 / USB ACM configured
+
+On 2026-11-21, the observed ELAN PocketBook 626 Plus physically booted
+Megi Linux `7.2.0-gfacc87117511` into the full RAM initramfs and exposed
+an interactive Alpine Linux 3.24.4 shell over USB ACM. The Windows host saw
+`0525:a4a7` / serial `PB626RAM01` on COM12 (port number is ephemeral).
+User-executed commands confirmed `uname -a` (armv7l), `/etc/os-release`,
+and UDC state `configured`. These are **direct hardware observations**,
+not a CI-only claim. No eMMC writes were requested.
+
+Controlled A/B result on the **same** reader:
+
+* `elan` — bright frontlight, no host USB enumeration.
+* `elan-lightoff` — PB4 held output-low via a GPIO hog, PWM/backlight
+  drivers disabled; frontlight **went off**, USB still did not enumerate
+  with factory-described PG1 VBUS sensing.
+* `elan-usbtest` — same frontlight-off configuration plus removal of
+  `usb0_vbus_det-gpios` referencing PG1. **Frontlight off and USB ACM
+  enumerated**, then a real shell answered commands.
+
+The factory OS also uses PG1 for VBUS detection and supports normal USB,
+so `elan-usbtest` is explicitly an **experimental workaround**, not evidence
+that PG1 should be removed from a shipping DTS. The new Linux PHY handling
+or GPIO/pinctrl configuration needs more investigation. Likewise, holding
+PB4 low is a safety-first diagnostic, not functional brightness control.
+
+Remain careful with E Ink waveform and VCOM configuration and do not claim
+working display refresh/touch/Wi-Fi or production readiness.
