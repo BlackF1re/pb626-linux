@@ -63,13 +63,9 @@ cp dist/pb626-elan-emmc-install.dtb pb626-emmc-native.dtb
 fdtput -d pb626-emmc-native.dtb /chosen pb626,emmc-backup
 fdtput -t x pb626-emmc-native.dtb /chosen pb626,emmc-root
 fdtput -t s pb626-emmc-native.dtb /chosen bootargs \
-  'console=ttyS0,115200 root=/dev/mmcblk2p8 rootwait rootfstype=ext4 rw init=/sbin/pb626-emmc-init'
+  'console=ttyS0,115200 root=/dev/mmcblk2p8 rootfstype=ext4 rw'
 cp dist/pb626-elan-emmc-backup.dtb dist/pb626-elan-emmc-install.dtb
 fdtput -t x dist/pb626-elan-emmc-install.dtb /chosen pb626,emmc-install
-arm-linux-gnueabihf-as boot/pb626-factory-entry.S -o pb626-emmc-entry.o
-arm-linux-gnueabihf-ld -Ttext=0x40008000 -e _start pb626-emmc-entry.o -o pb626-emmc-entry.elf
-arm-linux-gnueabihf-objcopy -O binary -j .text pb626-emmc-entry.elf pb626.bin
-test "$(stat -c '%s' pb626.bin)" -lt $((0x800000))
 
 sudo install -m 755 boot/init-megi rootfs/sbin/pb626-emmc-init
 printf 'pb626-emmc-alpine-v1\n' | sudo tee rootfs/etc/pb626-image-id >/dev/null
@@ -84,18 +80,38 @@ cp -a rootfs/bin/busybox installer/bin/
 cp -a rootfs/lib/{ld-musl-armhf.so.1,libc.musl-armv7.so.1} installer/lib/
 cp rootfs/etc/{passwd,group} installer/etc/
 for applet in sh hostname mkdir grep mount umount cat blockdev sleep setsid ln \
-  uname ls sha256sum mountpoint install gzip sync cp cmp mv sed reboot poweroff; do
+  uname ls sha256sum mountpoint install gzip sync cp cmp mv sed reboot poweroff \
+  switch_root awk; do
   ln -s busybox "installer/bin/$applet"
 done
 sudo mknod -m 666 installer/dev/null c 1 3
+sudo cp -a installer native-ram
+sudo mkdir -p native-ram/{sbin,newroot}
+sudo mknod -m 600 native-ram/dev/console c 5 1
+sudo install -m 755 boot/init-emmc native-ram/init
+sudo install -m 755 boot/init-megi native-ram/sbin/pb626-rescue
+(cd native-ram && sudo find . -print0 | sudo cpio --null --owner=0:0 -o --format=newc --quiet) \
+  | gzip -9 > pb626rd.gz
+initrd_start=$((0x45000000))
+native_initrd_size=$(stat -c '%s' pb626rd.gz)
+test "$native_initrd_size" -lt $((0x400000))
+fdtput -t x pb626-emmc-native.dtb /chosen linux,initrd-start "$(printf '%x' "$initrd_start")"
+fdtput -t x pb626-emmc-native.dtb /chosen linux,initrd-end "$(printf '%x' "$((initrd_start + native_initrd_size))")"
+arm-linux-gnueabihf-as boot/pb626-factory-entry.S -o pb626-emmc-entry.o
+arm-linux-gnueabihf-ld -Ttext=0x40008000 -e _start pb626-emmc-entry.o -o pb626-emmc-entry.elf
+arm-linux-gnueabihf-objcopy -O binary -j .text pb626-emmc-entry.elf pb626.bin
+test "$(stat -c '%s' pb626.bin)" -lt $((0x800000))
+
 install -m 755 boot/init-megi installer/init
 install -m 755 scripts/install-pb626-emmc.sh installer/usr/sbin/install-pb626-emmc
-install -m 644 pb626.bin pb626-emmc-root.ext4.gz installer/opt/pb626-install/
-sha256sum pb626.bin pb626-emmc-root.ext4.gz > installer/opt/pb626-install/SHA256SUMS
+install -m 644 pb626.bin pb626rd.gz pb626-emmc-root.ext4.gz installer/opt/pb626-install/
+sha256sum pb626.bin pb626rd.gz > installer/opt/pb626-install/BOOT-SHA256SUMS
+sha256sum pb626-emmc-root.ext4.gz > installer/opt/pb626-install/SHA256SUMS
+tar -czf dist/pb626-emmc-boot.tar.gz -C installer/opt/pb626-install \
+  pb626.bin pb626rd.gz BOOT-SHA256SUMS -C "$PWD/scripts" install-pb626-emmc.sh
 (cd installer && sudo find . -print0 | sudo cpio --null --owner=0:0 -o --format=newc --quiet) \
   | gzip -1 > dist/pb626-emmc-installer.cpio.gz
 
-initrd_start=$((0x45000000))
 for dtb in dist/pb626-*.dtb; do
   initrd=dist/pb626-megi-initramfs.cpio.gz
   if [[ ${dtb##*/} == pb626-elan-emmc-install.dtb ]]; then

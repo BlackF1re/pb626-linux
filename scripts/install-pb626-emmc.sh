@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run from the dedicated FEL installer. Only p2 and p8 become writable.
+# Run from the FEL installer, or update the boot files alone from FEL backup.
 set -eu
 
 fail() { echo "PB626 INSTALL: $*" >&2; exit 1; }
@@ -10,12 +10,20 @@ root=${disk}p8
 mountpoint=/run/pb626-install
 bundle=/opt/pb626-install
 
-[ -f /sys/firmware/devicetree/base/chosen/pb626,emmc-install ] ||
-  fail 'Boot elan-emmc-install through FEL first'
+chosen=/sys/firmware/devicetree/base/chosen
+boot_only=0
+if [ "${1:-}" = --boot-only ]; then
+  boot_only=1
+  shift
+fi
+if [ ! -f "$chosen/pb626,emmc-install" ]; then
+  [ "$boot_only" = 1 ] && [ -f "$chosen/pb626,emmc-backup" ] ||
+    fail 'Boot elan-emmc-install through FEL first'
+fi
 [ -r "$sys/device/cid" ] || fail 'MMC2 not found'
 cid=$(cat "$sys/device/cid")
 [ "$#" -eq 1 ] && [ "$1" = "$cid" ] ||
-  fail "This replaces p8. To proceed, run install-pb626-emmc $cid"
+  fail "Pass the target eMMC CID to proceed: $cid"
 [ "$(cat "$sys/device/type")" = MMC ] &&
 [ "$(cat "$sys/device/name")" = 8WPD3R ] &&
 [ "$(cat "$sys/size")" = 15269888 ] &&
@@ -26,7 +34,8 @@ if grep -Eq '^/dev/mmcblk2[^ ]* ' /proc/mounts; then
   fail 'Unmount eMMC before installing'
 fi
 cd "$bundle"
-sha256sum -c SHA256SUMS
+sha256sum -c BOOT-SHA256SUMS
+[ "$boot_only" = 1 ] || sha256sum -c SHA256SUMS
 mkdir -p "$mountpoint"
 cleanup() {
   cd /
@@ -43,37 +52,64 @@ for name in linux normal; do
     fail "Unexpected factory configuration: $name.ini"
 done
 test -s "$mountpoint/linux/bImage"
-install -m 644 "$mountpoint/default.wbf" /run/pb626-factory.wbf
+[ "$boot_only" = 1 ] || install -m 644 "$mountpoint/default.wbf" /run/pb626-factory.wbf
 umount "$mountpoint"
+
+if [ "$boot_only" = 1 ]; then
+  mount -t ext4 -o ro,noload "$root" "$mountpoint"
+  [ "$(cat "$mountpoint/etc/pb626-image-id")" = pb626-emmc-alpine-v1 ] ||
+    fail 'Installed Alpine filesystem not found'
+  test -x "$mountpoint/sbin/pb626-emmc-init"
+  umount "$mountpoint"
+else
+  blockdev --setrw "$disk"
+  blockdev --setrw "$root"
+  echo 'PB626 INSTALL: writing Alpine to p8'
+  gzip -dc pb626-emmc-root.ext4.gz > "$root"
+  sync
+  mount -t ext4 "$root" "$mountpoint"
+  test -x "$mountpoint/sbin/pb626-emmc-init"
+  install -D -m 644 /run/pb626-factory.wbf "$mountpoint/lib/firmware/pb626/default.wbf"
+  umount "$mountpoint"
+  blockdev --setro "$root"
+fi
 
 blockdev --setrw "$disk"
-blockdev --setrw "$root"
-echo 'PB626 INSTALL: writing Alpine to p8'
-gzip -dc pb626-emmc-root.ext4.gz > "$root"
-sync
-mount -t ext4 "$root" "$mountpoint"
-test -x "$mountpoint/sbin/pb626-emmc-init"
-install -D -m 644 /run/pb626-factory.wbf "$mountpoint/lib/firmware/pb626/default.wbf"
-umount "$mountpoint"
-blockdev --setro "$root"
-
 blockdev --setrw "$boot"
 mount -t vfat "$boot" "$mountpoint"
 target="$mountpoint/linux"
 echo 'PB626 INSTALL: staging kernel on p2'
-cp pb626.bin "$target/pb626.new"
-cmp pb626.bin "$target/pb626.new"
-mv -f "$target/pb626.new" "$target/pb626.bin"
+for file in pb626.bin pb626rd.gz; do
+  cp "$file" "$target/$file.new"
+  cmp "$file" "$target/$file.new"
+done
 for name in linux normal; do
   config="$target/$name.ini"
   if [ ! -e "$config.factory" ]; then
     cp "$config" "$config.backup"
     mv "$config.backup" "$config.factory"
   fi
-  sed 's/\\bImage/\\pb626.bin/;s/logo_show = 1/logo_show = 0/' "$config.factory" > "$config.new"
+  awk '
+    BEGIN { ORS = "\r\n" }
+    { sub(/\r$/, "") }
+    /^\[script_info\]$/ {
+      print "[segment]"
+      print "img_name = c:\\linux\\pb626rd.gz"
+      print "img_size = 0x400000"
+      print "img_base = 0x45000000"
+      print ""
+    }
+    /^img_name / { $0 = "img_name = c:\\linux\\pb626.bin" }
+    /^logo_show / { $0 = "logo_show = 0" }
+    { print }
+  ' "$config.factory" > "$config.new"
   grep -qF 'img_name = c:\linux\pb626.bin' "$config.new"
+  grep -qF 'img_name = c:\linux\pb626rd.gz' "$config.new"
 done
 sync
+for file in pb626.bin pb626rd.gz; do
+  mv -f "$target/$file.new" "$target/$file"
+done
 for name in linux normal; do
   mv -f "$target/$name.ini.new" "$target/$name.ini"
 done

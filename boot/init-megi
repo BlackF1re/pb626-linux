@@ -21,6 +21,10 @@ log() {
 chosen=/sys/firmware/devicetree/base/chosen
 boot_source=RAM
 [ ! -f "$chosen/pb626,emmc-root" ] || boot_source=eMMC
+if [ "$0" = /sbin/pb626-rescue ]; then
+  boot_source=rescue
+  log "Could not mount the installed Alpine system on /dev/mmcblk2p8"
+fi
 log "$boot_source Linux reached PID 1, kernel $(uname -r)"
 # PE8 LED gives read-only boot status without UART/USB. Do not touch
 # other GPIOs or eMMC. Linux triggers are implemented by the kernel.
@@ -92,7 +96,7 @@ if [ -d "/lib/modules/$(uname -r)" ]; then
     modprobe "$module" 2>/dev/null || true
   done
   if [ -f /sys/firmware/devicetree/base/chosen/pb626,display-bringup ]; then
-    modprobe sun5i_eink || log "failed to load sun5i_eink"
+    (modprobe sun5i_eink || log "failed to load sun5i_eink") &
   fi
 fi
 # Distinct PE8 patterns after the first 30 seconds:
