@@ -14,6 +14,16 @@ on:
       - 'scripts/probe-device.sh'
       - 'scripts/inspect-live.sh'
       - 'boot/init-megi'
+  pull_request:
+    paths:
+      - '.github/workflows/megi-fel.yml'
+      - 'board/megi/**'
+      - 'boot/init-megi'
+      - 'boot/pb626-init-megi'
+      - 'patches/**'
+      - 'scripts/build-megi-variants.sh'
+      - 'scripts/probe-device.sh'
+      - 'scripts/inspect-live.sh'
   workflow_dispatch:
 
 concurrency:
