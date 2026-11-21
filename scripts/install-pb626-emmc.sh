@@ -83,7 +83,16 @@ blockdev --setrw "$boot"
 mount -t vfat "$boot" "$mountpoint"
 target="$mountpoint/linux"
 echo 'PB626 INSTALL: staging Linux boot files on p2'
-cp bImage "$target/bImage.new"
+# Retire unused payloads from installs that used separate boot segments.
+legacy_configs=$(grep -ilE 'pbkern\.bin|pbdt\.bin|pb626rd\.gz' "$target"/*.ini || [ "$?" -eq 1 ])
+if [ -z "$legacy_configs" ]; then
+  rm -f "$target/pbkern.bin" "$target/pbdt.bin" "$target/pb626rd.gz"
+fi
+rm -f "$target/bImage.new"
+if ! cp bImage "$target/bImage.new"; then
+  rm -f "$target/bImage.new"
+  fail 'Cannot stage bImage on the boot partition'
+fi
 cmp bImage "$target/bImage.new"
 for name in recovery calibrate; do
   config="$target/$name.ini"
