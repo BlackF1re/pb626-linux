@@ -78,9 +78,14 @@ jobs:
             (cd kernel-bundle && sha256sum -c SHA256SUMS)
             cp kernel-bundle/pb626-megi-zImage factory-kernel.bin
             test -s factory-kernel.bin
-            cp kernel-bundle/pb626-elan-emmc-backup.dtb native.dtb
-            fdtput -d native.dtb /chosen pb626,emmc-backup
-            fdtput -t x native.dtb /chosen pb626,emmc-root
+            # Recover the native ELAN DTB with working display and frontlight.
+            # The FEL zImage has four extra zero bytes after the original zImage.
+            tar -xOf kernel-bundle/pb626-emmc-boot.tar.gz bImage > previous-bImage
+            kernel_size=$(stat -c '%s' factory-kernel.bin)
+            dd if=previous-bImage of=native.dtb bs=1 skip=$((kernel_size - 4)) status=none
+            fdtget native.dtb /chosen pb626,display-bringup >/dev/null
+            fdtget native.dtb /chosen pb626,emmc-root >/dev/null
+            fdtput -t x native.dtb /chosen linux,initrd-start 45000000
             fdtput -t x native.dtb /chosen linux,initrd-end 45060000
             fdtput -t s native.dtb /chosen bootargs \
               'console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rw'
