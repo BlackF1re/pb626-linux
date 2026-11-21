@@ -12,7 +12,7 @@ test -s kernel-stage/pb626-megi-zImage
 test -s kernel-stage/kernel-modules.tar.gz
 test -s kernel-stage/KERNELRELEASE
 test -s alpine-base/alpine-rootfs.tar.gz
-test "$(find kernel-stage -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 4
+test "$(find kernel-stage -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 5
 gzip -t alpine-base/alpine-rootfs.tar.gz
 gzip -t kernel-stage/kernel-modules.tar.gz
 
@@ -73,7 +73,10 @@ Megi mainline Linux 7.2 (2026-09-03), commit facc87117511221bb61410e3f92ad857969
 2026 sun4i timer fixes already upstream.
 The first FEL Linux boot blinked LED but did not enumerate 0525:a4a7.
 This image has new UDC LED codes and an attempted frontlight-off fix.
-Use the four DTB variants only with matching 7.2 zImage and initramfs.
+Five DTB variants: the four standard configurations plus elan-usbtest.
+The elan-usbtest variant disables backlight/PWM, hogs PB4 LOW, and
+temporarily bypasses the unverified PG1 VBUS-detect path.
+Use only with connected USB host and only for the next RAM diagnostic.
 Optional removable rootfs needs explicit pb626.root=sd and is read-only.
 SPL/ARM entry are external lab dependencies and remain unreviewed.
 NOTE
