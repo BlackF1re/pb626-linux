@@ -4,7 +4,7 @@ set -u
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin HOME=/root TERM=vt100
 # The RAM PID 1 enters BusyBox ash directly, without a login session.
 # Set a clear interactive prompt and board identity for the USB shell.
-hostname pb626-alpine 2>/dev/null || true
+hostname pb626 2>/dev/null || true
 export PS1='\u@\h:\w\$ '
 mkdir -p /dev /proc /sys /run /newroot /dev/pts /sys/kernel/config
 mount -t devtmpfs devtmpfs /dev || exit 1

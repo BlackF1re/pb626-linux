@@ -105,3 +105,28 @@ unmodified upstream Linux.
 Further architecture and safety notes:
 [Full RAM Linux design](docs/RAM-LINUX-DESIGN.md) and
 [Megi boot / hardware](docs/MEGI-BOOT-AND-HARDWARE.md).
+
+## Test Wi-Fi / monitor capabilities (experimental)
+
+The current RAM-only demo includes an **explicitly user-authorized public,
+disposable test network**, SSID `ACCESS_POINT` and passphrase `PASSWORD`.
+The `/init` script sets hostname `pb626` and runs `pb626-network`
+non-blockingly. This supplies WPA/WPA2-PSK; **if the AP is WPA3-only or
+enterprise/802.1X, it will not associate**. Network/firmware availability is
+reported in `/run/pb626-network.log` and verified with `iw dev wlan0 link`,
+`ip address show wlan0`, and `ip route`. The Wi-Fi configuration is in
+RAM and never persisted to eMMC. Do not put real credentials into the public
+`board/megi/wifi-test.conf` file.
+
+Physical RTL8188EU `0bda:8179` was enumerated on the PocketBook, and the
+`rtl8xxxu` driver loaded firmware revision 28.0 from decompressed
+`rtl8188eufw.bin`; `iw list` reported `managed` and `monitor` and
+created `wlan0`. **SSID association/DHCP, actual monitor reception, and
+transmit injection are not yet proven**. The image includes `tcpdump` for
+controlled passive receive tests. Do not confuse advertised monitor support
+with verified packet injection.
+
+`lm-sensors` was confirmed to print AXP209 USB and battery voltage/current;
+`power_supply` separately exports battery charge state/capacity. OpenSSH
+is installed but no TCP listener was present; no unrestricted root SSH
+service is enabled. Avoid starting unauthenticated root SSH on Wi-Fi.

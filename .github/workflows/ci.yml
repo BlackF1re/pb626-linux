@@ -33,6 +33,10 @@ jobs:
           bash -n scripts/configure-megi-kernel.sh
           bash -n scripts/build-alpine-rootfs.sh
           bash -n scripts/assemble-megi-ram.sh
+          test -s board/megi/wifi-test.conf
+          grep -Fqx '    ssid="ACCESS_POINT"' board/megi/wifi-test.conf
+          grep -Fqx '    psk="PASSWORD"' board/megi/wifi-test.conf
+          grep -Fqx 'hostname pb626 2>/dev/null || true' boot/init-megi
           bash -n scripts/inject-private-wifi.sh
           shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh scripts/pb626-network.sh
           shellcheck -s bash scripts/fel-boot.sh

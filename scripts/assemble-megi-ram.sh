@@ -44,6 +44,9 @@ sudo install -m 755 boot/init-megi initramfs/init
 sudo install -m 755 scripts/inspect-live.sh initramfs/usr/sbin/inspect-pb626
 sudo install -m 755 scripts/probe-device.sh initramfs/usr/sbin/probe-pb626
 sudo install -m 755 scripts/pb626-network.sh initramfs/usr/sbin/pb626-network
+# Explicitly user-authorized public, disposable test-AP credentials (NOT personal).
+sudo install -d -m 700 initramfs/etc/pb626
+sudo install -m 600 board/megi/wifi-test.conf initramfs/etc/pb626/wpa_supplicant.conf
 test -e initramfs/dev/null || sudo mknod -m 666 initramfs/dev/null c 1 3
 
 (cd initramfs && sudo find . -print0 | sudo cpio --null -o --format=newc --quiet) \
@@ -74,6 +77,7 @@ gzip -t dist/pb626-megi-initramfs.cpio.gz
 gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t > dist/INITRAMFS-CONTENTS.txt 2>/dev/null
 (grep -Fxq 'init' dist/INITRAMFS-CONTENTS.txt || grep -Fxq './init' dist/INITRAMFS-CONTENTS.txt)
 grep -F '/rtl8188eufw.bin' dist/INITRAMFS-CONTENTS.txt >/dev/null
+grep -F '/etc/pb626/wpa_supplicant.conf' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F 'lib/modules/' dist/INITRAMFS-CONTENTS.txt >/dev/null

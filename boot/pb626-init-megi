@@ -1,7 +1,7 @@
 #!/bin/sh
 # External read-only rootfs handoff: kernel modules must match Megi 7.2.
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin HOME=/root TERM=vt100
-hostname pb626-alpine
+hostname pb626
 mkdir -p /dev/pts /media/pb626-config /root
 mount -t devpts devpts /dev/pts 2>/dev/null || true
 # Never guess mmcblk numbering; only consider a removable SD card.
