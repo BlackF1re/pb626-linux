@@ -1,12 +1,18 @@
 #!/bin/sh
-# Kernel modules, power and touch originate from the matching 5.9 build.
+# External read-only rootfs handoff: kernel modules must match Megi 7.2.
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin HOME=/root TERM=vt100
 hostname pb626-alpine
 mkdir -p /dev/pts /media/pb626-config /root
 mount -t devpts devpts /dev/pts 2>/dev/null || true
-mount -t vfat -o ro /dev/mmcblk0p2 /media/pb626-config 2>/dev/null || true
+# Never guess mmcblk numbering; only consider a removable SD card.
+for sysdev in /sys/block/mmcblk*; do
+  [ -r "$sysdev/device/type" ] || continue
+  [ "$(cat "$sysdev/device/type")" = SD ] || continue
+  [ "$(cat "$sysdev/removable" 2>/dev/null)" = 1 ] || continue
+  mount -t vfat -o ro "/dev/${sysdev##*/}p2" /media/pb626-config 2>/dev/null && break
+done
 # Probing a driver is not equivalent to rendering an E Ink waveform.
-for module in sun5ieink r8188eu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
+for module in sun5i-eink rtl8xxxu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
   modprobe "$module" >/dev/null 2>&1 || true
 done
 if [ -s /media/pb626-config/wifi.conf ]; then
