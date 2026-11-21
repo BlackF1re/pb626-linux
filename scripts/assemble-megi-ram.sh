@@ -63,7 +63,7 @@ gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t > dist/INITRAMFS-CONTENTS.t
 (grep -Fxq 'init' dist/INITRAMFS-CONTENTS.txt || grep -Fxq './init' dist/INITRAMFS-CONTENTS.txt)
 grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
-grep -F '/lib/modules/' dist/INITRAMFS-CONTENTS.txt >/dev/null
+grep -F 'lib/modules/' dist/INITRAMFS-CONTENTS.txt >/dev/null
 rm dist/INITRAMFS-CONTENTS.txt
 
 (cd dist && sha256sum pb626-megi-zImage *.dtb *.gz *.config > SHA256SUMS)
