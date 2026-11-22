@@ -48,19 +48,22 @@ jobs:
           sed -i '/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;/{N;s/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;\n[[:blank:]]*writel(rval, \&priv->reg->clkcr);/clrbits_le32(\&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);/;}' u-boot/drivers/mmc/sunxi_mmc.c
           grep -Fq 'clrbits_le32(&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);' u-boot/drivers/mmc/sunxi_mmc.c
           make -C u-boot pocketbook_touch_lux_3_defconfig
-          sed -i -E '/^(# )?CONFIG_(SYS_TEXT_BASE|USE_BOOTCOMMAND|BOOTCOMMAND|ENV_IS_NOWHERE|ENV_IS_IN_MMC|ENV_IS_IN_FAT|ENV_IS_IN_SPI_FLASH)(=| is not set)/d' u-boot/.config
+          sed -i -E '/^(# )?CONFIG_(SYS_TEXT_BASE|USE_BOOTCOMMAND|BOOTCOMMAND|CMD_I2C|ENV_IS_NOWHERE|ENV_IS_IN_MMC|ENV_IS_IN_FAT|ENV_IS_IN_SPI_FLASH)(=| is not set)/d' u-boot/.config
           cat >>u-boot/.config <<'EOF'
           CONFIG_SYS_TEXT_BASE=0x4a000000
           CONFIG_USE_BOOTCOMMAND=y
+          CONFIG_CMD_I2C=y
           CONFIG_ENV_IS_NOWHERE=y
           # CONFIG_ENV_IS_IN_MMC is not set
           # CONFIG_ENV_IS_IN_FAT is not set
           # CONFIG_ENV_IS_IN_SPI_FLASH is not set
-          CONFIG_BOOTCOMMAND="setenv bootargs console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rootwait rw init=/sbin/pb626-emmc-init; setenv fdt_high 0xffffffff; if fatload mmc 1:2 0x42000000 linux/pb626-zImage && fatload mmc 1:2 0x43200000 linux/pb626.dtb; then bootz 0x42000000 - 0x43200000; fi; if fatload mmc 0:2 0x42000000 linux/pb626-zImage && fatload mmc 0:2 0x43200000 linux/pb626.dtb; then bootz 0x42000000 - 0x43200000; fi; if fatload mmc 2:2 0x42000000 linux/pb626-zImage && fatload mmc 2:2 0x43200000 linux/pb626.dtb; then bootz 0x42000000 - 0x43200000; fi; echo PB626: all chainload attempts failed"
+          CONFIG_BOOTCOMMAND="if i2c dev 0; then i2c mw 0x34 0x0e 0x72 1; fi; setenv bootargs console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rootwait rw init=/sbin/pb626-emmc-init; setenv fdt_high 0xffffffff; for dev in 1 0 2; do if fatload mmc ${dev}:2 0x42000000 linux/pb626-zImage && fatload mmc ${dev}:2 0x43200000 linux/pb626.dtb; then i2c mw 0x34 0x0e 0x74 1; bootz 0x42000000 - 0x43200000; i2c mw 0x34 0x0e 0x75 1; exit; fi; done; i2c mw 0x34 0x0e 0x7e 1; echo PB626: failed to load kernel and DTB"
           EOF
           make -C u-boot olddefconfig
           grep -Fxq 'CONFIG_SYS_TEXT_BASE=0x4a000000' u-boot/.config
           grep -Fxq 'CONFIG_CMD_BOOTZ=y' u-boot/.config
+          grep -Fxq 'CONFIG_CMD_I2C=y' u-boot/.config
+          grep -Fxq 'CONFIG_HUSH_PARSER=y' u-boot/.config
           grep -Fxq 'CONFIG_OF_LIBFDT=y' u-boot/.config
           grep -Fq 'linux/pb626-zImage' u-boot/.config
           make -C u-boot -j"$(nproc)"
@@ -71,6 +74,12 @@ jobs:
           # boot.axf requests exactly this segment size; zero-pad the file.
           truncate -s $((0x80000)) dist/linux/u-boot.bin
           test "$(stat -c %s dist/linux/u-boot.bin)" -eq $((0x80000))
+          # Also preserve the PocketBook factory segment address and size.
+          "${CROSS_COMPILE}as" --defsym STANDALONE_AXF=1 boot/pb626-uboot-entry.S -o axf-entry.o
+          "${CROSS_COMPILE}ld" -Ttext=0x40008000 -e _start axf-entry.o -o axf-entry.elf
+          "${CROSS_COMPILE}objcopy" -O binary -j .text axf-entry.elf dist/linux/pb626ax.bin
+          test "$(stat -c %s dist/linux/pb626ax.bin)" -le $((0x800000))
+          truncate -s $((0x800000)) dist/linux/pb626ax.bin
       - name: Prepare separate Linux payloads for FAT p2
         run: |
           set -euo pipefail
@@ -106,6 +115,10 @@ jobs:
           img_name = c:\linux\u-boot.bin
           img_size = 0x80000
           img_base = 0x4a000000
+          For the PocketBook factory-address shim, use pb626ax.bin instead,
+          retaining the stock img_size = 0x800000 and img_base = 0x40008000.
+          AXP209 register 0x0e records 0x71 (shim), 0x72 (U-Boot autoboot),
+          0x74 (kernel/DTB loaded), 0x75 (bootz returned) or 0x7e (FAT load failed).
           The original factory linux.ini and recovery settings must be retained.
           The factory loader's behavior with this specific board is NOT verified.
           The eMMC partition p1 MUST contain the expected Alpine rootfs and

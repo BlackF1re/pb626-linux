@@ -8,6 +8,11 @@ _start:
     mov r0, #0
     cpsid if, #0x13
     bl trace_factory_handoff
+    .ifdef STANDALONE_AXF
+    mov r0, #0
+    ldr r2, =0x01c20c94         @ A13 watchdog mode register
+    str r0, [r2]
+    .else
     /* Mark the factory handoff before touching the U-Boot image. */
     ldr r0, =0x01c208a0          @ PE data register
     ldr r1, [r0]
@@ -22,6 +27,7 @@ _start:
 1:
     subs r2, r2, #1
     bne 1b
+    .endif
     mrc p15, 0, r4, c1, c0, 0
     .ifndef DIRECT_KERNEL
     ldr r0, =uboot
@@ -29,6 +35,7 @@ _start:
     ldr r2, =0x4a000000
     bl copy_image
     .endif
+    .ifndef STANDALONE_AXF
     ldr r0, =kernel
     ldr r1, =kernel_end
     ldr r2, =0x42000000
@@ -41,6 +48,7 @@ _start:
     ldr r1, =ramdisk_end
     ldr r2, =0x45000000
     bl copy_image
+    .endif
     b disable_mmu
 
 /* Copy an image and publish it even if the factory loader left D-cache on. */
@@ -130,7 +138,11 @@ trace_factory_handoff:
     .ifdef DIRECT_KERNEL
     mov r2, #0x66               @ direct kernel wrapper entered
     .else
+    .ifdef STANDALONE_AXF
+    mov r2, #0x71               @ stock-address standalone shim entered
+    .else
     mov r2, #0x61               @ U-Boot wrapper entered
+    .endif
     .endif
     str r2, [r0, #0x08]
     str r1, [r0, #0x0c]
@@ -148,6 +160,7 @@ uboot:
     .balign 4
 uboot_end:
 .endif
+.ifndef STANDALONE_AXF
 kernel:
     .incbin "factory-kernel.bin"
     .balign 4
@@ -160,3 +173,4 @@ ramdisk:
     .incbin "factory-initrd.bin"
     .balign 4
 ramdisk_end:
+.endif
