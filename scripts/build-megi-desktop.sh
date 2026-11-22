@@ -29,7 +29,7 @@ build_userspace() {
   in_root() { sudo chroot desktop-root /usr/bin/qemu-arm-static "$@"; }
   in_root /sbin/apk add --no-cache \
     xf86-video-dummy xf86-input-evdev xinit xauth xset xsetroot xdotool libxtst libxdamage \
-    libxfont2 pixman nettle libxcvt libpciaccess libxft libpng libjpeg-turbo libxcursor libxfixes libfakekey \
+    libxfont2 pixman nettle libxcvt libpciaccess libxft harfbuzz libpng libjpeg-turbo libxcursor libxfixes libfakekey \
     xorg-server-common libxau libxdmcp libxshmfence libdrm eudev-libs \
     xkbcomp xkeyboard-config font-misc-misc font-cursor-misc font-liberation \
     xterm mc nedit xcalc htop
@@ -111,7 +111,8 @@ fi
 sudo install -m 755 display/pb626-desktop display/pb626-xsession desktop-root/usr/bin/
 sudo install -D -m 644 display/xorg.conf desktop-root/etc/pb626/xorg.conf
 sudo install -D -m 644 display/eink-fonts.conf desktop-root/etc/fonts/conf.d/99-pb626-eink.conf
-sudo install -D -m 644 display/matchbox/Root.directory desktop-root/usr/share/matchbox/vfolders/Root.directory
+sudo install -d desktop-root/usr/share/matchbox/vfolders
+sudo install -m 644 display/matchbox/{Root.order,*.directory} desktop-root/usr/share/matchbox/vfolders/
 sudo install -m 644 display/matchbox/*.desktop desktop-root/usr/share/applications/
 sudo rm -f desktop-root/usr/share/applications/uxterm.desktop
 test -x desktop-root/usr/bin/pb626-epd
