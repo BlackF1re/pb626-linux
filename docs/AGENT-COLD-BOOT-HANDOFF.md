@@ -64,9 +64,60 @@ Megi FEL bundle supplies:
 - eMMC backup variant `pb626-elan-emmc-backup.dtb`.
 
 **WARNING:** `scripts/install-pb626-emmc.sh` is still a **p8 installer**.
-Do not run it on this p1 experiment. Its size/layout assertions and its
-raw filesystem image target p8. The next agent must build and review a
-p1-specific, CID-guarded installation procedure separately.
+Its size/layout assertions and its raw filesystem image target p8.
+
+## Prepared p1 kit
+
+The two pinned ZIPs and their internal manifests passed SHA-256 verification.
+The zImage is identical in both bundles. The standalone DTB enables the
+internal MMC controller, selects p1, and has no initrd addresses. Alpine
+contains the modules for `7.2.0-gfacc87117511-dirty`. The p1 installer
+adds the matching PID 1 script and copies the verified factory waveform.
+
+The local kit is `artifacts/axf-p1/pb626-axf-p1-kit.tar`. Its sibling
+`factory-p2.img` is the original FAT partition extracted from the verified
+user-area image. Its SHA-256 is
+`237dd3c9930c9257a40652d7b4d5427d804748a865653f821551400fa075a21e`.
+The stock `linux.ini` and `normal.ini` in that image are byte-identical.
+The candidate keeps the CRLF endings and changes only the three keys in
+`[segment]` in `linux/linux.ini`.
+
+When the reader is available, confirm a normal factory boot, then enter
+cold FEL and start the **full** RAM backup variant:
+
+```powershell
+& .\scripts\Start-PB626.ps1 -BundleDir .\artifacts\45002994505\bundle -Variant elan-emmc-backup -Profile diagnostic
+pwsh -File .\scripts\Send-PB626AxFKit.ps1 -Port COM12 -Archive .\artifacts\axf-p1\pb626-axf-p1-kit.tar
+```
+
+Use the ACM port that actually enumerates. The sender places the kit in
+`/run`, verifies it, and prints its directory. Reopen the serial shell,
+change to that directory, and run these as separate steps:
+
+```sh
+sh install-pb626-axf-p1.sh check "$expected_cid"
+sh install-pb626-axf-p1.sh install-root "$expected_cid"
+sh install-pb626-axf-p1.sh stage-boot "$expected_cid"
+sh install-pb626-axf-p1.sh activate "$expected_cid"
+```
+
+Set `expected_cid` from the verified backup's eMMC map. Before
+`install-root`, verify the full user, boot0, and boot1 backups again.
+The installer verifies the live BT0/BT1 contents, eMMC identity, geometry
+and stock FAT files. `install-root` erases stock p1, installs Alpine and
+checks ext4 and the installed files on readback. Stage the files and
+activate the candidate only after each preceding step succeeds.
+
+After activation, power off fully and start with the power button. Collect
+the PE8 LED pattern and USB enumeration. On the ACM shell, check
+`uname -r`, `cat /proc/cmdline`, `cat /run/pb626-boot.log`, and the
+`/` entry in `/proc/mounts`. The root must be `/dev/mmcblk2p1`, ext4
+and rw. If the test fails, return to FEL, resend the kit and run
+`rollback-boot` to restore the original INI. Restore the full factory
+backup to recover the original FAT contents of p1.
+
+Preparation was verified offline. Each hardware step and the cold boot
+remain pending.
 
 ## Hardware-side plan (agent must execute carefully)
 
