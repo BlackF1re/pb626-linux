@@ -127,7 +127,17 @@ COM12) answered, and mountinfo matched the eMMC p1 device (179:1) for
 `/`, ext4 rw. A file created under `/root` was synced and read back.
 This verifies Linux and the installed Alpine p1 independently of boot.axf.
 
-The stock-address shim bundle adds `linux/pb626ax.bin`. In its update kit,
+Disassembly of the exact factory `boot.axf` explains the first handoff
+failure. The FAT reader at 0x428004f0 reads a segment into `img_base` and
+accepts any file no larger than `img_size`. The branch through SVC 6 at
+0x428005c0 takes the separate entry address from the field initialized to
+0x40008000 at 0x42800690. The parser at 0x42802134 reads `kernel_base`
+from `[global]` into that field. A direct handoff at 0x4a000000 therefore
+requires both `img_base` and `kernel_base` to be 0x4a000000. The factory
+normal path reads `linux.ini`; it does not read `normal.ini`.
+
+The [stock-address shim build](https://github.com/BlackF1re/pb626-linux/actions/runs/45034161857)
+adds `linux/pb626ax.bin`. In its update kit,
 `linux.ini.shim` differs from the factory INI only in the segment filename,
 and `AXF-BOOT-SHA256SUMS` lists the matching `linux/pb626-zImage` and
 `linux/pb626.dtb` already on p2. Include both in the kit manifest. Run
@@ -138,6 +148,21 @@ Before the cold test, clear and read back AXP209 data buffer register
 `i2cget -y -f 0 0x34 0x0e`. Values 0x71, 0x72, and 0x74 mark AXF shim
 entry, U-Boot autoboot, and successful FAT reads respectively. 0x75 means
 `bootz` returned and 0x7e means no MMC candidate supplied both files.
+
+The stock-address shim returned 0x7e after a real cold start, with no ACM
+device. This proves the factory chain reached the standalone U-Boot
+autoboot command and failed before invoking Linux. Linux under FEL
+confirmed both files still on p2.
+
+The [preload build](https://github.com/BlackF1re/pb626-linux/actions/runs/45035005939)
+uses `linux/pb626pre.bin` at the factory entry address. Two additional
+`[segment]` records in `linux.ini.preload` have AXF read the existing
+kernel and DTB into 0x42000000 and 0x43200000. The installer
+`activate-preload` verifies the existing files against the build manifest,
+makes the short-name kernel copy `pb626z.bin` on the same FAT partition and
+verifies the new files before switching the INI. Include `linux.ini.shim`
+as the predecessor in the update kit. 0x76 records that U-Boot found both
+preloaded images and invoked `bootz`; 0x77 records a return from `bootz`.
 
 ## Hardware-side plan (agent must execute carefully)
 
@@ -161,10 +186,13 @@ C. **Stage separate files to p2**, keeping `boot.axf`, existing
    calibration files backed up. Verify SHA256 and FAT readback before any
    change to the active boot configuration.
 
-D. **Adapt the actual factory INIs only after inspection.** Linux-sunxi
-   documents an alternate segment at 0x4a000000:
+D. **Set both addresses for a direct handoff.** Keep the rest of the stock
+   `linux.ini` and add `kernel_base` to its existing global section:
 
    ```ini
+   [global]
+   kernel_base = 0x4a000000
+
    [segment]
    img_name = c:\linux\u-boot.bin
    img_size = 0x80000

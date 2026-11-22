@@ -4,10 +4,10 @@ set -eu
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 
-[ "$#" -eq 2 ] || fail "Usage: $0 {check|install-root|stage-boot|activate|activate-shim|rollback-boot} CID"
+[ "$#" -eq 2 ] || fail "Usage: $0 {check|install-root|stage-boot|activate|activate-shim|activate-preload|rollback-boot} CID"
 action=$1
 case "$action" in
-  check|install-root|stage-boot|activate|activate-shim|rollback-boot) ;;
+  check|install-root|stage-boot|activate|activate-shim|activate-preload|rollback-boot) ;;
   *) fail "Unknown action: $action" ;;
 esac
 [ "$(id -u)" -eq 0 ] || fail "Run as root"
@@ -121,6 +121,12 @@ write_boot_file() {
   sync
 }
 
+check_preload() {
+  cmp "$kit/linux/pb626pre.bin" "$boot/linux/pb626pre.bin"
+  cmp "$boot/linux/pb626-zImage" "$boot/linux/pb626z.bin"
+  (cd "$boot" && sha256sum -c "$kit/AXF-BOOT-SHA256SUMS")
+}
+
 mount -t vfat -o ro "$p2" "$boot"
 (cd "$boot" && sha256sum -c "$kit/STOCK-SHA256SUMS")
 active="$boot/linux/linux.ini"
@@ -130,6 +136,8 @@ elif cmp -s "$kit/linux.ini.chainload" "$active"; then
   config=chainload
 elif [ -f "$kit/linux.ini.shim" ] && cmp -s "$kit/linux.ini.shim" "$active"; then
   config=shim
+elif [ -f "$kit/linux.ini.preload" ] && cmp -s "$kit/linux.ini.preload" "$active"; then
+  config=preload
 else
   fail "Unexpected active linux.ini"
 fi
@@ -179,7 +187,7 @@ case "$action" in
     check_staged
     cmp "$kit/linux.ini.factory" "$active"
     ;;
-  activate|activate-shim|rollback-boot)
+  activate|activate-shim|activate-preload|rollback-boot)
     if [ "$action" = activate ]; then
       check_root
       check_staged
@@ -194,6 +202,28 @@ case "$action" in
         cmp "$kit/linux/pb626ax.bin" "$boot/linux/pb626ax.bin" || fail "Conflicting factory-address shim"
       fi
       next=shim
+    elif [ "$action" = activate-preload ]; then
+      check_root
+      (cd "$boot" && sha256sum -c "$kit/AXF-BOOT-SHA256SUMS")
+      test -s "$kit/linux/pb626pre.bin"
+      test "$(wc -c < "$kit/linux/pb626pre.bin")" -le 8388608
+      test "$(wc -c < "$boot/linux/pb626-zImage")" -le 8388608
+      test "$(wc -c < "$boot/linux/pb626.dtb")" -le 65536
+      awk '
+        BEGIN { ORS = "\r\n" }
+        { sub(/\r$/, "") }
+        /^img_name = / { sub(/bImage$/, "pb626pre.bin") }
+        /^\[script_info\]$/ {
+          print "[segment]", "img_name = c:\\linux\\pb626z.bin", "img_size = 0x800000", "img_base = 0x42000000", ""
+          print "[segment]", "img_name = c:\\linux\\pb626.dtb", "img_size = 0x10000", "img_base = 0x43200000", ""
+        }
+        { print }
+      ' "$kit/linux.ini.factory" | cmp - "$kit/linux.ini.preload"
+      [ ! -e "$boot/linux/pb626pre.bin" ] ||
+        cmp "$kit/linux/pb626pre.bin" "$boot/linux/pb626pre.bin"
+      [ ! -e "$boot/linux/pb626z.bin" ] ||
+        cmp "$boot/linux/pb626-zImage" "$boot/linux/pb626z.bin"
+      next=preload
     else
       next=factory
     fi
@@ -210,6 +240,17 @@ case "$action" in
         umount "$boot"
         mount -t vfat "$p2" "$boot"
         cmp "$kit/linux.ini.$config" "$active"
+      elif [ "$next" = preload ]; then
+        [ -e "$boot/linux/pb626pre.bin" ] ||
+          write_boot_file "$kit/linux/pb626pre.bin" "$boot/linux/pb626pre.bin"
+        [ -e "$boot/linux/pb626z.bin" ] ||
+          write_boot_file "$boot/linux/pb626-zImage" "$boot/linux/pb626z.bin"
+        umount "$boot"
+        mount -t vfat -o ro "$p2" "$boot"
+        check_preload
+        umount "$boot"
+        mount -t vfat "$p2" "$boot"
+        cmp "$kit/linux.ini.$config" "$active"
       fi
       write_boot_file "$kit/linux.ini.$next" "$active"
       umount "$boot"
@@ -218,6 +259,8 @@ case "$action" in
     cmp "$kit/linux.ini.$next" "$active"
     if [ "$next" = shim ]; then
       cmp "$kit/linux/pb626ax.bin" "$boot/linux/pb626ax.bin"
+    elif [ "$next" = preload ]; then
+      check_preload
     fi
     ;;
 esac
