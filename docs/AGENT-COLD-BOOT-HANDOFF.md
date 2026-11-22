@@ -182,9 +182,12 @@ remove only the verified duplicate `linux/pb626z.bin`. Marker 0x78
 records handoff and 0x79 records a failed or returning command.
 The single-segment image reached 0x78 after cold boot without a new
 ACM connection. The same kernel and DTB still booted p1 via FEL, with
-USB and a successful read/write probe. A subsequent build adds a small
-initramfs to record whether Linux reaches userspace and can mount p1
-before waiting for Alpine.
+USB and a successful read/write probe. The
+[early-init build](https://github.com/BlackF1re/pb626-linux/actions/runs/45037170368)
+added an initramfs to record Linux userspace entry and the p1 mount.
+After cold boot, the marker was still 0x78 and ACM did not enumerate.
+The 0x78 marker is written before CPU cleanup, so it cannot establish
+that the kernel started.
 
 ## Hardware-side plan (agent must execute carefully)
 
