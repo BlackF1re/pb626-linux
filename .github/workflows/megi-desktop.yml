@@ -11,6 +11,7 @@ on:
       - 'display/eink-fonts.conf'
       - 'display/matchbox-keyboard-eink.patch'
       - 'display/xorg.conf'
+      - 'display/matchbox/**'
       - 'scripts/build-megi-desktop.sh'
       - 'scripts/fel-boot.sh'
       - 'scripts/Start-PB626.ps1'
@@ -23,6 +24,10 @@ on:
       desktop_run_id:
         description: Reuse the userspace of this successful desktop workflow run
         type: string
+
+concurrency:
+  group: megi-desktop-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -37,7 +42,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pb626-mainline-7.2-ram-bundle
-          run-id: ${{ inputs.kernel_run_id || '45040404576' }}
+          run-id: ${{ inputs.kernel_run_id || '45063328040' }}
           github-token: ${{ github.token }}
           path: fel-bundle
       - uses: actions/download-artifact@v4

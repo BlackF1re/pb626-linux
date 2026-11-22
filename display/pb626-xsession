@@ -8,20 +8,8 @@ matchbox-keyboard --daemon us &
 keyboard=$!
 pb626-x11-epd "$1" "$2" &
 screen=$!
-trap 'kill "$wm" "$keyboard" "$screen" 2>/dev/null || true' EXIT
-
-while kill -0 "$screen" 2>/dev/null; do
-    choice=0
-    xmessage -title PocketBook -center -fn 10x20 -default Terminal \
-        -buttons 'Terminal:10,Files:11,Editor:12,Calculator:13,Monitor:14,Exit:0' \
-        'Choose an application' || choice=$?
-    case "$choice" in
-        10) xterm -fa 'Liberation Mono:style=Bold' -fs 12 -bg white -fg black ;;
-        11) xterm -fa 'Liberation Mono:style=Bold' -fs 12 -bg white -fg black -e mc -b ;;
-        12) nedit ;;
-        13) xcalc ;;
-        14) xterm -name pb626-monitor -fa 'Liberation Mono:style=Bold' -fs 12 \
-                -bg white -fg black -e htop -C -d 50 ;;
-        *) break ;;
-    esac
-done
+matchbox-desktop --bg col-solid:white --font 'Sans bold 21px' \
+    --fontcol black --no-outline --no-title --icon-size 56 --icon-padding 24 &
+desktop=$!
+trap 'kill "$wm" "$keyboard" "$screen" "$desktop" 2>/dev/null || true' EXIT
+wait -n "$desktop" "$screen"

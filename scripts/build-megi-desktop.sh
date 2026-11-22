@@ -11,15 +11,17 @@ gzip -cd "$bundle/pb626-megi-initramfs.cpio.gz" |
 build_userspace() {
   local xorg_package
   fetch_source() {
-    local project=$1 tag=$2 revision=$3
-    git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$tag" \
-      "https://git.yoctoproject.org/$project" "$project"
-    test "$(git -C "$project" rev-parse HEAD)" = "$revision"
+    local project=$1 revision=$2
+    git init -q "$project"
+    git -C "$project" fetch -q --depth 1 "https://git.yoctoproject.org/$project" "$revision"
+    git -C "$project" checkout -q --detach FETCH_HEAD
     sudo cp -a "$project" desktop-root/tmp/
   }
-  fetch_source libmatchbox 1.14 04b214a0d5cf8285e196d90bf2332626b12c74ef
-  fetch_source matchbox-window-manager 1.2.3 ce8c1053270d960a7235ab5c3435f707541810a4
-  fetch_source matchbox-keyboard 0.1.1 630d89068dc0a1e9199306d405cb32f892dfa4d3
+  fetch_source libmatchbox 04b214a0d5cf8285e196d90bf2332626b12c74ef
+  fetch_source matchbox-window-manager ce8c1053270d960a7235ab5c3435f707541810a4
+  fetch_source matchbox-keyboard 630d89068dc0a1e9199306d405cb32f892dfa4d3
+  fetch_source matchbox-desktop b7e5fd6f08c046505615ce992e379bea9531e39d
+  fetch_source matchbox-common 3055fb158054d059e9a50141e7ded2a41ecfbd47
   sudo install -m 644 display/{pb626-x11-epd.c,matchbox-keyboard-eink.patch} desktop-root/tmp/
   sudo install -m 755 /usr/bin/qemu-arm-static desktop-root/usr/bin/
   sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
@@ -30,7 +32,7 @@ build_userspace() {
     libxfont2 pixman nettle libxcvt libpciaccess libxft libpng libjpeg-turbo libxcursor libxfixes libfakekey \
     xorg-server-common libxau libxdmcp libxshmfence libdrm eudev-libs \
     xkbcomp xkeyboard-config font-misc-misc font-cursor-misc font-liberation \
-    xmessage xterm mc nedit xcalc htop
+    xterm mc nedit xcalc htop
   # The dummy driver uses the core Xorg executable without the Mesa-backed modules.
   in_root /sbin/apk fetch --no-cache --output /tmp xorg-server
   in_root /bin/sh -ec 'apk verify /tmp/xorg-server-*.apk'
@@ -65,16 +67,25 @@ build_userspace() {
   ./configure --prefix=/usr
   make -j2
   make install
+  cd /tmp/matchbox-desktop
+  autoreconf -fi
+  ./configure --prefix=/usr --sysconfdir=/etc --disable-static
+  make -j2
+  make install
+  cp /tmp/matchbox-common/icons/*.png /tmp/matchbox-common/icons/*.xpm /usr/share/pixmaps/
   cd /tmp
   cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXtst -lXdamage
-  strip /usr/bin/pb626-x11-epd /usr/bin/matchbox-window-manager /usr/bin/matchbox-keyboard
+  strip /usr/bin/pb626-x11-epd /usr/bin/matchbox-window-manager /usr/bin/matchbox-keyboard \
+    /usr/bin/matchbox-desktop /usr/lib/matchbox/desktop/*.so
   '
   in_root /sbin/apk del .pb626-x-build
   in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-window-manager
   in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-keyboard
+  in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-desktop
   in_root /usr/bin/Xorg -version
   sudo rm -rf desktop-root/tmp/libmatchbox \
-    desktop-root/tmp/matchbox-window-manager desktop-root/tmp/matchbox-keyboard
+    desktop-root/tmp/matchbox-window-manager desktop-root/tmp/matchbox-keyboard \
+    desktop-root/tmp/matchbox-desktop desktop-root/tmp/matchbox-common
   sudo rm -f desktop-root/tmp/{pb626-x11-epd.c,matchbox-keyboard-eink.patch} \
     desktop-root/usr/bin/qemu-arm-static
   printf 'nameserver 1.1.1.1\n' | sudo tee desktop-root/etc/resolv.conf >/dev/null
@@ -100,7 +111,11 @@ fi
 sudo install -m 755 display/pb626-desktop display/pb626-xsession desktop-root/usr/bin/
 sudo install -D -m 644 display/xorg.conf desktop-root/etc/pb626/xorg.conf
 sudo install -D -m 644 display/eink-fonts.conf desktop-root/etc/fonts/conf.d/99-pb626-eink.conf
+sudo install -D -m 644 display/matchbox/Root.directory desktop-root/usr/share/matchbox/vfolders/Root.directory
+sudo install -m 644 display/matchbox/*.desktop desktop-root/usr/share/applications/
+sudo rm -f desktop-root/usr/share/applications/uxterm.desktop
 test -x desktop-root/usr/bin/pb626-epd
+test -x desktop-root/usr/bin/matchbox-desktop
 # Leave at least 120 MiB for the kernel, display buffers and live applications.
 size=$(sudo du -sm desktop-root | cut -f1)
 echo "Unpacked desktop: $size MiB"

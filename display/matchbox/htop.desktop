@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=System Monitor
+Exec=xterm -name pb626-monitor -fa "Liberation Mono:style=Bold" -fs 12 -bg white -fg black +bc -e htop -C -d 50
+Icon=/usr/share/icons/hicolor/128x128/apps/htop.png
+Categories=System;Monitor;

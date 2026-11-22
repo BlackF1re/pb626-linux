@@ -15,12 +15,16 @@ Once the USB console appears, run
 `Start-PB626Desktop.ps1 -BundleDir <bundle> -Port COM12 -Waveform <default.wbf>`
 in PowerShell 7.4, with the console port available. The script verifies and
 transfers the desktop into RAM. Supply the factory waveform for the reader.
-Xorg and Matchbox provide a launcher, onscreen keyboard, XTerm, Midnight
+Xorg and Matchbox Desktop provide an application launcher, onscreen keyboard, XTerm, Midnight
 Commander, NEdit, XCalc and Htop. Close an application to return to the launcher.
 The keyboard opens for terminal and editor windows and can be toggled with F12
 or Home when touch input is available.
 If touch input is absent, Left and Right move the onscreen pointer, Home changes
-the movement axis, and Menu clicks. The USB console stays available.
+the movement axis, and a short Menu press clicks. Hold Menu for at least one
+second and release to clear ghosting and redraw the desktop.
+Small changes use partial refresh. The desktop uses a full refresh for large
+changes or after 16 partial updates and clears the panel on every 96th update.
+The USB console stays available.
 
 ## Experimental installation to internal eMMC
 
