@@ -28,13 +28,13 @@ sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
 
 in_root() { sudo chroot desktop-root /usr/bin/qemu-arm-static "$@"; }
 in_root /sbin/apk add --no-cache \
-  xf86-video-dummy xf86-input-evdev xinit xauth xset xsetroot xdotool \
+  xf86-video-dummy xf86-input-evdev xinit xauth xset xsetroot xdotool libxtst \
   libxfont2 pixman nettle libxcvt libxft libpng libjpeg-turbo libxcursor libxfixes libfakekey \
   xkbcomp xkeyboard-config font-misc-misc font-cursor-misc font-liberation \
   xmessage xterm mc nedit xcalc htop
 in_root /sbin/apk add --no-cache --virtual .pb626-x-build \
   build-base autoconf automake libtool pkgconf libx11-dev libxext-dev libxft-dev \
-  libxrender-dev libxcursor-dev libxfixes-dev libpng-dev libjpeg-turbo-dev expat-dev libfakekey-dev \
+  libxrender-dev libxcursor-dev libxfixes-dev libxtst-dev libpng-dev libjpeg-turbo-dev expat-dev libfakekey-dev \
   meson xorgproto xtrans libxfont2-dev pixman-dev nettle-dev libxcvt-dev libxau-dev libxkbfile-dev
 in_root /bin/sh -e -c '
   cd "/tmp/$1"
@@ -67,7 +67,7 @@ in_root /bin/sh -e -c '
   make -j2
   make install
   cd /tmp
-  cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11
+  cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXtst
   strip /usr/bin/pb626-x11-epd /usr/bin/matchbox-window-manager
 ' sh "$xorg"
 in_root /sbin/apk del .pb626-x-build
