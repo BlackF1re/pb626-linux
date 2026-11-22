@@ -19,7 +19,7 @@ enum { WIDTH = 758, HEIGHT = 1024, PIXELS = WIDTH * HEIGHT, FULL_INTERVAL = 24 }
 static void move_pointer(Display *display, int fd, int *vertical)
 {
 	struct input_event event;
-	while (read(fd, &event, sizeof(event)) == sizeof(event)) {
+	while (read(fd, &event, sizeof(event)) == (ssize_t)sizeof(event)) {
 		if (event.type != EV_KEY || !event.value)
 			continue;
 		switch (event.code) {

@@ -17,6 +17,9 @@ on:
       kernel_run_id:
         description: Successful Megi 7.2 FEL bundle workflow run
         type: string
+      desktop_run_id:
+        description: Reuse the userspace of this successful desktop workflow run
+        type: string
 
 permissions:
   contents: read
@@ -34,12 +37,27 @@ jobs:
           run-id: ${{ inputs.kernel_run_id || '45002994505' }}
           github-token: ${{ github.token }}
           path: fel-bundle
+      - uses: actions/download-artifact@v4
+        if: inputs.desktop_run_id != ''
+        with:
+          name: pb626-megi-eink-desktop
+          run-id: ${{ inputs.desktop_run_id }}
+          github-token: ${{ github.token }}
+          path: previous-desktop
       - name: Install ARM emulator and packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user-static cpio device-tree-compiler
+          sudo apt-get install -y --no-install-recommends cpio device-tree-compiler
+          if [ ! -d previous-desktop ]; then
+            sudo apt-get install -y --no-install-recommends qemu-user-static
+          fi
       - name: Build Alpine Xorg and Matchbox desktop
-        run: bash scripts/build-megi-desktop.sh fel-bundle
+        run: |
+          if [ -d previous-desktop ]; then
+            bash scripts/build-megi-desktop.sh fel-bundle previous-desktop
+          else
+            bash scripts/build-megi-desktop.sh fel-bundle
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-megi-eink-desktop

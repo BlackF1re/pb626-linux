@@ -2,42 +2,44 @@
 set -Eeuo pipefail
 
 bundle=${1:?Specify the verified FEL bundle directory}
+previous=${2:-}
 (cd "$bundle" && sha256sum -c SHA256SUMS)
 mkdir -p desktop-root dist
 gzip -cd "$bundle/pb626-megi-initramfs.cpio.gz" |
   (cd desktop-root && sudo cpio -id --quiet --no-absolute-filenames)
 
-fetch_source() {
-  local project=$1 tag=$2 revision=$3
-  git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$tag" \
-    "https://git.yoctoproject.org/$project" "$project"
-  test "$(git -C "$project" rev-parse HEAD)" = "$revision"
-  sudo cp -a "$project" desktop-root/tmp/
-}
-fetch_source libmatchbox 1.14 04b214a0d5cf8285e196d90bf2332626b12c74ef
-fetch_source matchbox-window-manager 1.2.3 ce8c1053270d960a7235ab5c3435f707541810a4
-fetch_source matchbox-keyboard 0.1.1 630d89068dc0a1e9199306d405cb32f892dfa4d3
-xorg=xorg-server-21.1.26
-curl -fsSL --retry 3 "https://www.x.org/releases/individual/xserver/$xorg.tar.xz" -o "$xorg.tar.xz"
-echo "c8609f9cdafde14de7ec7cb406dac9507add1d536df8d3c3e3d3d9c1cd864066  $xorg.tar.xz" |
-  sha256sum -c -
-sudo tar -xJf "$xorg.tar.xz" -C desktop-root/tmp/
-sudo install -m 644 display/pb626-x11-epd.c desktop-root/tmp/
-sudo install -m 755 /usr/bin/qemu-arm-static desktop-root/usr/bin/
-sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
+build_userspace() {
+  local xorg=xorg-server-21.1.26
+  fetch_source() {
+    local project=$1 tag=$2 revision=$3
+    git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$tag" \
+      "https://git.yoctoproject.org/$project" "$project"
+    test "$(git -C "$project" rev-parse HEAD)" = "$revision"
+    sudo cp -a "$project" desktop-root/tmp/
+  }
+  fetch_source libmatchbox 1.14 04b214a0d5cf8285e196d90bf2332626b12c74ef
+  fetch_source matchbox-window-manager 1.2.3 ce8c1053270d960a7235ab5c3435f707541810a4
+  fetch_source matchbox-keyboard 0.1.1 630d89068dc0a1e9199306d405cb32f892dfa4d3
+  curl -fsSL --retry 3 "https://www.x.org/releases/individual/xserver/$xorg.tar.xz" -o "$xorg.tar.xz"
+  echo "c8609f9cdafde14de7ec7cb406dac9507add1d536df8d3c3e3d3d9c1cd864066  $xorg.tar.xz" |
+    sha256sum -c -
+  sudo tar -xJf "$xorg.tar.xz" -C desktop-root/tmp/
+  sudo install -m 644 display/pb626-x11-epd.c desktop-root/tmp/
+  sudo install -m 755 /usr/bin/qemu-arm-static desktop-root/usr/bin/
+  sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
 
-in_root() { sudo chroot desktop-root /usr/bin/qemu-arm-static "$@"; }
-in_root /sbin/apk add --no-cache \
-  xf86-video-dummy xf86-input-evdev xinit xauth xset xsetroot xdotool libxtst \
-  libxfont2 pixman nettle libxcvt libpciaccess libxft libpng libjpeg-turbo libxcursor libxfixes libfakekey \
-  xkbcomp xkeyboard-config font-misc-misc font-cursor-misc font-liberation \
-  xmessage xterm mc nedit xcalc htop
-in_root /sbin/apk add --no-cache --virtual .pb626-x-build \
-  build-base linux-headers autoconf automake libtool pkgconf libx11-dev libxext-dev libxft-dev \
-  libxrender-dev libxcursor-dev libxfixes-dev libxtst-dev libpng-dev libjpeg-turbo-dev expat-dev libfakekey-dev \
-  meson xorgproto xtrans libxfont2-dev pixman-dev nettle-dev libxcvt-dev libxau-dev libxkbfile-dev \
-  libpciaccess-dev
-in_root /bin/sh -e -c '
+  in_root() { sudo chroot desktop-root /usr/bin/qemu-arm-static "$@"; }
+  in_root /sbin/apk add --no-cache \
+    xf86-video-dummy xf86-input-evdev xinit xauth xset xsetroot xdotool libxtst \
+    libxfont2 pixman nettle libxcvt libpciaccess libxft libpng libjpeg-turbo libxcursor libxfixes libfakekey \
+    xkbcomp xkeyboard-config font-misc-misc font-cursor-misc font-liberation \
+    xmessage xterm mc nedit xcalc htop
+  in_root /sbin/apk add --no-cache --virtual .pb626-x-build \
+    build-base linux-headers autoconf automake libtool pkgconf libx11-dev libxext-dev libxft-dev \
+    libxrender-dev libxcursor-dev libxfixes-dev libxtst-dev libpng-dev libjpeg-turbo-dev expat-dev libfakekey-dev \
+    meson xorgproto xtrans libxfont2-dev pixman-dev nettle-dev libxcvt-dev libxau-dev libxkbfile-dev \
+    libpciaccess-dev
+  in_root /bin/sh -e -c '
   cd "/tmp/$1"
   sed -i s/termio.h/termios.h/ hw/xfree86/os-support/xf86_OSlib.h
   CFLAGS=-Wno-error=array-bounds meson setup build --prefix=/usr --libdir=lib --buildtype=minsize --strip \
@@ -52,6 +54,7 @@ in_root /bin/sh -e -c '
   meson install --no-rebuild -C build
   rm -f /usr/share/X11/xorg.conf.d/10-evdev.conf
   mkdir -p /var/lib/xkb
+  export CFLAGS="-O2 -std=gnu17"
   cd /tmp/libmatchbox
   autoreconf -fi
   ./configure --prefix=/usr --disable-static
@@ -69,15 +72,29 @@ in_root /bin/sh -e -c '
   make install
   cd /tmp
   cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXtst
-  strip /usr/bin/pb626-x11-epd /usr/bin/matchbox-window-manager
-' sh "$xorg"
-in_root /sbin/apk del .pb626-x-build
-in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-window-manager
-in_root /usr/bin/Xorg -version
-sudo rm -rf "desktop-root/tmp/$xorg" desktop-root/tmp/libmatchbox \
-  desktop-root/tmp/matchbox-window-manager desktop-root/tmp/matchbox-keyboard
-sudo rm -f desktop-root/tmp/pb626-x11-epd.c desktop-root/usr/bin/qemu-arm-static
-printf 'nameserver 1.1.1.1\n' | sudo tee desktop-root/etc/resolv.conf >/dev/null
+  strip /usr/bin/pb626-x11-epd /usr/bin/matchbox-window-manager /usr/bin/matchbox-keyboard
+  ' sh "$xorg"
+  in_root /sbin/apk del .pb626-x-build
+  in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-window-manager
+  in_root /usr/bin/Xorg -version
+  sudo rm -rf "desktop-root/tmp/$xorg" desktop-root/tmp/libmatchbox \
+    desktop-root/tmp/matchbox-window-manager desktop-root/tmp/matchbox-keyboard
+  sudo rm -f desktop-root/tmp/pb626-x11-epd.c desktop-root/usr/bin/qemu-arm-static
+  printf 'nameserver 1.1.1.1\n' | sudo tee desktop-root/etc/resolv.conf >/dev/null
+}
+
+if [[ -n $previous ]]; then
+  (cd "$previous" && sha256sum -c SHA256SUMS)
+  mv desktop-root fel-root
+  mkdir desktop-root
+  gzip -cd "$previous/pb626-megi-initramfs.cpio.gz" |
+    (cd desktop-root && sudo cpio -id --quiet --no-absolute-filenames)
+  sudo rm -rf desktop-root/lib/modules
+  sudo cp -a fel-root/lib/modules desktop-root/lib/
+  sudo install -m 755 fel-root/usr/bin/pb626-epd desktop-root/usr/bin/
+else
+  build_userspace
+fi
 
 sudo install -m 755 display/pb626-desktop display/pb626-xsession desktop-root/usr/bin/
 sudo install -D -m 644 display/xorg.conf desktop-root/etc/pb626/xorg.conf
