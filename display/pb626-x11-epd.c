@@ -28,7 +28,7 @@
 #include "pb626-epd.h"
 
 enum { MENU_HOLD_US = 1000000, QUIET_US = 180000, MAX_PENDING_US = 850000,
-       GHOST_LIMIT = 16, GHOST_URGENT = 28, MAX_REGIONS = 8 };
+       CLEAN_QUIET_US = 1200000, CLEAN_AFTER = 8, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 
 struct controls {
@@ -484,12 +484,21 @@ static int submit(const struct worker *worker, uint8_t command)
 	return done == 1 && ack == command ? 0 : -1;
 }
 
-struct tile_history {
-	uint8_t stress;
-	int16_t balance;
-};
+/* Count completed fast transitions. This budget does not model reflectance. */
+static uint8_t fast_changes[PIXELS];
+static uint16_t cleanup_pixels[TILE_ROWS][TILE_COLS];
 
-static struct tile_history history[TILE_ROWS][TILE_COLS];
+static uint8_t automatic_command(uint64_t idle_us, int capture_pending, int captured,
+				 int different, int needs_cleanup)
+{
+	if (!capture_pending) {
+		if (different && idle_us >= QUIET_US)
+			return SETTLE;
+		if (!different && needs_cleanup && idle_us >= CLEAN_QUIET_US)
+			return CLEAN;
+	}
+	return captured && different ? PREVIEW : 0;
+}
 
 static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8_t *panel,
 			    struct shared_frame *frame)
@@ -504,8 +513,7 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 	memset(frame->tiles, 0, sizeof(frame->tiles));
 	for (int ty = 0; ty < TILE_ROWS; ty++)
 		for (int tx = 0; tx < TILE_COLS; tx++) {
-			int scrub = command == CLEAN && history[ty][tx].stress >= GHOST_LIMIT;
-			if (command == CLEAN ? !scrub : !dirty_tiles[ty][tx])
+			if (command == CLEAN ? !cleanup_pixels[ty][tx] : !dirty_tiles[ty][tx])
 				continue;
 			int right, bottom, differs = 0;
 			tile_bounds(tx, ty, &right, &bottom);
@@ -513,6 +521,7 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 				for (int x = tx * TILE; x < right; x++) {
 					size_t i = y * WIDTH + x;
 					uint8_t target = desired[i], old = panel[i];
+					int scrub = command == CLEAN && fast_changes[i] == CLEAN_AFTER;
 					uint8_t level = target;
 					differs |= target != old;
 					if (command == PREVIEW)
@@ -535,7 +544,8 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 			const uint8_t *desired, uint8_t *panel)
 {
 	if (command == RESET) {
-		memset(history, 0, sizeof(history));
+		memset(fast_changes, 0, sizeof(fast_changes));
+		memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
 		memset(dirty_tiles, 0, sizeof(dirty_tiles));
 		memcpy(panel, desired, PIXELS);
 		return;
@@ -546,9 +556,7 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 				continue;
 			int right, bottom;
 			tile_bounds(tx, ty, &right, &bottom);
-			struct tile_history *tile = &history[ty][tx];
-			unsigned int changed = 0;
-			int net = 0, cleaned = 0, differs = 0;
+			int differs = 0;
 			for (int y = ty * TILE; y < bottom; y++)
 				for (int x = tx * TILE; x < right; x++) {
 					size_t i = y * WIDTH + x;
@@ -559,22 +567,17 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 					}
 					uint8_t level = sample & WHITE;
 					differs |= level != desired[i];
-					cleaned |= sample & SCRUB;
-					changed += panel[i] != level;
-					net += level - panel[i];
+					if (sample & SCRUB) {
+						fast_changes[i] = 0;
+						cleanup_pixels[ty][tx]--;
+					} else if (command == PREVIEW && panel[i] != level &&
+						   fast_changes[i] < CLEAN_AFTER) {
+						if (++fast_changes[i] == CLEAN_AFTER)
+							cleanup_pixels[ty][tx]++;
+					}
 					panel[i] = level;
 				}
 			dirty_tiles[ty][tx] = differs;
-			if (cleaned) {
-				*tile = (struct tile_history){0};
-			} else if (changed) {
-				int balance = tile->balance + net / (int)changed;
-				tile->balance = balance < -90 ? -90 : balance > 90 ? 90 : balance;
-				unsigned int weight = command == PREVIEW ? 2 : 1;
-				weight += changed >= TILE * TILE / 4;
-				weight += abs(tile->balance) >= 24;
-				tile->stress = tile->stress + weight > 255 ? 255 : tile->stress + weight;
-			}
 		}
 }
 
@@ -638,7 +641,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "x11-epd: capture=%s\n", shm.shmaddr ? "MIT-SHM" : "XGetImage");
 	int offset = (width - WIDTH) / 2;
 	unsigned int failures = 0;
-	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
+	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0, needs_cleanup = 0;
 	uint64_t last_damage = 0, pending_since = 0, next_capture = 0, layout_until = 0;
 
 	for (;;) {
@@ -707,16 +710,15 @@ int main(int argc, char **argv)
 		if (!has_frame && !captured)
 			goto wait_input;
 		int different = 0;
-		unsigned int stress = 0;
+		needs_cleanup = 0;
 		for (int y = 0; y < TILE_ROWS; y++)
 			for (int x = 0; x < TILE_COLS; x++) {
 				different |= dirty_tiles[y][x];
-				if (history[y][x].stress > stress)
-					stress = history[y][x].stress;
+				needs_cleanup |= cleanup_pixels[y][x] != 0;
 			}
-		if (stats.changed && different)
+		if (stats.changed)
 			last_damage = now;
-		if (different || stress >= GHOST_LIMIT) {
+		if (different) {
 			if (!pending)
 				pending_since = now;
 			pending = 1;
@@ -724,16 +726,9 @@ int main(int argc, char **argv)
 			pending = 0;
 		}
 
-		uint8_t command = 0;
-		int idle = now >= last_damage + QUIET_US;
-		if (captured && (!has_frame || controls.clean_requested))
-			command = RESET;
-		else if (!dirty && now >= layout_until && stress >= GHOST_LIMIT && (idle || stress >= GHOST_URGENT))
-			command = CLEAN;
-		else if (!dirty && now >= layout_until && different && idle)
-			command = SETTLE;
-		else if (captured && different)
-			command = PREVIEW;
+		uint8_t command = captured && (!has_frame || controls.clean_requested) ? RESET :
+			automatic_command(now - last_damage, dirty || now < layout_until,
+					  captured, different, needs_cleanup);
 
 		uint64_t prepare_start = now_us();
 		unsigned int changes = command ? prepare(command, frame, previous, worker.frame) : 0;
@@ -787,8 +782,8 @@ wait_input:
 		uint64_t deadline = UINT64_MAX;
 		if (dirty || !damage)
 			deadline = next_capture > layout_until ? next_capture : layout_until;
-		if (pending && has_frame && !dirty) {
-			uint64_t settle = last_damage + QUIET_US;
+		if ((pending || needs_cleanup) && has_frame && !dirty) {
+			uint64_t settle = last_damage + (pending ? QUIET_US : CLEAN_QUIET_US);
 			if (settle < layout_until)
 				settle = layout_until;
 			if (settle < deadline)
