@@ -35,7 +35,14 @@ _start:
     ldr r2, =0x4a000000
     bl copy_image
     .endif
+    .ifdef AXF_EMBEDDED_LINUX
+    .set copy_linux, 1
+    .else
     .ifndef STANDALONE_AXF
+    .set copy_linux, 1
+    .endif
+    .endif
+    .ifdef copy_linux
     ldr r0, =kernel
     ldr r1, =kernel_end
     ldr r2, =0x42000000
@@ -160,7 +167,7 @@ uboot:
     .balign 4
 uboot_end:
 .endif
-.ifndef STANDALONE_AXF
+.ifdef copy_linux
 kernel:
     .incbin "factory-kernel.bin"
     .balign 4

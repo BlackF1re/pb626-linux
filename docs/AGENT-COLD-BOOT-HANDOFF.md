@@ -164,6 +164,12 @@ verifies the new files before switching the INI. Include `linux.ini.shim`
 as the predecessor in the update kit. 0x76 records that U-Boot found both
 preloaded images and invoked `bootz`; 0x77 records a return from `bootz`.
 
+When upgrading from the 8 MiB diagnostic shim, p2 can run out of space
+before writing `pb626z.bin`. In FEL recovery, run `rollback-boot` with
+the preload kit, verify that the stock INI is active, then remove only
+`linux/pb626ax.bin` after checking its hash against the shim kit. Run
+`activate-preload` again. This does not require reinstalling p1.
+
 ## Hardware-side plan (agent must execute carefully)
 
 A. **Read-only preflight.** Confirm original factory firmware boots;
