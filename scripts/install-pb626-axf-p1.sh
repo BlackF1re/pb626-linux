@@ -210,7 +210,7 @@ case "$action" in
       test "$(wc -c < "$boot/linux/pb626-zImage")" -le 8388608
       test "$(wc -c < "$boot/linux/pb626.dtb")" -le 65536
       awk '
-        BEGIN { ORS = "\r\n" }
+        BEGIN { OFS = ORS = "\r\n" }
         { sub(/\r$/, "") }
         /^img_name = / { sub(/bImage$/, "pb626pre.bin") }
         /^\[script_info\]$/ {
