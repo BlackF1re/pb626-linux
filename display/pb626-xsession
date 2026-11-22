@@ -6,11 +6,18 @@ if [ -r /usr/lib/libharfbuzz.so.0 ]; then
 fi
 xset s off
 xsetroot -solid white
-matchbox-window-manager -use_titlebar yes &
+export XENVIRONMENT=/etc/pb626/Xresources
+if [ -x /mnt/pb626-apps/bin/pb626-settings ]; then
+    for shortcut in /mnt/pb626-apps/share/applications/pb626-*.desktop; do
+        [ -f "$shortcut" ] || continue
+        ln -sf "$shortcut" "/usr/share/applications/${shortcut##*/}"
+    done
+fi
+matchbox-window-manager -theme PB626 -use_titlebar yes &
 wm=$!
 panel=
 if command -v matchbox-panel >/dev/null; then
-    matchbox-panel --orientation south --size 48 --bgcolor white --no-session \
+    matchbox-panel --orientation south --size 96 --bgcolor white --no-session \
         --default-apps mb-applet-menu-launcher,mb-applet-battery,mb-applet-clock &
     panel=$!
 fi
@@ -18,8 +25,8 @@ matchbox-keyboard --daemon us &
 keyboard=$!
 pb626-x11-epd "$1" "$2" &
 screen=$!
-matchbox-desktop --bg col-solid:white --font 'Sans bold 21px' \
-    --fontcol black --no-outline --no-title --icon-size 56 --icon-padding 24 &
+matchbox-desktop --bg col-solid:white --font 'Sans bold 36px' \
+    --fontcol black --no-outline --no-title --icon-size 224 --icon-padding 16 &
 desktop=$!
 trap 'kill "$wm" "$keyboard" "$screen" "$desktop" ${panel:+"$panel"} 2>/dev/null || true' EXIT
 wait -n "$desktop" "$screen"

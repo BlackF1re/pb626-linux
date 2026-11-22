@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+case ${1:-} in
+    frontlight)
+        set -- /sys/class/backlight/*
+        light=$1
+        if [ ! -r "$light/max_brightness" ]; then
+            printf 'Frontlight unavailable. Press Enter to close.\n'
+            read -r _
+            exit 1
+        fi
+        max=$(cat "$light/max_brightness")
+        current=$(cat "$light/brightness")
+        printf 'Frontlight is at %s%%.\nNew brightness (0–100): ' "$((100 * current / max))"
+        if IFS= read -r percent; then
+            case $percent in
+                [0-9]|[1-9][0-9]|100)
+                    printf '%s\n' "$(((max * percent + 50) / 100))" >"$light/brightness"
+                    ;;
+                *) printf 'Enter a number from 0 to 100. Press Enter to close.\n'; read -r _ ;;
+            esac
+        fi
+        ;;
+    status)
+        for supply in /sys/class/power_supply/*; do
+            [ -r "$supply/capacity" ] || continue
+            printf 'Battery  %s%%  %s\n' "$(cat "$supply/capacity")" "$(cat "$supply/status")"
+        done
+        awk '/^MemAvailable:/ {printf "Free RAM  %.0f MiB\n", $2 / 1024}' /proc/meminfo
+        for render in /dev/dri/renderD*; do
+            [ -c "$render" ] && printf 'GPU device  %s\n' "$render"
+        done
+        df -h /mnt/pb626-apps
+        printf '\nPress Enter to close.\n'
+        read -r _
+        ;;
+    *) exit 2 ;;
+esac

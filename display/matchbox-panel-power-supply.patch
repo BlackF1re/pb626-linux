@@ -15,6 +15,15 @@
 @@ -207 +215 @@
 -AM_CONDITIONAL(WANT_ACPI, test x$enable_acpi_linux = xyes)
 +AM_CONDITIONAL(WANT_BATTERY, test x"$miniapm_enabled" = xyes || test x$enable_acpi_linux = xyes || test "x$enable_linux_power_supply" = xyes)
+--- a/src/msg.h
++++ b/src/msg.h
+@@ -18,0 +19 @@
++Bool msg_set_timeout(MBPanel *d, struct timeval *tv, struct timeval **tvp);
+--- a/src/panel.c
++++ b/src/panel.c
+@@ -1602 +1602 @@
+-  memset(panel, sizeof(MBPanel), 0);
++  memset(panel, 0, sizeof *panel);
 --- a/applets/mb-applet-battery.c
 +++ b/applets/mb-applet-battery.c
 @@ -86 +86 @@

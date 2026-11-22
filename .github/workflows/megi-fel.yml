@@ -154,6 +154,7 @@ jobs:
           grep -qx 'CONFIG_USB_CONFIGFS_ACM=y' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_CMA_SIZE_MBYTES=32' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_REGULATOR_TPS65185=y' kernel-cache/pb626-megi.config
+          grep -qx 'CONFIG_DRM_LIMA=m' kernel-cache/pb626-megi.config
           echo "Prebuilt kernel cache hit: ${{ steps.cache.outputs.cache-hit }}"
       - name: Build current Device Trees
         run: |

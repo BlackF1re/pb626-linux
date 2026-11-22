@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
 Name=Files
-Exec=xterm -fa "Liberation Mono:style=Bold" -fs 12 -bg white -fg black +bc -e mc -b
+Exec=xterm -e mc -b
 Icon=mbfolder.png
 Categories=System;FileManager;

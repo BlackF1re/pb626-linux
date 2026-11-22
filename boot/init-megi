@@ -93,6 +93,7 @@ if [ -d "/lib/modules/$(uname -r)" ]; then
   done
   if [ -f /sys/firmware/devicetree/base/chosen/pb626,display-bringup ]; then
     (modprobe sun5i_eink || log "failed to load sun5i_eink") &
+    (modprobe lima || log "failed to load lima") &
   fi
 fi
 # Distinct PE8 patterns after the first 30 seconds:

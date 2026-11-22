@@ -17,6 +17,10 @@ in PowerShell 7.4, with the console port available. The script verifies and
 transfers the desktop into RAM. Supply the factory waveform for the reader.
 Xorg and Matchbox Desktop provide an application launcher, onscreen keyboard, XTerm, Midnight
 Commander, NEdit, XCalc and Htop. Close an application to return to the launcher.
+For optional Frontlight and System Status apps, extract the separate
+`pb626-desktop-extras` artifact to a volume mounted at `/mnt/pb626-apps` on
+the reader and pass `-UseMountedApps` to the desktop launcher. This requires a
+boot configuration in which that volume is already accessible.
 The keyboard opens for terminal and editor windows and can be toggled with F12
 or Home when touch input is available.
 If touch input is absent, Left and Right move the onscreen pointer, Home changes

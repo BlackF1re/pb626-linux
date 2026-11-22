@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=System Status
+Exec=xterm -T "System Status" -e /mnt/pb626-apps/bin/pb626-settings status
+Icon=utilities-system-monitor
+Categories=Utility;

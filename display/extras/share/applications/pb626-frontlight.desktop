@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Frontlight
+Exec=xterm -T Frontlight -e /mnt/pb626-apps/bin/pb626-settings frontlight
+Icon=preferences-desktop
+Categories=Utility;

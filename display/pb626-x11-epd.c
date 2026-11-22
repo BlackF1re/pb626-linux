@@ -25,7 +25,7 @@ enum { FULL_DAMAGE_BUDGET = 2 * PIXELS, FULL_PAGE_CHANGE = PIXELS / 3,
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 
 struct controls {
-	int fallback, vertical, pointer_visible, clean_requested;
+	int fallback, vertical, pointer_visible, clean_requested, keyboard_changed;
 	uint64_t menu_pressed;
 };
 
@@ -39,7 +39,7 @@ static void keyboard_command(Display *display, Window root, Atom command, long o
 }
 
 static void keyboard_focus(Display *display, Window root, Atom active, Atom command,
-			   Window *previous)
+			   Window *previous, struct controls *controls)
 {
 	Atom type;
 	int format;
@@ -63,6 +63,7 @@ static void keyboard_focus(Display *display, Window root, Atom active, Atom comm
 	if (hint.res_name && !strcmp(hint.res_name, "pb626-monitor"))
 		typing = 0;
 	keyboard_command(display, root, command, typing ? KEYBOARD_SHOW : KEYBOARD_HIDE);
+	controls->keyboard_changed = 1;
 	if (hint.res_name)
 		XFree(hint.res_name);
 	if (hint.res_class)
@@ -115,8 +116,10 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 			if (event.value == 1) {
 				if (controls->fallback)
 					controls->vertical = !controls->vertical;
-				else
+				else {
 					keyboard_command(display, root, keyboard, KEYBOARD_TOGGLE);
+					controls->keyboard_changed = 1;
+				}
 				changed |= controls->pointer_visible;
 			}
 			break;
@@ -302,7 +305,8 @@ int main(int argc, char **argv)
 	Window root = RootWindow(display, screen);
 	XSetErrorHandler(handle_x_error);
 	XSelectInput(display, root, PropertyChangeMask);
-	Atom active = XInternAtom(display, "_NET_ACTIVE_WINDOW", False);
+	/* Matchbox excludes the input toolbar and panel from this property. */
+	Atom active = XInternAtom(display, "_MB_CURRENT_APP_WINDOW", False);
 	Atom keyboard = XInternAtom(display, "_MB_IM_INVOKER_COMMAND", False);
 	KeyCode toggle = XKeysymToKeycode(display, XK_F12);
 	if (toggle)
@@ -328,6 +332,7 @@ int main(int argc, char **argv)
 	unsigned int failures = 0;
 	int dirty = 1, focus_changed = 1, has_frame = 0;
 	const struct timespec interval = { .tv_nsec = damage ? 25000000L : 250000000L };
+	const struct timespec keyboard_layout = { .tv_nsec = 180000000L };
 	for (;;) {
 		XEvent event;
 		while (XPending(display)) {
@@ -336,16 +341,25 @@ int main(int argc, char **argv)
 				dirty = 1;
 			else if (event.type == PropertyNotify && event.xproperty.atom == active)
 				focus_changed = 1;
-			else if (event.type == KeyPress && event.xkey.keycode == toggle)
+			else if (event.type == KeyPress && event.xkey.keycode == toggle) {
 				keyboard_command(display, root, keyboard, KEYBOARD_TOGGLE);
+				controls.keyboard_changed = 1;
+			}
 		}
 		if (focus_changed) {
-			keyboard_focus(display, root, active, keyboard, &previous_window);
+			keyboard_focus(display, root, active, keyboard, &previous_window, &controls);
 			focus_changed = 0;
 		}
 		for (nfds_t i = 1; i < source_count; i++)
 			if (sources[i].fd >= 0)
 				dirty |= handle_buttons(display, root, keyboard, sources[i].fd, &controls);
+		if (controls.keyboard_changed) {
+			/* Let the window manager resize the application and let it repaint. */
+			XFlush(display);
+			nanosleep(&keyboard_layout, NULL);
+			controls.keyboard_changed = 0;
+			continue;
+		}
 		if (damage && !dirty) {
 			XFlush(display);
 			if (XPending(display))

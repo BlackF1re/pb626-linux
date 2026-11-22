@@ -9,6 +9,7 @@ on:
       - 'display/pb626-xsession'
       - 'display/pb626-x11-epd.c'
       - 'display/eink-fonts.conf'
+      - 'display/extras/**'
       - 'display/matchbox-keyboard-eink.patch'
       - 'display/matchbox-panel-power-supply.patch'
       - 'display/xorg.conf'
@@ -17,6 +18,10 @@ on:
       - 'scripts/fel-boot.sh'
       - 'scripts/Start-PB626.ps1'
       - 'scripts/Start-PB626Desktop.ps1'
+  workflow_run:
+    workflows: [Megi mainline Linux 7.2 RAM Linux]
+    branches: [main]
+    types: [completed]
   workflow_dispatch:
     inputs:
       kernel_run_id:
@@ -36,14 +41,30 @@ permissions:
 
 jobs:
   desktop:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.event != 'pull_request')
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Select verified FEL kernel run
+        id: kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KERNEL_RUN: ${{ inputs.kernel_run_id || github.event.workflow_run.id }}
+        run: |
+          if [ -z "$KERNEL_RUN" ]; then
+            KERNEL_RUN=$(gh run list --workflow megi-fel.yml --branch main --status success \
+              --json databaseId,event --jq 'map(select(.event == "push" or .event == "workflow_dispatch")) | .[0].databaseId // empty')
+          fi
+          echo "run_id=${KERNEL_RUN:-45063328040}" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           name: pb626-mainline-7.2-ram-bundle
-          run-id: ${{ inputs.kernel_run_id || '45063328040' }}
+          run-id: ${{ steps.kernel.outputs.run_id }}
           github-token: ${{ github.token }}
           path: fel-bundle
       - uses: actions/download-artifact@v4
@@ -71,4 +92,11 @@ jobs:
         with:
           name: pb626-megi-eink-desktop
           path: dist/
+          if-no-files-found: error
+      - name: Package optional disk applications
+        run: tar -czf pb626-desktop-extras.tar.gz -C display/extras .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-desktop-extras
+          path: pb626-desktop-extras.tar.gz
           if-no-files-found: error

@@ -3,7 +3,8 @@
 param(
     [Parameter(Mandatory)][ValidatePattern('^COM[1-9][0-9]*$')][string]$Port,
     [Parameter(Mandatory)][string]$BundleDir,
-    [Parameter(Mandatory)][string]$Waveform
+    [Parameter(Mandatory)][string]$Waveform,
+    [switch]$UseMountedApps
 )
 
 $ErrorActionPreference = 'Stop'
@@ -58,9 +59,13 @@ try {
     $stream = [IO.File]::OpenRead($archivePath)
     $serial.Open()
     $serial.Write("`n")
-    $work = Invoke-Reader @'
-test -f /sys/firmware/devicetree/base/chosen/pb626,display-bringup && test "$(stat -f -c %T /run)" = tmpfs && test ! -d /run/pb626-desktop && set -- /sys/block/mmcblk* && test ! -e "$1" && mktemp -d /run/pb626-gui.XXXXXX
-'@ | Where-Object { $_ -cmatch '^/run/pb626-gui\.[A-Za-z0-9]+$' }
+    $storageCheck = 'set -- /sys/block/mmcblk* && test ! -e "$1"'
+    if ($UseMountedApps) {
+        $storageCheck = 'mountpoint -q /mnt/pb626-apps && test -x /mnt/pb626-apps/bin/pb626-settings'
+    }
+    $check = 'test -f /sys/firmware/devicetree/base/chosen/pb626,display-bringup && test "$(stat -f -c %T /run)" = tmpfs && test ! -d /run/pb626-desktop'
+    $work = Invoke-Reader "$check && $storageCheck && mktemp -d /run/pb626-gui.XXXXXX" |
+        Where-Object { $_ -cmatch '^/run/pb626-gui\.[A-Za-z0-9]+$' }
     if (@($work).Count -ne 1) { throw 'Could not create a directory in FEL RAM.' }
 
     $buffer = [byte[]]::new(1MB)
@@ -85,11 +90,17 @@ test -f /sys/firmware/devicetree/base/chosen/pb626,display-bringup && test "$(st
     $launch = @'
 ( set -e; set -o pipefail; cd '__WORK__'; mkdir root; gzip -dc __ROOT__ | (cd root && cpio -id --quiet); rm __ROOT__;
   for fs in dev dev/pts proc sys run; do mount -o bind "/$fs" "root/$fs"; done;
+  __APPS_MOUNT__;
   setsid chroot root /usr/bin/pb626-desktop '__WORK__/__WBF__' </dev/null >/run/pb626-desktop.log 2>&1 &
   for second in $(seq 1 35); do test -s /run/pb626-desktop/frame.pgm && exit 0; sleep 1; done;
   cat /run/pb626-desktop.log; exit 1 )
 '@
+    $appsMount = ':'
+    if ($UseMountedApps) {
+        $appsMount = 'mkdir -p root/mnt/pb626-apps && mount -o bind /mnt/pb626-apps root/mnt/pb626-apps && mount -o remount,bind,ro root/mnt/pb626-apps'
+    }
     $launch = $launch.Replace([string][char]13, '').Replace([string][char]10, ' ').
+        Replace('__APPS_MOUNT__', $appsMount).
         Replace('__WORK__', $work).Replace('__ROOT__', $rootName).Replace('__WBF__', $waveformName)
     $null = Invoke-Reader $launch
     Write-Output "PocketBook desktop started in RAM. USB console port is $Port."
