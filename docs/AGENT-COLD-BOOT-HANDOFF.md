@@ -111,13 +111,17 @@ activate the candidate only after each preceding step succeeds.
 After activation, power off fully and start with the power button. Collect
 the PE8 LED pattern and USB enumeration. On the ACM shell, check
 `uname -r`, `cat /proc/cmdline`, `cat /run/pb626-boot.log`, and the
-`/` entry in `/proc/mounts`. The root must be `/dev/mmcblk2p1`, ext4
-and rw. If the test fails, return to FEL, resend the kit and run
+`/` entry in `/proc/1/mountinfo`. Match its major:minor to
+`/sys/class/block/mmcblk2p1/dev` and check for ext4 and rw. If the test
+fails, return to FEL, resend the kit and run
 `rollback-boot` to restore the original INI. Restore the full factory
 backup to recover the original FAT contents of p1.
 
-Preparation was verified offline. Each hardware step and the cold boot
-remain pending.
+On the ELAN unit, the RAM preflight matched the factory BT0, BT1, and FAT
+files. Alpine was installed on p1, passed `e2fsck -fn`, and was verified
+by a read-only mount. The three boot files and the selected INI passed FAT
+readback. Cold boot requires independent confirmation through USB and the
+root mount.
 
 ## Hardware-side plan (agent must execute carefully)
 
