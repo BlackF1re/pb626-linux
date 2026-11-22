@@ -1,6 +1,5 @@
 #!/bin/sh
 set -eu
-export GTK_THEME=Adwaita:light GDK_BACKEND=x11
 xset s off
 xsetroot -solid white
 matchbox-window-manager -use_titlebar yes &
@@ -11,15 +10,17 @@ pb626-x11-epd "$1" "$2" &
 screen=$!
 trap 'kill "$wm" "$keyboard" "$screen" 2>/dev/null || true' EXIT
 
-# Keep the launcher open behind apps so closing a window returns to it.
-yad --title='PocketBook' --form --columns=1 --button='Exit desktop:0' --borders=18 \
-    --field='Terminal:BTN' 'xterm -fa "Liberation Mono" -fs 13 -bg white -fg black' \
-    --field='Files:BTN' 'xfe /root' \
-    --field='Text editor:BTN' 'mousepad' \
-    --field='Calculator:BTN' 'xcalc' \
-    --field='System monitor:BTN' 'xterm -fa "Liberation Mono" -fs 12 -bg white -fg black -e htop' &
-launcher=$!
-while kill -0 "$launcher" 2>/dev/null && kill -0 "$screen" 2>/dev/null; do
-    sleep 1
+while kill -0 "$screen" 2>/dev/null; do
+    choice=0
+    xmessage -title PocketBook -center -fn 10x20 -default Terminal \
+        -buttons 'Terminal:10,Files:11,Editor:12,Calculator:13,Monitor:14,Exit:0' \
+        'Choose an application' || choice=$?
+    case "$choice" in
+        10) xterm -fa 'Liberation Mono' -fs 13 ;;
+        11) xterm -fa 'Liberation Mono' -fs 12 -e mc ;;
+        12) nedit ;;
+        13) xcalc ;;
+        14) xterm -fa 'Liberation Mono' -fs 12 -e htop ;;
+        *) break ;;
+    esac
 done
-kill "$launcher" 2>/dev/null || true
