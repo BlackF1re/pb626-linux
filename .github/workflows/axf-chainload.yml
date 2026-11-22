@@ -38,7 +38,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-arm-linux-gnueabihf bc bison flex libssl-dev cpio \
+            gcc-arm-linux-gnueabihf libc6-dev-armhf-cross bc bison flex libssl-dev cpio \
             python3-pyelftools python3-setuptools device-tree-compiler
       - name: Build standalone U-Boot for factory AXF handoff
         run: |
