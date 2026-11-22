@@ -1,0 +1,106 @@
+name: PocketBook stock boot.axf -> standalone U-Boot (experiment)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_run_id:
+        description: "Successful Megi RAM bundle workflow run ID"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  chainload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CROSS_COMPILE: arm-linux-gnueabihf-
+      UBOOT_REV: 96c08df75f632622c57954940d6a1a6c20062e18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-mainline-7.2-ram-bundle
+          run-id: ${{ inputs.kernel_run_id }}
+          github-token: ${{ github.token }}
+          path: kernel-bundle
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-linux-gnueabihf bc bison flex libssl-dev \
+            python3-pyelftools python3-setuptools device-tree-compiler
+      - name: Build standalone U-Boot for factory AXF handoff
+        run: |
+          set -euo pipefail
+          git init u-boot
+          git -C u-boot fetch --depth=1 https://codeberg.org/megi/u-boot.git "$UBOOT_REV"
+          git -C u-boot checkout --detach FETCH_HEAD
+          test "$(git -C u-boot rev-parse HEAD)" = "$UBOOT_REV"
+          sed -i '/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;/{N;s/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;\n[[:blank:]]*writel(rval, \&priv->reg->clkcr);/clrbits_le32(\&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);/;}' u-boot/drivers/mmc/sunxi_mmc.c
+          grep -Fq 'clrbits_le32(&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);' u-boot/drivers/mmc/sunxi_mmc.c
+          make -C u-boot pocketbook_touch_lux_3_defconfig
+          sed -i -E '/^(# )?CONFIG_(SYS_TEXT_BASE|USE_BOOTCOMMAND|BOOTCOMMAND|ENV_IS_NOWHERE|ENV_IS_IN_MMC|ENV_IS_IN_FAT|ENV_IS_IN_SPI_FLASH)(=| is not set)/d' u-boot/.config
+          cat >>u-boot/.config <<'EOF'
+          CONFIG_SYS_TEXT_BASE=0x4a000000
+          CONFIG_USE_BOOTCOMMAND=y
+          CONFIG_ENV_IS_NOWHERE=y
+          # CONFIG_ENV_IS_IN_MMC is not set
+          # CONFIG_ENV_IS_IN_FAT is not set
+          # CONFIG_ENV_IS_IN_SPI_FLASH is not set
+          CONFIG_BOOTCOMMAND="setenv bootargs console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rootwait rw init=/sbin/pb626-emmc-init; setenv fdt_high 0xffffffff; if fatload mmc 1:2 0x42000000 linux/pb626-zImage && fatload mmc 1:2 0x43200000 linux/pb626.dtb; then bootz 0x42000000 - 0x43200000; fi; if fatload mmc 0:2 0x42000000 linux/pb626-zImage && fatload mmc 0:2 0x43200000 linux/pb626.dtb; then bootz 0x42000000 - 0x43200000; fi; if fatload mmc 2:2 0x42000000 linux/pb626-zImage && fatload mmc 2:2 0x43200000 linux/pb626.dtb; then bootz 0x42000000 - 0x43200000; fi; echo PB626: all chainload attempts failed"
+          EOF
+          make -C u-boot olddefconfig
+          grep -Fxq 'CONFIG_SYS_TEXT_BASE=0x4a000000' u-boot/.config
+          grep -Fxq 'CONFIG_CMD_BOOTZ=y' u-boot/.config
+          grep -Fxq 'CONFIG_OF_LIBFDT=y' u-boot/.config
+          grep -Fq 'linux/pb626-zImage' u-boot/.config
+          make -C u-boot -j"$(nproc)"
+          mkdir -p dist/linux
+          cp u-boot/u-boot.bin dist/linux/u-boot.bin
+          test -s dist/linux/u-boot.bin
+          test "$(stat -c %s dist/linux/u-boot.bin)" -le $((0x80000))
+      - name: Prepare separate Linux payloads for FAT p2
+        run: |
+          set -euo pipefail
+          (cd kernel-bundle && sha256sum -c SHA256SUMS)
+          cp kernel-bundle/pb626-megi-zImage dist/linux/pb626-zImage
+          # The FEL zImage has a four-byte appended-DTB sentinel.
+          # Recover the exact eMMC-specific DTB from the same run's bImage.
+          tar -xOf kernel-bundle/pb626-emmc-boot.tar.gz bImage > original-bImage
+          kernel_size=$(stat -c %s kernel-bundle/pb626-megi-zImage)
+          dd if=original-bImage of=native.dtb bs=1 skip=$((kernel_size - 4)) status=none
+          fdtget native.dtb /chosen pb626,emmc-root >/dev/null
+          fdtget native.dtb /chosen pb626,display-bringup >/dev/null
+          # There is NO initramfs in this experiment.
+          fdtput -d native.dtb /chosen linux,initrd-start linux,initrd-end
+          fdtput -t s native.dtb /chosen bootargs \
+            'console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rootwait rw init=/sbin/pb626-emmc-init'
+          dtc -q -I dtb -O dtb -p 4096 -o dist/linux/pb626.dtb native.dtb
+          test "$(fdtget -t s dist/linux/pb626.dtb /soc/mmc@1c11000 status)" = okay
+          ! fdtget dist/linux/pb626.dtb /chosen linux,initrd-start >/dev/null 2>&1
+          ! fdtget dist/linux/pb626.dtb /chosen linux,initrd-end >/dev/null 2>&1
+          (cd dist && sha256sum linux/* > SHA256SUMS)
+          cat >dist/README.txt <<'EOF'
+          EXPERIMENT ONLY. NO IMAGE IS AUTOMATICALLY INSTALLED.
+          Preserve the stock BT0, BT1, boot.axf and factory backups.
+          This bundle contains standalone u-boot.bin at 0x4a000000,
+          zImage and FDT for p1 Alpine, with NO initramfs.
+          A stock linux.ini must be separately configured for ONE segment:
+          [segment]
+          img_name = c:\linux\u-boot.bin
+          img_size = 0x80000
+          img_base = 0x4a000000
+          The original factory linux.ini and recovery settings must be retained.
+          The factory loader's behavior with this specific board is NOT verified.
+          The eMMC partition p1 MUST contain the expected Alpine rootfs and
+          executable /sbin/pb626-emmc-init before attempting this boot.
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-stock-axf-chainload-experiment
+          path: dist/
+          if-no-files-found: error
