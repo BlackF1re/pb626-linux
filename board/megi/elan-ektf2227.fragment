@@ -1,0 +1,35 @@
+/* Factory type-8 board selects the 3.3 V touch path and leaves FPC flash off. */
+&pio {
+  touch-3v3-select-hog {
+    gpio-hog;
+    gpios = <3 27 GPIO_ACTIVE_HIGH>;
+    output-low;
+  };
+
+  touch-1v8-disable-hog {
+    gpio-hog;
+    gpios = <3 25 GPIO_ACTIVE_HIGH>;
+    output-low;
+  };
+
+  touch-fpc-flash-disable-hog {
+    gpio-hog;
+    gpios = <3 26 GPIO_ACTIVE_HIGH>;
+    output-low;
+  };
+};
+
+&reg_elan_touch {
+  regulator-min-microvolt = <3300000>;
+  regulator-max-microvolt = <3300000>;
+  vin-supply = <&reg_vcc3v3>;
+};
+
+&{/soc/i2c@1c2b400/touchscreen@15} {
+  compatible = "elan,ektf2227";
+  /delete-property/ vcc33-supply;
+  /delete-property/ vccio-supply;
+  /delete-property/ touchscreen-size-x;
+  /delete-property/ touchscreen-size-y;
+  vcc-supply = <&reg_elan_touch>;
+};

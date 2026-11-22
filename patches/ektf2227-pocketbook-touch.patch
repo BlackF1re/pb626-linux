@@ -1,0 +1,164 @@
+diff --git a/drivers/input/touchscreen/Makefile b/drivers/input/touchscreen/Makefile
+index 79c41f3..06dd4d9 100644
+--- a/drivers/input/touchscreen/Makefile
++++ b/drivers/input/touchscreen/Makefile
+@@ -39,7 +39,7 @@ obj-$(CONFIG_TOUCHSCREEN_HYCON_HY46XX)	+= hycon-hy46xx.o
+ obj-$(CONFIG_TOUCHSCREEN_GUNZE)		+= gunze.o
+ obj-$(CONFIG_TOUCHSCREEN_EETI)		+= eeti_ts.o
+ obj-$(CONFIG_TOUCHSCREEN_EKTF2127)	+= ektf2127.o
+-obj-$(CONFIG_TOUCHSCREEN_ELAN)		+= elants_i2c.o
++obj-$(CONFIG_TOUCHSCREEN_ELAN)		+= elants_i2c.o ektf2227.o
+ obj-$(CONFIG_TOUCHSCREEN_ELO)		+= elo.o
+ obj-$(CONFIG_TOUCHSCREEN_EGALAX)	+= egalax_ts.o
+ obj-$(CONFIG_TOUCHSCREEN_EGALAX_SERIAL)	+= egalax_ts_serial.o
+diff --git a/drivers/input/touchscreen/ektf2227.c b/drivers/input/touchscreen/ektf2227.c
+new file mode 100644
+index 0000000..5ab0d5d
+--- /dev/null
++++ b/drivers/input/touchscreen/ektf2227.c
+@@ -0,0 +1,145 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* ELAN eKTF2227, the eight-byte protocol used by PocketBook Touch Lux 3. */
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/input.h>
++#include <linux/input/mt.h>
++#include <linux/interrupt.h>
++#include <linux/module.h>
++#include <linux/regulator/consumer.h>
++
++#define EKTF2227_PACKET_SIZE 8
++#define EKTF2227_CONTACTS 2
++
++static int ektf2227_read(struct i2c_client *client, u8 *data, int size)
++{
++	int ret = i2c_master_recv(client, data, size);
++
++	return ret == size ? 0 : ret < 0 ? ret : -EIO;
++}
++
++static int ektf2227_resolution(struct i2c_client *client, u8 axis)
++{
++	const u8 command[] = { 0x53, axis, 0x00, 0x00 };
++	u8 reply[4];
++	int ret = i2c_master_send(client, command, sizeof(command));
++
++	if (ret != sizeof(command))
++		return ret < 0 ? ret : -EIO;
++
++	ret = ektf2227_read(client, reply, sizeof(reply));
++	if (ret)
++		return ret;
++
++	if (reply[0] != 0x52)
++		return -EPROTO;
++
++	return reply[2] | ((reply[3] & 0xf0) << 4);
++}
++
++static irqreturn_t ektf2227_interrupt(int irq, void *data)
++{
++	struct i2c_client *client = data;
++	struct input_dev *input = i2c_get_clientdata(client);
++	u8 packet[EKTF2227_PACKET_SIZE];
++	int slot;
++
++	if (ektf2227_read(client, packet, sizeof(packet)) || packet[0] != 0x5a)
++		return IRQ_HANDLED;
++
++	for (slot = 0; slot < EKTF2227_CONTACTS; slot++) {
++		const u8 *coord = &packet[1 + 3 * slot];
++		bool active = packet[7] & BIT(slot);
++
++		input_mt_slot(input, slot);
++		if (!input_mt_report_slot_state(input, MT_TOOL_FINGER, active))
++			continue;
++
++		input_report_abs(input, ABS_MT_POSITION_X,
++				 ((coord[0] & 0xf0) << 4) | coord[1]);
++		input_report_abs(input, ABS_MT_POSITION_Y,
++				 ((coord[0] & 0x0f) << 8) | coord[2]);
++	}
++
++	input_mt_sync_frame(input);
++	input_sync(input);
++	return IRQ_HANDLED;
++}
++
++static int ektf2227_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct gpio_desc *reset;
++	struct input_dev *input;
++	u8 hello[EKTF2227_PACKET_SIZE];
++	int ret, x, y;
++
++	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
++		return -EOPNOTSUPP;
++
++	reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(reset))
++		return dev_err_probe(dev, PTR_ERR(reset), "could not get reset GPIO\n");
++
++	ret = devm_regulator_get_enable(dev, "vcc");
++	if (ret)
++		return dev_err_probe(dev, ret, "could not enable touch power\n");
++
++	msleep(5);
++	gpiod_set_value_cansleep(reset, 1);
++	msleep(20);
++	gpiod_set_value_cansleep(reset, 0);
++	msleep(100);
++
++	ret = ektf2227_read(client, hello, sizeof(hello));
++	if (ret)
++		return dev_err_probe(dev, ret, "could not read touch hello packet\n");
++	if (memcmp(hello, "\x55\x55\x55\x55", 4))
++		return dev_err_probe(dev, -EPROTO, "unexpected touch hello %8ph\n", hello);
++
++	msleep(10);
++	x = ektf2227_resolution(client, 0x60);
++	y = ektf2227_resolution(client, 0x63);
++	if (x < 2 || y < 2)
++		return dev_err_probe(dev, -EPROTO, "invalid touch resolution %d x %d\n", x, y);
++
++	input = devm_input_allocate_device(dev);
++	if (!input)
++		return -ENOMEM;
++
++	input->name = "ELAN eKTF2227 Touchscreen";
++	input->id.bustype = BUS_I2C;
++	input_set_abs_params(input, ABS_MT_POSITION_X, 0, x - 1, 0, 0);
++	input_set_abs_params(input, ABS_MT_POSITION_Y, 0, y - 1, 0, 0);
++
++	ret = input_mt_init_slots(input, EKTF2227_CONTACTS, INPUT_MT_DIRECT);
++	if (ret)
++		return ret;
++	ret = input_register_device(input);
++	if (ret)
++		return ret;
++
++	i2c_set_clientdata(client, input);
++	return devm_request_threaded_irq(dev, client->irq, NULL,
++					ektf2227_interrupt, IRQF_ONESHOT,
++					dev_name(dev), client);
++}
++
++static const struct of_device_id ektf2227_match[] = {
++	{ .compatible = "elan,ektf2227" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, ektf2227_match);
++
++static struct i2c_driver ektf2227_driver = {
++	.probe = ektf2227_probe,
++	.driver = {
++		.name = "ektf2227",
++		.of_match_table = ektf2227_match,
++	},
++};
++module_i2c_driver(ektf2227_driver);
++
++MODULE_DESCRIPTION("ELAN eKTF2227 I2C touchscreen driver");
++MODULE_LICENSE("GPL");

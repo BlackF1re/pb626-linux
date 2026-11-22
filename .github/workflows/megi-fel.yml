@@ -94,7 +94,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kernel-cache
-          key: pb626-megi-kernel-v2-facc87117511221-${{ runner.os }}-${{ runner.arch }}-gcc${{ steps.compiler.outputs.version }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch', 'patches/pwm-backlight-disconnect-when-off.patch') }}
+          key: pb626-megi-kernel-v2-facc87117511221-${{ runner.os }}-${{ runner.arch }}-gcc${{ steps.compiler.outputs.version }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch') }}
       - name: Fetch pinned Megi 7.2 source and verify A13 drivers
         run: |
           set -euo pipefail
@@ -113,6 +113,7 @@ jobs:
           git -C linux apply --check "$GITHUB_WORKSPACE/patches/rtl8xxxu-reset-linktype.patch"
           git -C linux apply "$GITHUB_WORKSPACE/patches/rtl8xxxu-reset-linktype.patch"
           git -C linux apply "$GITHUB_WORKSPACE/patches/pwm-backlight-disconnect-when-off.patch"
+          git -C linux apply "$GITHUB_WORKSPACE/patches/ektf2227-pocketbook-touch.patch"
           grep -A 13 '^static void rtl8xxxu_remove_interface' linux/drivers/net/wireless/realtek/rtl8xxxu/core.c | grep -Fq 'NL80211_IFTYPE_UNSPECIFIED'
       - name: Compile zImage and all modules only on cache miss
         if: steps.cache.outputs.cache-hit != 'true'
@@ -135,6 +136,7 @@ jobs:
             'Maintainer: Ondrej Jirman (megi); mirror: Arnavion/linux' > kernel-cache/KERNEL-SOURCE.txt
           echo 'Experimental local patch: patches/rtl8xxxu-reset-linktype.patch' >> kernel-cache/KERNEL-SOURCE.txt
           echo 'Local patch: patches/pwm-backlight-disconnect-when-off.patch' >> kernel-cache/KERNEL-SOURCE.txt
+          echo 'Local patch: patches/ektf2227-pocketbook-touch.patch' >> kernel-cache/KERNEL-SOURCE.txt
       - name: Check cached or newly compiled zImage, modules and USB contract
         run: |
           set -euo pipefail

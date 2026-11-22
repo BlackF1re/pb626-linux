@@ -22,9 +22,14 @@ for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest elan-d
   cat "$repo/board/megi/common-sd.fragment" >> "$src"
   case "$variant" in
     cypress) ;;
-    elan-lightoff|elan-usbtest|elan-display)
+    elan-lightoff|elan-usbtest)
       cat "$repo/board/megi/elan.fragment" >> "$src"
       cat "$repo/board/megi/$variant.fragment" >> "$src"
+      ;;
+    elan-display)
+      for fragment in elan elan-display elan-ektf2227; do
+        cat "$repo/board/megi/$fragment.fragment" >> "$src"
+      done
       ;;
     elan-emmc-backup)
       for fragment in elan elan-usbtest elan-emmc-backup; do
@@ -93,6 +98,7 @@ test "$(fdtget -t x "$out/pb626-elan-lightoff.dtb" "$phy" usb0_vbus_det-gpios)" 
 ! fdtget -t x "$out/pb626-elan-usbtest.dtb" "$phy" usb0_vbus_det-gpios >/dev/null 2>&1
 
 display="$out/pb626-elan-display.dtb"
+test "$(fdtget -t s "$display" '/soc/i2c@1c2b400/touchscreen@15' compatible)" = 'elan,ektf2227'
 if fdtget -t x "$display" "$phy" usb0_vbus_det-gpios >/dev/null 2>&1; then
   echo 'elan-display must use the USB peripheral VBUS fallback' >&2
   exit 1
