@@ -13,10 +13,10 @@ _start:
     ldr r1, [r0]
     orr r1, r1, #(1 << 8)       @ PE8 LED off
     str r1, [r0]
-    ldr r2, [r0, #-8]           @ PE_CFG2
+    ldr r2, [r0, #-12]          @ PE_CFG1: PE8 is in PE8..PE15
     bic r2, r2, #7
     orr r2, r2, #1              @ PE8 output
-    str r2, [r0, #-8]
+    str r2, [r0, #-12]
     /* The stock loader may leave the timer clock gated. */
     mov r2, #0x10000000
 1:
