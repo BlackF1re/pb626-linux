@@ -1,11 +1,16 @@
 name: PocketBook stock boot.axf -> standalone U-Boot (experiment)
 
 on:
+  push:
+    branches: [experiment/stock-axf-uboot-chainload]
+    paths:
+      - '.github/workflows/axf-chainload.yml'
+      - 'boot/pb626-uboot-entry.S'
   workflow_dispatch:
     inputs:
       kernel_run_id:
         description: "Successful Megi RAM bundle workflow run ID"
-        required: true
+        required: false
         type: string
 
 permissions:
@@ -24,7 +29,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pb626-mainline-7.2-ram-bundle
-          run-id: ${{ inputs.kernel_run_id }}
+          run-id: ${{ inputs.kernel_run_id || '45002994505' }}
           github-token: ${{ github.token }}
           path: kernel-bundle
       - name: Install build tools
