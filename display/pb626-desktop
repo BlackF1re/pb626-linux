@@ -24,8 +24,6 @@ for event in /sys/class/input/event*; do
         *[Ee][Ll][Aa][Nn]*)
             touch=yes
             role=CorePointer
-            # ELAN coordinates follow the panel's native 1024x758 axes.
-            options='Option "TransformationMatrix" "0 -1 1 1 0 0 0 0 1"'
             ;;
         'GPIO Keys'|*.lradc)
             button_devices="$button_devices /dev/input/${event##*/}"
@@ -39,7 +37,6 @@ Section "InputDevice"
     Identifier "input$count"
     Driver "evdev"
     Option "Device" "/dev/input/${event##*/}"
-    $options
 EndSection
 EOF
     printf '    InputDevice "input%s" "%s"\n' "$count" "$role" >>"$work/layout"
