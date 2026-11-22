@@ -33,14 +33,14 @@ in_root /sbin/apk add --no-cache \
   xkbcomp xkeyboard-config font-misc-misc font-cursor-misc font-liberation \
   xmessage xterm mc nedit xcalc htop
 in_root /sbin/apk add --no-cache --virtual .pb626-x-build \
-  build-base autoconf automake libtool pkgconf libx11-dev libxext-dev libxft-dev \
+  build-base linux-headers autoconf automake libtool pkgconf libx11-dev libxext-dev libxft-dev \
   libxrender-dev libxcursor-dev libxfixes-dev libxtst-dev libpng-dev libjpeg-turbo-dev expat-dev libfakekey-dev \
   meson xorgproto xtrans libxfont2-dev pixman-dev nettle-dev libxcvt-dev libxau-dev libxkbfile-dev \
   libpciaccess-dev
 in_root /bin/sh -e -c '
   cd "/tmp/$1"
   sed -i s/termio.h/termios.h/ hw/xfree86/os-support/xf86_OSlib.h
-  CFLAGS=-Wno-error=array-bounds meson setup build --prefix=/usr --libdir=lib --buildtype=release --strip \
+  CFLAGS=-Wno-error=array-bounds meson setup build --prefix=/usr --libdir=lib --buildtype=minsize --strip \
     -Dxorg=true -Dxvfb=false -Dxnest=false -Dxwin=false -Dxquartz=false \
     -Dglx=false -Dglamor=false -Ddrm=false -Ddri1=false -Ddri2=false -Ddri3=false \
     -Dint10=false -Dvgahw=false -Dudev=false -Dudev_kms=false \
