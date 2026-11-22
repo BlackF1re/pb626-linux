@@ -177,8 +177,43 @@ static unsigned int channel(unsigned long pixel, unsigned long mask)
 	return ((pixel & mask) >> shift) * 255 / (mask >> shift);
 }
 
+static uint8_t paper_level(unsigned int value, const uint8_t *pixel, int x, int y)
+{
+	if (value <= 33)
+		return 0;
+	if (value >= 222)
+		return 15;
+
+	unsigned int neighbors[] = {
+		x > 0 ? pixel[-1] : value,
+		x + 1 < WIDTH ? pixel[1] : value,
+		y > 0 ? pixel[-WIDTH] : value,
+		y + 1 < HEIGHT ? pixel[WIDTH] : value,
+	};
+	unsigned int darkest = value, lightest = value, sum = 0;
+	for (size_t i = 0; i < sizeof(neighbors) / sizeof(neighbors[0]); i++) {
+		unsigned int shade = neighbors[i];
+		if (shade < darkest)
+			darkest = shade;
+		if (shade > lightest)
+			lightest = shade;
+		sum += shade;
+	}
+
+	/* Keep flat fills monochrome. Give high-contrast edges two intermediate
+	 * levels, using the neighborhood to handle light lettering on dark fills.
+	 */
+	if (lightest - darkest < 64)
+		return value < 180 ? 0 : 15;
+	int dark_background = sum < 4 * 128;
+	unsigned int shade = dark_background ? 255 - value : value;
+	uint8_t level = shade < 157 ? 0 : shade < 194 ? 4 : shade < 222 ? 10 : 15;
+	return dark_background ? 15 - level : level;
+}
+
 static void capture(const XImage *image, uint8_t *frame)
 {
+	static uint8_t lightness[PIXELS];
 	int x_offset = (image->width - WIDTH) / 2;
 	int rgbx = image->bits_per_pixel == 32 && image->byte_order == LSBFirst &&
 		   image->red_mask == 0xff0000 && image->green_mask == 0xff00 &&
@@ -198,14 +233,18 @@ static void capture(const XImage *image, uint8_t *frame)
 				g = channel(pixel, image->green_mask);
 				b = channel(pixel, image->blue_mask);
 			}
-			/* Keep thin antialiased strokes and colored labels against paper white. */
+			/* Darken saturated colors to keep colored labels legible. */
 			unsigned int low = r < g ? r : g;
 			if (b < low)
 				low = b;
-			frame[y * WIDTH + x] = 57 * r + 112 * g + 23 * b + 64 * low >=
-					      180 * 256 ? 15 : 0;
+			lightness[y * WIDTH + x] = (57 * r + 112 * g + 23 * b + 64 * low) >> 8;
 		}
 	}
+	for (int y = 0; y < HEIGHT; y++)
+		for (int x = 0; x < WIDTH; x++) {
+			size_t offset = y * WIDTH + x;
+			frame[offset] = paper_level(lightness[offset], lightness + offset, x, y);
+		}
 }
 
 static int update_panel(const char *waveform, const char *mode, const char *path)
