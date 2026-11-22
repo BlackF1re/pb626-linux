@@ -92,7 +92,7 @@ try {
   for fs in dev dev/pts proc sys run; do mount -o bind "/$fs" "root/$fs"; done;
   __APPS_MOUNT__;
   setsid chroot root /usr/bin/pb626-desktop '__WORK__/__WBF__' </dev/null >/run/pb626-desktop.log 2>&1 &
-  for second in $(seq 1 35); do test -s /run/pb626-desktop/frame.pgm && exit 0; sleep 1; done;
+  for second in $(seq 1 35); do test -s /run/pb626-desktop/ready && exit 0; sleep 1; done;
   cat /run/pb626-desktop.log; exit 1 )
 '@
     $appsMount = ':'

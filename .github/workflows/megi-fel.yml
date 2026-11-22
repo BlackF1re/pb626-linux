@@ -8,6 +8,8 @@ on:
       - 'board/megi/**'
       - 'boot/**'
       - 'display/pb626-epd.c'
+      - 'display/pb626-epd.h'
+      - 'display/test-pb626-epd.c'
       - 'scripts/build-megi-variants.sh'
       - 'scripts/configure-megi-kernel.sh'
       - 'patches/**'
@@ -22,6 +24,8 @@ on:
       - 'board/megi/**'
       - 'boot/**'
       - 'display/pb626-epd.c'
+      - 'display/pb626-epd.h'
+      - 'display/test-pb626-epd.c'
       - 'scripts/build-megi-variants.sh'
       - 'scripts/configure-megi-kernel.sh'
       - 'patches/**'
@@ -200,6 +204,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cpio device-tree-compiler e2fsprogs kmod zstd gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+      - name: Test E Ink waveform planning, scan buffers and quantization
+        run: |
+          gcc -O2 -Wall -Wextra -Werror -I kernel-stage/uapi \
+            display/test-pb626-epd.c -o test-pb626-epd
+          ./test-pb626-epd
       - name: Compile the ARMv7 E Ink display utility
         run: |
           arm-linux-gnueabihf-gcc -O3 -Wall -Wextra -Werror -static -I kernel-stage/uapi \

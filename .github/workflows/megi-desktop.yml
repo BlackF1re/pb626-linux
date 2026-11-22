@@ -55,33 +55,43 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           KERNEL_RUN: ${{ inputs.kernel_run_id || github.event.workflow_run.id }}
+          BEFORE: ${{ github.event.before }}
         run: |
+          if [ -n "$BEFORE" ]; then
+            changed=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename')
+            if grep -Eq '^display/(pb626-epd\.[ch]|test-pb626-epd\.c)$' <<< "$changed"; then
+              echo 'Waiting for megi-fel.yml to trigger the paired desktop build.'
+              echo 'deferred=true' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           if [ -z "$KERNEL_RUN" ]; then
             KERNEL_RUN=$(gh run list --workflow megi-fel.yml --branch main --status success \
               --json databaseId,event --jq 'map(select(.event == "push" or .event == "workflow_dispatch")) | .[0].databaseId // empty')
           fi
           echo "run_id=${KERNEL_RUN:-45063328040}" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
+        if: steps.kernel.outputs.deferred != 'true'
         with:
           name: pb626-mainline-7.2-ram-bundle
           run-id: ${{ steps.kernel.outputs.run_id }}
           github-token: ${{ github.token }}
           path: fel-bundle
       - uses: actions/download-artifact@v4
-        if: inputs.desktop_run_id != ''
+        if: steps.kernel.outputs.deferred != 'true' && inputs.desktop_run_id != ''
         with:
           name: pb626-megi-eink-desktop
           run-id: ${{ inputs.desktop_run_id }}
           github-token: ${{ github.token }}
           path: previous-desktop
       - name: Install ARM emulator and packaging tools
+        if: steps.kernel.outputs.deferred != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cpio device-tree-compiler
-          if [ ! -d previous-desktop ]; then
-            sudo apt-get install -y --no-install-recommends qemu-user-static
-          fi
+          sudo apt-get install -y --no-install-recommends qemu-user-static
       - name: Build Alpine Xorg and Matchbox desktop
+        if: steps.kernel.outputs.deferred != 'true'
         run: |
           if [ -d previous-desktop ]; then
             bash scripts/build-megi-desktop.sh fel-bundle previous-desktop
@@ -89,13 +99,16 @@ jobs:
             bash scripts/build-megi-desktop.sh fel-bundle
           fi
       - uses: actions/upload-artifact@v4
+        if: steps.kernel.outputs.deferred != 'true'
         with:
           name: pb626-megi-eink-desktop
           path: dist/
           if-no-files-found: error
       - name: Package optional disk applications
+        if: steps.kernel.outputs.deferred != 'true'
         run: tar -czf pb626-desktop-extras.tar.gz -C display/extras .
       - uses: actions/upload-artifact@v4
+        if: steps.kernel.outputs.deferred != 'true'
         with:
           name: pb626-desktop-extras
           path: pb626-desktop-extras.tar.gz

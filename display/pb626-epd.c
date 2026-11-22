@@ -18,13 +18,15 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-enum { SOURCES = 1024, GATES = 758, PIXELS = SOURCES * GATES,
+#include "pb626-epd.h"
+
+enum { SOURCES = HEIGHT, GATES = WIDTH,
        CLOCKS = 304, ROWS = 767, DATA_ROW = 6, DATA_CLOCK = 40,
        GATE_HIGH_CLOCKS = 85, GROUPS = SOURCES / 4,
        HEADER_WORDS = SUN5I_EINK_HDR_SIZE / sizeof(uint32_t),
        FRAME_WORDS = HEADER_WORDS + CLOCKS * ROWS, FRAME_BYTES = FRAME_WORDS * 4,
-       LEVELS = 16, WHITE = LEVELS - 1, TRANSITIONS = LEVELS * LEVELS,
-       LUT_BYTES = TRANSITIONS / 4, MAX_PHASES = 256, QUEUE_SIZE = 12 };
+       LEVELS = 16, TRANSITIONS = LEVELS * LEVELS,
+       LUT_BYTES = TRANSITIONS / 4, MAX_PHASES = 256, QUEUE_SIZE = 8 };
 
 enum { S_LE = 1 << 13, G_MODE = 1 << 15, S_OE = 1 << 20,
        S_SP = 1 << 21, G_CLK = 1 << 22, G_SP = 1 << 23,
@@ -52,12 +54,31 @@ struct update {
 	unsigned int count;
 };
 
-struct buffer {
-	uint32_t *data;
-	size_t size;
+struct span_range {
+	unsigned short first, end;
 };
 
-static void fail(const char *message)
+struct buffer {
+	uint32_t *data;
+	struct span_range rows[GATES];
+};
+
+struct renderer {
+	int fd, profile;
+	unsigned int buffers_count;
+	struct buffer buffers[QUEUE_SIZE];
+	struct waveform wbf;
+	struct update cache[DU4 + 1], planned;
+	bool driven[DU4 + 1][TRANSITIONS];
+	uint64_t temperature_checked;
+	uint32_t neutral[FRAME_WORDS];
+	uint8_t previous[PIXELS], target[PIXELS];
+	uint16_t transitions[PIXELS];
+	struct span_range rows[GATES];
+	bool known;
+};
+
+static _Noreturn void fail(const char *message)
 {
 	fprintf(stderr, "pb626-epd: %s\n", message);
 	exit(EXIT_FAILURE);
@@ -163,13 +184,18 @@ static void load_waveform(struct waveform *wbf, const char *path)
 		if (bounds[i] >= bounds[i + 1])
 			fail("non-increasing WBF temperature table");
 
-	int temp = temperature_mc();
+	wbf->modes = data[0x25] + 1;
+	wbf->interval = UINT32_MAX;
+}
+
+static unsigned int temperature_interval(const struct waveform *wbf, int temp)
+{
+	const uint8_t *bounds = wbf->data + 0x30;
+	unsigned int ranges = wbf->data[0x26] + 1;
+
 	for (unsigned int i = 0; i < ranges; i++) {
-		if (temp >= 1000 * bounds[i] && temp < 1000 * bounds[i + 1]) {
-			wbf->interval = i;
-			wbf->modes = data[0x25] + 1;
-			return;
-		}
+		if (temp >= 1000 * bounds[i] && temp < 1000 * bounds[i + 1])
+			return i;
 	}
 	fail("panel temperature is outside the factory WBF range");
 }
@@ -204,31 +230,52 @@ static size_t decode(const struct waveform *wbf, enum mode mode, uint8_t *lut)
 	return written / LUT_BYTES;
 }
 
-static void plan(struct update *update, const struct waveform *wbf, enum mode mode,
-		 const bool *active)
+static void cache_mode(struct renderer *renderer, enum mode mode)
 {
+	struct update *decoded = &renderer->cache[mode];
+	if (decoded->count)
+		return;
+
+	uint64_t start = now_us();
 	uint8_t packed[MAX_PHASES * LUT_BYTES];
-	bool driven[TRANSITIONS] = {0};
-	size_t count = decode(wbf, mode, packed);
-
-	for (size_t i = 0; i < count; i++) {
+	decoded->count = decode(&renderer->wbf, mode, packed);
+	memset(renderer->driven[mode], 0, sizeof(renderer->driven[mode]));
+	for (unsigned int i = 0; i < decoded->count; i++) {
 		const uint8_t *lut = packed + i * LUT_BYTES;
-		uint8_t phase[TRANSITIONS] = {0};
-
+		struct phase *phase = &decoded->phases[i];
 		for (unsigned int t = 0; t < TRANSITIONS; t++) {
 			uint8_t signal = (lut[t / 4] >> (2 * (t % 4))) & 3;
-
 			if (signal == 3)
 				fail("unsupported WBF source voltage");
-			if (mode == INIT || active[t]) {
-				phase[t] = signal;
-				driven[t] |= signal != 0;
-			}
+			phase->lut[t] = signal;
+			renderer->driven[mode][t] |= signal != 0;
+			if (mode == INIT && signal != phase->lut[0])
+				fail("RESET requires a uniform waveform");
 		}
-		if (mode == INIT)
-			for (unsigned int t = 1; t < TRANSITIONS; t++)
-				if (phase[t] != phase[0])
-					fail("RESET requires a uniform waveform");
+	}
+	if (renderer->profile)
+		fprintf(stderr, "epd: decode mode=%s interval=%u phases=%u us=%llu\n",
+			modes[mode], renderer->wbf.interval, decoded->count,
+			(unsigned long long)(now_us() - start));
+}
+
+static bool supports(const struct renderer *renderer, enum mode mode, const bool *active)
+{
+	for (unsigned int t = 0; t < TRANSITIONS; t++)
+		if (active[t] && t % (LEVELS + 1) && !renderer->driven[mode][t])
+			return false;
+	return true;
+}
+
+static void plan(struct renderer *renderer, enum mode mode, const bool *active)
+{
+	struct update *update = &renderer->planned;
+	const struct update *decoded = &renderer->cache[mode];
+	update->count = 0;
+	for (unsigned int i = 0; i < decoded->count; i++) {
+		uint8_t phase[TRANSITIONS];
+		for (unsigned int t = 0; t < TRANSITIONS; t++)
+			phase[t] = !active || active[t] ? decoded->phases[i].lut[t] : 0;
 
 		struct phase *last = update->count ? &update->phases[update->count - 1] : NULL;
 		if (last && !memcmp(last->lut, phase, sizeof(phase))) {
@@ -239,10 +286,6 @@ static void plan(struct update *update, const struct waveform *wbf, enum mode mo
 			next->scans = 1;
 		}
 	}
-	if (mode != INIT)
-		for (unsigned int t = 0; t < TRANSITIONS; t++)
-			if (active[t] && t % (LEVELS + 1) && !driven[t])
-				fail("this mode cannot perform every requested transition; use partial or full");
 }
 
 static unsigned int pgm_number(FILE *file)
@@ -292,7 +335,7 @@ static void read_image(const char *path, uint8_t *target)
 		for (unsigned int x = 0; x < GATES; x++) {
 			if (row[x] > maxval)
 				fail("PGM sample exceeds its maximum");
-			target[(GATES - 1 - x) * SOURCES + y] = (row[x] * WHITE + maxval / 2) / maxval;
+			target[y * WIDTH + x] = (row[x] * WHITE + maxval / 2) / maxval;
 		}
 	}
 	if (fgetc(file) != EOF || ferror(file))
@@ -300,15 +343,24 @@ static void read_image(const char *path, uint8_t *target)
 	fclose(file);
 }
 
-static bool load_state(uint8_t *previous)
+static size_t portrait_index(unsigned int gate, unsigned int source)
+{
+	return source * WIDTH + (GATES - 1 - gate);
+}
+
+static bool load_state(uint8_t *previous, uint8_t *scan_order)
 {
 	FILE *file = fopen(state_path, "rb");
-	bool valid = file && fread(previous, 1, PIXELS, file) == PIXELS &&
+	bool valid = file && fread(scan_order, 1, PIXELS, file) == PIXELS &&
 		     fgetc(file) == EOF && !ferror(file);
 	if (file)
 		fclose(file);
-	for (size_t i = 0; valid && i < PIXELS; i++)
-		valid = previous[i] <= WHITE;
+	for (unsigned int gate = 0; valid && gate < GATES; gate++)
+		for (unsigned int source = 0; valid && source < SOURCES; source++) {
+			uint8_t level = scan_order[gate * SOURCES + source];
+			valid = level <= WHITE;
+			previous[portrait_index(gate, source)] = level;
+		}
 	if (!valid)
 		memset(previous, WHITE, PIXELS);
 	return valid;
@@ -360,28 +412,41 @@ static uint32_t source_word(unsigned int data)
 	return ((data & 0x1f) << 3) | ((data & 0xe0) << 5);
 }
 
-static void render(uint32_t *frame, const uint32_t *neutral, const struct phase *phase,
-		   const uint8_t *transitions)
+static void render(struct buffer *buffer, const struct renderer *renderer,
+		   const struct phase *phase, bool reset)
 {
-	uint32_t pins[4][TRANSITIONS];
-
-	memcpy(frame, neutral, FRAME_BYTES);
-	frame[3] = htole32(phase->scans - 1);
-	/* The first pixel of each group uses D7:D6 and the last uses D1:D0. */
-	for (unsigned int pixel = 0; pixel < 4; pixel++)
-		for (unsigned int t = 0; t < TRANSITIONS; t++)
-			pins[pixel][t] = htole32(source_word(phase->lut[t] << (6 - 2 * pixel)));
+	uint32_t pins[4][TRANSITIONS + 1] = {0};
+	buffer->data[3] = htole32(phase->scans - 1);
+	if (!reset) {
+		for (unsigned int pixel = 0; pixel < 4; pixel++)
+			for (unsigned int t = 0; t < TRANSITIONS; t++)
+				pins[pixel][t + 1] = htole32(source_word(phase->lut[t] << (6 - 2 * pixel)));
+	}
+	uint32_t uniform = htole32(source_word(phase->lut[0] * 0x55));
 	for (unsigned int y = 0; y < GATES; y++) {
-		uint32_t *out = frame + HEADER_WORDS + (DATA_ROW + y) * CLOCKS + DATA_CLOCK;
-		const uint8_t *row = transitions ? transitions + y * SOURCES : NULL;
-		if (!row) {
-			uint32_t data = htole32(source_word(phase->lut[0] * 0x55));
-			for (unsigned int x = 0; x < GROUPS; x++)
-				out[x] |= data;
-			continue;
+		struct span_range old = buffer->rows[y];
+		struct span_range row = reset ? (struct span_range){0, GROUPS} : renderer->rows[y];
+		size_t offset = HEADER_WORDS + (DATA_ROW + y) * CLOCKS + DATA_CLOCK;
+		uint32_t *out = buffer->data + offset;
+		const uint32_t *neutral = renderer->neutral + offset;
+		if (old.end > old.first && row.end == row.first) {
+			memcpy(out + old.first, neutral + old.first, (old.end - old.first) * sizeof(*out));
+		} else if (row.end > row.first) {
+			if (old.first < row.first && old.end > old.first) {
+				unsigned int end = old.end < row.first ? old.end : row.first;
+				memcpy(out + old.first, neutral + old.first, (end - old.first) * sizeof(*out));
+			}
+			if (old.end > row.end) {
+				unsigned int first = old.first > row.end ? old.first : row.end;
+				memcpy(out + first, neutral + first, (old.end - first) * sizeof(*out));
+			}
+			const uint16_t *pixels = renderer->transitions + y * SOURCES + 4 * row.first;
+			for (unsigned int x = row.first; x < row.end; x++, pixels += 4)
+				out[x] = neutral[x] | (reset ? uniform :
+					pins[0][pixels[0]] | pins[1][pixels[1]] |
+					pins[2][pixels[2]] | pins[3][pixels[3]]);
 		}
-		for (unsigned int x = 0; x < GROUPS; x++, row += 4)
-			out[x] |= pins[0][row[0]] | pins[1][row[1]] | pins[2][row[2]] | pins[3][row[3]];
+		buffer->rows[y] = row;
 	}
 }
 
@@ -394,39 +459,50 @@ static int retry_ioctl(int fd, unsigned long request, void *data)
 	return result;
 }
 
-static void enqueue(int fd, unsigned int index, struct buffer *buffers, const uint32_t *neutral,
-		    const struct phase *phase, const uint8_t *transitions)
+static void allocate_queue(struct renderer *renderer)
+{
+	struct v4l2_requestbuffers req = { .count = QUEUE_SIZE, .type = type,
+					  .memory = V4L2_MEMORY_MMAP };
+	if (retry_ioctl(renderer->fd, VIDIOC_REQBUFS, &req) || !req.count || req.count > QUEUE_SIZE)
+		fail("could not allocate the E Ink scanout queue");
+	renderer->buffers_count = req.count;
+
+	for (unsigned int i = 0; i < req.count; i++) {
+		struct v4l2_buffer info = { .index = i, .type = type, .memory = V4L2_MEMORY_MMAP };
+		if (retry_ioctl(renderer->fd, VIDIOC_QUERYBUF, &info) || info.length < FRAME_BYTES)
+			fail("could not query an E Ink scanout buffer");
+		renderer->buffers[i].data = mmap(NULL, info.length, PROT_READ | PROT_WRITE,
+						 MAP_SHARED, renderer->fd, info.m.offset);
+		if (renderer->buffers[i].data == MAP_FAILED)
+			fail("could not map an E Ink scanout buffer");
+		memcpy(renderer->buffers[i].data, renderer->neutral, FRAME_BYTES);
+	}
+}
+
+static void enqueue(struct renderer *renderer, unsigned int index, const struct phase *phase,
+		    bool reset, uint64_t *render_us)
 {
 	struct v4l2_buffer info = { .index = index, .type = type, .memory = V4L2_MEMORY_MMAP,
 				   .bytesused = FRAME_BYTES, .field = V4L2_FIELD_NONE };
-	render(buffers[index].data, neutral, phase, transitions);
-	if (retry_ioctl(fd, VIDIOC_QBUF, &info))
+	uint64_t start = renderer->profile ? now_us() : 0;
+	render(&renderer->buffers[index], renderer, phase, reset);
+	if (renderer->profile)
+		*render_us += now_us() - start;
+	if (retry_ioctl(renderer->fd, VIDIOC_QBUF, &info))
 		fail("could not queue an E Ink phase");
 }
 
-static void refresh(int fd, const uint32_t *neutral, const struct update *update,
-		    const uint8_t *transitions)
+static void refresh(struct renderer *renderer, enum mode mode)
 {
-	struct buffer buffers[QUEUE_SIZE] = {0};
-	struct v4l2_requestbuffers req = { .count = QUEUE_SIZE, .type = type,
-					  .memory = V4L2_MEMORY_MMAP };
-	if (req.count > update->count)
-		req.count = update->count;
-	if (retry_ioctl(fd, VIDIOC_REQBUFS, &req) || !req.count || req.count > QUEUE_SIZE)
-		fail("could not allocate the E Ink scanout queue");
+	const struct update *update = &renderer->planned;
+	int fd = renderer->fd;
+	uint64_t start = now_us(), render_us = 0;
+	unsigned int queued = 0, scans = 0;
+	for (unsigned int i = 0; i < update->count; i++)
+		scans += update->phases[i].scans;
 
-	unsigned int queued = 0;
-	for (; queued < req.count; queued++) {
-		struct v4l2_buffer info = { .index = queued, .type = type, .memory = V4L2_MEMORY_MMAP };
-		if (retry_ioctl(fd, VIDIOC_QUERYBUF, &info) || info.length < FRAME_BYTES)
-			fail("could not query an E Ink scanout buffer");
-		buffers[queued].size = info.length;
-		buffers[queued].data = mmap(NULL, info.length, PROT_READ | PROT_WRITE,
-					    MAP_SHARED, fd, info.m.offset);
-		if (buffers[queued].data == MAP_FAILED)
-			fail("could not map an E Ink scanout buffer");
-		enqueue(fd, queued, buffers, neutral, &update->phases[queued], transitions);
-	}
+	for (; queued < renderer->buffers_count && queued < update->count; queued++)
+		enqueue(renderer, queued, &update->phases[queued], mode == INIT, &render_us);
 
 	enum v4l2_buf_type stream = type;
 	if (retry_ioctl(fd, VIDIOC_STREAMON, &stream))
@@ -439,41 +515,164 @@ static void refresh(int fd, const uint32_t *neutral, const struct update *update
 			ready = poll(&pollfd, 1, 6000);
 		} while (ready < 0 && errno == EINTR);
 		if (ready <= 0 || !(pollfd.revents & POLLOUT) ||
-		    retry_ioctl(fd, VIDIOC_DQBUF, &info) || info.index >= req.count ||
+		    retry_ioctl(fd, VIDIOC_DQBUF, &info) || info.index >= renderer->buffers_count ||
 		    info.sequence != done || (info.flags & V4L2_BUF_FLAG_ERROR))
 			fail("did not complete every E Ink phase");
 		if (queued < update->count)
-			enqueue(fd, info.index, buffers, neutral, &update->phases[queued++], transitions);
+			enqueue(renderer, info.index, &update->phases[queued++], mode == INIT, &render_us);
 	}
 	if (retry_ioctl(fd, VIDIOC_STREAMOFF, &stream))
 		fail("could not stop E Ink scanout");
-	for (unsigned int i = 0; i < req.count; i++)
-		munmap(buffers[i].data, buffers[i].size);
-	req.count = 0;
-	if (retry_ioctl(fd, VIDIOC_REQBUFS, &req))
-		fail("could not release E Ink scanout buffers");
+	if (renderer->profile) {
+		uint64_t elapsed = now_us() - start;
+		fprintf(stderr, "epd: mode=%s scans=%u buffers=%u render_us=%llu v4l2_us=%llu scan_total_us=%llu\n",
+			modes[mode], scans, update->count, (unsigned long long)render_us,
+			(unsigned long long)(elapsed - render_us), (unsigned long long)elapsed);
+	}
+}
+
+static void invalidate(void)
+{
+	if (unlink(state_path) && errno != ENOENT)
+		fail("could not invalidate the saved screen state");
+}
+
+static void apply(struct renderer *renderer, enum mode mode, const uint8_t *image,
+		  bool reset, bool fallback)
+{
+	uint64_t started = now_us();
+	bool reset_first = reset || !renderer->known || mode == INIT;
+	uint8_t *previous = renderer->previous;
+	bool active[TRANSITIONS] = {0};
+	bool changed = false;
+
+	if (reset_first)
+		memset(previous, WHITE, PIXELS);
+	if (mode != INIT) {
+		memset(renderer->transitions, 0, sizeof(renderer->transitions));
+		memset(renderer->rows, 0, sizeof(renderer->rows));
+		for (unsigned int source = 0; source < SOURCES; source++)
+			for (unsigned int x = 0; x < GATES; x++) {
+				size_t portrait = source * WIDTH + x;
+				uint8_t sample = image[portrait];
+				if (sample == KEEP) {
+					if (reset_first)
+						fail("a recovery frame must supply all pixels");
+					continue;
+				}
+				if (sample & ~(SCRUB | WHITE))
+					fail("invalid E Ink pixel");
+				unsigned int old = previous[portrait], level = sample & WHITE;
+				if (old == level && !(mode == GC16 && (sample & SCRUB)))
+					continue;
+				unsigned int gate = GATES - 1 - x;
+				unsigned int t = old | (level << 4);
+				active[t] = true;
+				changed = true;
+				renderer->transitions[gate * SOURCES + source] = t + 1;
+				struct span_range *row = &renderer->rows[gate];
+				if (!row->end)
+					row->first = source / 4;
+				row->end = source / 4 + 1;
+			}
+	}
+	if (!reset_first && !changed)
+		return;
+
+	if (!renderer->temperature_checked || started - renderer->temperature_checked >= 3000000) {
+		unsigned int interval = temperature_interval(&renderer->wbf, temperature_mc());
+		if (interval != renderer->wbf.interval) {
+			for (unsigned int i = 0; i <= DU4; i++)
+				renderer->cache[i].count = 0;
+			renderer->wbf.interval = interval;
+		}
+		renderer->temperature_checked = now_us();
+	}
+	if (mode != INIT && changed) {
+		cache_mode(renderer, mode);
+		if (fallback && mode == GL16 && !supports(renderer, mode, active)) {
+			mode = GC16;
+			cache_mode(renderer, mode);
+		}
+		if (!supports(renderer, mode, active))
+			fail("this mode cannot perform every requested transition; use partial or full");
+	}
+	invalidate();
+	if (!renderer->buffers_count)
+		allocate_queue(renderer);
+	uint64_t scan_us = 0;
+	if (reset_first) {
+		cache_mode(renderer, INIT);
+		plan(renderer, INIT, NULL);
+		uint64_t start = now_us();
+		refresh(renderer, INIT);
+		scan_us += now_us() - start;
+	}
+	if (mode != INIT && changed) {
+		plan(renderer, mode, active);
+		uint64_t start = now_us();
+		refresh(renderer, mode);
+		scan_us += now_us() - start;
+	}
+	if (mode != INIT)
+		for (size_t i = 0; i < PIXELS; i++)
+			if (image[i] != KEEP)
+				previous[i] = image[i] & WHITE;
+	renderer->known = true;
+	if (renderer->profile) {
+		uint64_t total = now_us() - started;
+		fprintf(stderr, "epd: prepare_us=%llu update_us=%llu\n",
+			(unsigned long long)(total - scan_us), (unsigned long long)total);
+	}
+}
+
+static void save_state(const uint8_t *previous, uint8_t *scan_order)
+{
+	/* Keep the on-disk format compatible with the one-shot driver. */
+	for (unsigned int gate = 0; gate < GATES; gate++)
+		for (unsigned int source = 0; source < SOURCES; source++)
+			scan_order[gate * SOURCES + source] = previous[portrait_index(gate, source)];
+	char pending[] = "/run/pb626-epd.XXXXXX";
+	int tmp = mkstemp(pending);
+	if (tmp < 0)
+		fail("could not create screen state");
+	FILE *file = fdopen(tmp, "wb");
+	bool saved = file && fwrite(scan_order, 1, PIXELS, file) == PIXELS;
+	if (!file || fclose(file) || !saved || rename(pending, state_path)) {
+		unlink(pending);
+		fail("could not save screen state");
+	}
 }
 
 int main(int argc, char **argv)
 {
+	if (argc == 2 && !strcmp(argv[1], "--protocol")) {
+		puts("pb626-epd-shm-1");
+		return EXIT_SUCCESS;
+	}
 	if ((argc == 2 && !strcmp(argv[1], "--help")) || argc < 3 || argc > 4) {
 		fprintf(stderr, "Usage: pb626-epd DEFAULT.WBF reset |\n"
 				"       pb626-epd DEFAULT.WBF full|partial|du|a2|du4 IMAGE.pgm\n");
 		return argc == 2 && !strcmp(argv[1], "--help") ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
+	bool serve = !strcmp(argv[2], "serve");
 	enum mode mode = INIT;
-	while (mode <= DU4 && strcmp(argv[2], modes[mode]))
-		mode++;
-	if (mode > DU4 || argc != (mode == INIT ? 3 : 4))
-		fail("invalid update mode or image argument");
+	if (!serve) {
+		while (mode <= DU4 && strcmp(argv[2], modes[mode]))
+			mode++;
+		if (mode > DU4 || argc != (mode == INIT ? 3 : 4))
+			fail("invalid update mode or image argument");
+	} else if (argc != 4) {
+		fail("serve requires a shared frame descriptor");
+	}
 	if (access("/proc/device-tree/chosen/pb626,display-bringup", F_OK))
 		fail("boot the verified elan-display DTB first");
 
 	struct v4l2_capability caps = {0};
 	int fd = open("/dev/video0", O_RDWR | O_CLOEXEC | O_NONBLOCK);
-	if (fd < 0 || flock(fd, LOCK_EX) || retry_ioctl(fd, VIDIOC_QUERYCAP, &caps) ||
+	if (fd < 0 || flock(fd, LOCK_EX | LOCK_NB) || retry_ioctl(fd, VIDIOC_QUERYCAP, &caps) ||
 	    strcmp((const char *)caps.driver, "sun5i-eink"))
-		fail("could not acquire the sun5i-eink output");
+		fail("could not acquire the sun5i-eink output (is the desktop running?)");
 
 	struct v4l2_format fmt = { .type = type, .fmt.pix = {
 		.width = CLOCKS, .height = ROWS, .pixelformat = SUN5I_EINK_FMT_PIN32,
@@ -482,8 +681,10 @@ int main(int argc, char **argv)
 	    fmt.fmt.pix.bytesperline != CLOCKS * 4)
 		fail("the output does not support the ED060XD4 scanout format");
 
-	struct waveform wbf;
-	load_waveform(&wbf, argv[1]);
+	static struct renderer renderer;
+	renderer.fd = fd;
+	renderer.profile = getenv("PB626_EPD_PROFILE") != NULL;
+	load_waveform(&renderer.wbf, argv[1]);
 	/* The stock WBF targets 85 scans/s. The A13 clock tree supplies
 	 * 22.5 MHz here, giving 84.5 scans/s with Megi's porch settings.
 	 */
@@ -493,50 +694,44 @@ int main(int argc, char **argv)
 	};
 	if (retry_ioctl(fd, SUN5I_EINK_S_TIMING, &timing))
 		fail("could not select the factory WBF scan rate");
-	uint8_t *target = malloc(PIXELS), *transitions = malloc(PIXELS);
-	uint32_t *neutral = calloc(FRAME_WORDS, sizeof(*neutral));
-	if (!target || !transitions || !neutral)
-		fail("could not allocate E Ink working memory");
-	struct update update = {0}, reset = {0};
-	bool active[TRANSITIONS] = {0};
-	bool known = load_state(transitions);
+	scan_template(renderer.neutral);
+	renderer.known = load_state(renderer.previous, renderer.target);
 
-	if (mode == INIT || !known)
-		plan(&reset, &wbf, INIT, NULL);
-	if (mode == INIT) {
-		memset(target, WHITE, PIXELS);
-	} else {
-		read_image(argv[3], target);
-		bool changed = false;
-		for (size_t i = 0; i < PIXELS; i++) {
-			bool differs = transitions[i] != target[i];
-			transitions[i] |= target[i] << 4;
-			active[transitions[i]] |= differs || mode == GC16;
-			changed |= differs;
+	if (serve) {
+		char *end;
+		long frame_fd = strtol(argv[3], &end, 10);
+		struct stat info;
+		if (!*argv[3] || *end || frame_fd < 3 || frame_fd > INT32_MAX ||
+		    fstat(frame_fd, &info) || info.st_size != PIXELS)
+			fail("invalid shared frame descriptor");
+		const uint8_t *image = mmap(NULL, PIXELS, PROT_READ, MAP_SHARED, frame_fd, 0);
+		close(frame_fd);
+		if (image == MAP_FAILED)
+			fail("could not map shared frame");
+		int command;
+		while ((command = fgetc(stdin)) != EOF) {
+			switch (command) {
+			case PREVIEW: mode = DU; break;
+			case SETTLE: mode = GL16; break;
+			case CLEAN: case RESET: mode = GC16; break;
+			default: fail("invalid update command");
+			}
+			apply(&renderer, mode, image, command == RESET, true);
+			if (fputc(command, stdout) == EOF || fflush(stdout))
+				fail("could not acknowledge E Ink update");
 		}
-		if (known && !changed && mode != GC16)
-			return EXIT_SUCCESS;
-		plan(&update, &wbf, mode, active);
+		if (ferror(stdin))
+			fail("could not read update command");
+	} else {
+		if (mode != INIT) {
+			read_image(argv[3], renderer.target);
+			if (mode == GC16)
+				for (size_t i = 0; i < PIXELS; i++)
+					renderer.target[i] |= SCRUB;
+		}
+		apply(&renderer, mode, renderer.target, false, false);
 	}
-
-	scan_template(neutral);
-	/* Interruptions leave the physical image unknown; the next update resets it. */
-	if (unlink(state_path) && errno != ENOENT)
-		fail("could not invalidate the saved screen state");
-	if (reset.count)
-		refresh(fd, neutral, &reset, NULL);
-	if (update.count)
-		refresh(fd, neutral, &update, transitions);
-
-	char pending[] = "/run/pb626-epd.XXXXXX";
-	int tmp = mkstemp(pending);
-	if (tmp < 0)
-		fail("could not create screen state");
-	FILE *file = fdopen(tmp, "wb");
-	bool saved = file && fwrite(target, 1, PIXELS, file) == PIXELS;
-	if (!file || fclose(file) || !saved || rename(pending, state_path)) {
-		unlink(pending);
-		fail("could not save screen state");
-	}
+	if (renderer.known)
+		save_state(renderer.previous, renderer.target);
 	return EXIT_SUCCESS;
 }

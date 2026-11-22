@@ -11,7 +11,7 @@ waveform=$(realpath "$waveform")
 umask 077
 work=/run/pb626-desktop
 mkdir "$work"
-trap 'rm -f "$work"/Xauthority "$work"/xorg.conf "$work"/frame.pgm "$work"/layout; rmdir "$work"' EXIT
+trap 'rm -f "$work"/Xauthority "$work"/xorg.conf "$work"/ready "$work"/layout; rmdir "$work"' EXIT
 trap 'exit 1' HUP INT TERM
 
 count=0
@@ -58,6 +58,6 @@ fi
 touch "$XAUTHORITY"
 cookie=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 xauth add :0 MIT-MAGIC-COOKIE-1 "$cookie"
-xinit /usr/bin/pb626-xsession "$waveform" "$work/frame.pgm" -- \
+xinit /usr/bin/pb626-xsession "$waveform" "$work/ready" -- \
     /usr/bin/Xorg :0 vt2 -nolisten tcp -nocursor -auth "$XAUTHORITY" \
     -config "$work/xorg.conf" -logfile /run/pb626-xorg.log

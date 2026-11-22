@@ -5,11 +5,15 @@
 #include <X11/Xatom.h>
 #include <X11/keysym.h>
 #include <X11/extensions/Xdamage.h>
+#include <X11/extensions/Xfixes.h>
 #include <X11/extensions/XTest.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <poll.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,9 +23,11 @@
 #include <time.h>
 #include <unistd.h>
 
-enum { WIDTH = 758, HEIGHT = 1024, PIXELS = WIDTH * HEIGHT };
-enum { FULL_DAMAGE_BUDGET = 2 * PIXELS, FULL_PAGE_CHANGE = PIXELS / 3,
-       MIN_FULL_DAMAGE = PIXELS / 16, MENU_HOLD_US = 1000000 };
+#include "pb626-epd.h"
+
+enum { MENU_HOLD_US = 1000000, QUIET_US = 180000, MAX_PENDING_US = 850000,
+       TILE = 32, TILE_COLS = (WIDTH + TILE - 1) / TILE, TILE_ROWS = (HEIGHT + TILE - 1) / TILE,
+       GHOST_LIMIT = 16, GHOST_URGENT = 28, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 
 struct controls {
@@ -150,25 +156,56 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 	return changed;
 }
 
-static void draw_pointer(Display *display, Window root, int offset, int vertical,
-			 uint8_t *frame)
+struct rect {
+	int left, top, right, bottom;
+};
+
+static struct rect clipped(struct rect r, int halo)
+{
+	r.left = r.left > halo ? r.left - halo : 0;
+	r.top = r.top > halo ? r.top - halo : 0;
+	r.right = r.right < WIDTH - halo ? r.right + halo : WIDTH;
+	r.bottom = r.bottom < HEIGHT - halo ? r.bottom + halo : HEIGHT;
+	return r;
+}
+
+static int nonempty(struct rect r)
+{
+	return r.left < r.right && r.top < r.bottom;
+}
+
+static struct rect united(struct rect a, struct rect b)
+{
+	if (!nonempty(a))
+		return b;
+	if (!nonempty(b))
+		return a;
+	return (struct rect) {
+		a.left < b.left ? a.left : b.left, a.top < b.top ? a.top : b.top,
+		a.right > b.right ? a.right : b.right, a.bottom > b.bottom ? a.bottom : b.bottom,
+	};
+}
+
+static struct rect pointer_rect(Display *display, Window root, int offset)
 {
 	Window root_return, child;
 	int x, y, window_x, window_y;
 	unsigned int modifiers;
 	if (!XQueryPointer(display, root, &root_return, &child,
 			  &x, &y, &window_x, &window_y, &modifiers))
-		return;
+		return (struct rect){0};
 	x -= offset;
-	for (int dy = -5; dy <= 5; dy++) {
-		for (int dx = -5; dx <= 5; dx++) {
-			if (x + dx < 0 || x + dx >= WIDTH || y + dy < 0 || y + dy >= HEIGHT)
-				continue;
-			if ((vertical && abs(dx) <= 2) || (!vertical && abs(dy) <= 2))
-				frame[(y + dy) * WIDTH + x + dx] =
-					abs(dx) <= 1 && abs(dy) <= 1 ? 15 : 0;
-		}
-	}
+	return (struct rect){ x - 5, y - 5, x + 6, y + 6 };
+}
+
+static uint8_t pointer_level(struct rect pointer, int vertical, int x, int y, uint8_t level)
+{
+	if (x < pointer.left || x >= pointer.right || y < pointer.top || y >= pointer.bottom)
+		return level;
+	int dx = x - pointer.left - 5, dy = y - pointer.top - 5;
+	if ((vertical && abs(dx) <= 2) || (!vertical && abs(dy) <= 2))
+		return abs(dx) <= 1 && abs(dy) <= 1 ? WHITE : 0;
+	return level;
 }
 
 static unsigned int channel(unsigned long pixel, unsigned long mask)
@@ -181,113 +218,290 @@ static unsigned int channel(unsigned long pixel, unsigned long mask)
 	return ((pixel & mask) >> shift) * 255 / (mask >> shift);
 }
 
-static uint8_t paper_level(unsigned int value, const uint8_t *pixel, int x, int y)
-{
-	if (value <= 33)
-		return 0;
-	if (value >= 222)
-		return 15;
+struct capture_stats {
+	uint64_t read_us, quant_us;
+	unsigned int pixels, changed;
+};
 
-	unsigned int neighbors[] = {
-		x > 0 ? pixel[-1] : value,
-		x + 1 < WIDTH ? pixel[1] : value,
-		y > 0 ? pixel[-WIDTH] : value,
-		y + 1 < HEIGHT ? pixel[WIDTH] : value,
-	};
-	unsigned int darkest = value, lightest = value, sum = 0;
-	for (size_t i = 0; i < sizeof(neighbors) / sizeof(neighbors[0]); i++) {
-		unsigned int shade = neighbors[i];
-		if (shade < darkest)
-			darkest = shade;
-		if (shade > lightest)
-			lightest = shade;
-		sum += shade;
-	}
-
-	/* Keep flat fills monochrome. Give high-contrast edges two intermediate
-	 * levels, using the neighborhood to handle light lettering on dark fills.
-	 */
-	if (lightest - darkest < 64)
-		return value < 128 ? 0 : 15;
-	int dark_background = sum < 4 * 128;
-	unsigned int shade = dark_background ? 255 - value : value;
-	uint8_t level = shade < 112 ? 0 : shade < 168 ? 5 : shade < 206 ? 11 : 15;
-	return dark_background ? 15 - level : level;
-}
-
-static void capture(const XImage *image, uint8_t *frame)
+static int capture(Display *display, Window root, int offset, struct rect dirty,
+		   uint8_t *frame, struct rect pointer, int vertical, struct capture_stats *stats)
 {
 	static uint8_t lightness[PIXELS];
-	int x_offset = (image->width - WIDTH) / 2;
+	struct rect area = clipped(dirty, 1);
+	struct rect read_area = clipped(area, 1);
+	uint64_t start = now_us();
+	XImage *image = XGetImage(display, root, read_area.left + offset, read_area.top,
+				  read_area.right - read_area.left, read_area.bottom - read_area.top,
+				  AllPlanes, ZPixmap);
+	if (!image)
+		return -1;
+	stats->read_us += now_us() - start;
+	start = now_us();
 	int rgbx = image->bits_per_pixel == 32 && image->byte_order == LSBFirst &&
 		   image->red_mask == 0xff0000 && image->green_mask == 0xff00 &&
 		   image->blue_mask == 0xff;
-	for (int y = 0; y < HEIGHT; y++) {
-		const uint8_t *row = (const uint8_t *)image->data + y * image->bytes_per_line;
-		for (int x = 0; x < WIDTH; x++) {
+	for (int y = read_area.top; y < read_area.bottom; y++) {
+		const uint8_t *row = (const uint8_t *)image->data +
+				     (y - read_area.top) * image->bytes_per_line;
+		for (int x = read_area.left; x < read_area.right; x++) {
+			int column = x - read_area.left;
 			unsigned int r, g, b;
 			if (rgbx) {
-				const uint8_t *color = row + (x + x_offset) * 4;
+				const uint8_t *color = row + column * 4;
 				b = color[0];
 				g = color[1];
 				r = color[2];
 			} else {
-				unsigned long pixel = XGetPixel((XImage *)image, x + x_offset, y);
+				unsigned long pixel = XGetPixel(image, column, y - read_area.top);
 				r = channel(pixel, image->red_mask);
 				g = channel(pixel, image->green_mask);
 				b = channel(pixel, image->blue_mask);
 			}
-			/* Darken saturated colors to keep colored labels legible. */
 			unsigned int low = r < g ? r : g;
 			if (b < low)
 				low = b;
 			lightness[y * WIDTH + x] = (57 * r + 112 * g + 23 * b + 64 * low) >> 8;
 		}
 	}
-	for (int y = 0; y < HEIGHT; y++)
-		for (int x = 0; x < WIDTH; x++) {
-			size_t offset = y * WIDTH + x;
-			frame[offset] = paper_level(lightness[offset], lightness + offset, x, y);
+	XDestroyImage(image);
+	for (int y = area.top; y < area.bottom; y++)
+		for (int x = area.left; x < area.right; x++) {
+			const uint8_t *pixel = lightness + y * WIDTH + x;
+			unsigned int value = *pixel;
+			unsigned int lx = x > 0 ? pixel[-1] : value;
+			unsigned int rx = x + 1 < WIDTH ? pixel[1] : value;
+			unsigned int ty = y > 0 ? pixel[-WIDTH] : value;
+			unsigned int by = y + 1 < HEIGHT ? pixel[WIDTH] : value;
+			unsigned int contrast = abs((int)value - (int)lx) +
+						abs((int)value - (int)rx) +
+						abs((int)value - (int)ty) +
+						abs((int)value - (int)by);
+			uint8_t *output = frame + y * WIDTH + x;
+			uint8_t next = pointer_level(pointer, vertical, x, y, paper_level(value, contrast, x, y));
+			stats->changed += *output != next;
+			*output = next;
 		}
+	stats->quant_us += now_us() - start;
+	stats->pixels += (area.right - area.left) * (area.bottom - area.top);
+	return 0;
 }
 
-static int update_panel(const char *waveform, const char *mode, const char *path)
+static int damage_regions(Display *display, Damage damage, XserverRegion region, int offset,
+			  struct rect areas[MAX_REGIONS])
 {
-	pid_t pid = fork();
-	if (pid < 0)
+	uint8_t tiles[TILE_ROWS][TILE_COLS] = {{0}};
+	int count = 0;
+	XDamageSubtract(display, damage, None, region);
+	XRectangle *rectangles = XFixesFetchRegion(display, region, &count);
+	for (int i = 0; i < count; i++) {
+		XRectangle r = rectangles[i];
+		struct rect area = clipped((struct rect){
+			r.x - offset, r.y, r.x - offset + r.width, r.y + r.height,
+		}, 0);
+		if (!nonempty(area))
+			continue;
+		for (int y = area.top / TILE; y <= (area.bottom - 1) / TILE; y++)
+			memset(tiles[y] + area.left / TILE, 1,
+			       (area.right - 1) / TILE - area.left / TILE + 1);
+	}
+	if (rectangles)
+		XFree(rectangles);
+
+	int used = 0;
+	struct rect bounds = {0};
+	for (int y = 0; y < TILE_ROWS; y++)
+		for (int x = 0; x < TILE_COLS;) {
+			int start = x++;
+			if (!tiles[y][start])
+				continue;
+			while (x < TILE_COLS && tiles[y][x])
+				x++;
+			struct rect area = clipped((struct rect){
+				start * TILE, y * TILE, x * TILE, (y + 1) * TILE,
+			}, 0);
+			bounds = united(bounds, area);
+			if (used > MAX_REGIONS)
+				continue;
+			int merged = 0;
+			for (int i = 0; i < used; i++)
+				if (areas[i].bottom == area.top && areas[i].left == area.left &&
+				    areas[i].right == area.right) {
+					areas[i].bottom = area.bottom;
+					merged = 1;
+					break;
+				}
+			if (!merged) {
+				if (used < MAX_REGIONS)
+					areas[used] = area;
+				used++;
+			}
+		}
+	if (used > MAX_REGIONS) {
+		areas[0] = bounds;
+		return 1;
+	}
+	return used;
+}
+
+struct worker {
+	int socket;
+	pid_t pid;
+	uint8_t *frame;
+};
+
+static int start_worker(struct worker *worker, const char *waveform)
+{
+	int sockets[2];
+	char path[] = "/run/pb626-epd-frame.XXXXXX";
+	int fd = mkstemp(path);
+	if (fd < 0)
 		return -1;
+	int unlinked = unlink(path);
+	if (unlinked || ftruncate(fd, PIXELS)) {
+		close(fd);
+		return -1;
+	}
+	uint8_t *frame = mmap(NULL, PIXELS, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (frame == MAP_FAILED || socketpair(AF_UNIX, SOCK_STREAM, 0, sockets)) {
+		if (frame != MAP_FAILED)
+			munmap(frame, PIXELS);
+		close(fd);
+		return -1;
+	}
+
+	pid_t pid = fork();
 	if (pid == 0) {
-		execl("/usr/bin/pb626-epd", "pb626-epd", waveform, mode, path, (char *)NULL);
+		close(sockets[0]);
+		if (dup2(sockets[1], STDIN_FILENO) < 0 || dup2(sockets[1], STDOUT_FILENO) < 0)
+			_exit(127);
+		close(sockets[1]);
+		char number[16];
+		snprintf(number, sizeof(number), "%d", fd);
+		execl("/usr/bin/pb626-epd", "pb626-epd", waveform, "serve", number, (char *)NULL);
 		_exit(127);
 	}
-	int status;
-	while (waitpid(pid, &status, 0) < 0) {
-		if (errno != EINTR)
-			return -1;
+	close(fd);
+	close(sockets[1]);
+	if (pid < 0) {
+		close(sockets[0]);
+		munmap(frame, PIXELS);
+		return -1;
 	}
-	return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+	*worker = (struct worker){ .socket = sockets[0], .pid = pid, .frame = frame };
+	return 0;
 }
 
-static int paint(const char *waveform, const char *mode, const char *path,
-		 const uint8_t *frame, int clean)
+static void stop_worker(struct worker *worker)
 {
-	FILE *file = fopen(path, "wb");
-	if (!file)
-		return -1;
-	int saved = fprintf(file, "P5\n%d %d\n15\n", WIDTH, HEIGHT) > 0 &&
-		    fwrite(frame, 1, PIXELS, file) == PIXELS;
-	if (fclose(file) || !saved)
-		return -1;
+	close(worker->socket);
+	while (waitpid(worker->pid, NULL, 0) < 0 && errno == EINTR)
+		;
+	munmap(worker->frame, PIXELS);
+}
 
-	if (clean && update_panel(waveform, "reset", NULL))
+static int submit(const struct worker *worker, uint8_t command)
+{
+	ssize_t done;
+	do {
+		done = send(worker->socket, &command, 1, MSG_NOSIGNAL);
+	} while (done < 0 && errno == EINTR);
+	if (done != 1)
 		return -1;
-	return update_panel(waveform, mode, path);
+	uint8_t ack;
+	do {
+		done = read(worker->socket, &ack, 1);
+	} while (done < 0 && errno == EINTR);
+	return done == 1 && ack == command ? 0 : -1;
+}
+
+struct tile_history {
+	uint8_t stress;
+	int16_t balance;
+};
+
+static struct tile_history history[TILE_ROWS][TILE_COLS];
+
+static void tile_bounds(int tx, int ty, int *right, int *bottom)
+{
+	*right = tx + 1 == TILE_COLS ? WIDTH : (tx + 1) * TILE;
+	*bottom = ty + 1 == TILE_ROWS ? HEIGHT : (ty + 1) * TILE;
+}
+
+static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8_t *panel,
+			    uint8_t *frame)
+{
+	unsigned int changes = 0;
+	if (command == RESET) {
+		for (size_t i = 0; i < PIXELS; i++)
+			frame[i] = desired[i] | SCRUB;
+		return PIXELS;
+	}
+	for (int ty = 0; ty < TILE_ROWS; ty++)
+		for (int tx = 0; tx < TILE_COLS; tx++) {
+			int right, bottom;
+			tile_bounds(tx, ty, &right, &bottom);
+			int scrub = command == CLEAN && history[ty][tx].stress >= GHOST_LIMIT;
+			for (int y = ty * TILE; y < bottom; y++)
+				for (int x = tx * TILE; x < right; x++) {
+					size_t i = y * WIDTH + x;
+					uint8_t target = desired[i], old = panel[i];
+					uint8_t level = target;
+					if (command == PREVIEW)
+						level = abs(target - old) >= 3 ? preview_level(target, old) : old;
+					if (scrub || (command != CLEAN && level != old)) {
+						frame[i] = level | (scrub ? SCRUB : 0);
+						changes++;
+					} else {
+						frame[i] = KEEP;
+					}
+				}
+		}
+	return changes;
+}
+
+static void acknowledge(uint8_t command, const uint8_t *frame, uint8_t *panel)
+{
+	if (command == RESET) {
+		memset(history, 0, sizeof(history));
+		for (size_t i = 0; i < PIXELS; i++)
+			panel[i] = frame[i] & WHITE;
+		return;
+	}
+	for (int ty = 0; ty < TILE_ROWS; ty++)
+		for (int tx = 0; tx < TILE_COLS; tx++) {
+			int right, bottom;
+			tile_bounds(tx, ty, &right, &bottom);
+			struct tile_history *tile = &history[ty][tx];
+			unsigned int changed = 0;
+			int net = 0, cleaned = 0;
+			for (int y = ty * TILE; y < bottom; y++)
+				for (int x = tx * TILE; x < right; x++) {
+					size_t i = y * WIDTH + x;
+					if (frame[i] == KEEP)
+						continue;
+					uint8_t level = frame[i] & WHITE;
+					cleaned |= frame[i] & SCRUB;
+					changed += panel[i] != level;
+					net += level - panel[i];
+					panel[i] = level;
+				}
+			if (cleaned) {
+				*tile = (struct tile_history){0};
+			} else if (changed) {
+				int balance = tile->balance + net / (int)changed;
+				tile->balance = balance < -90 ? -90 : balance > 90 ? 90 : balance;
+				unsigned int weight = command == PREVIEW ? 2 : 1;
+				weight += changed >= TILE * TILE / 4;
+				weight += abs(tile->balance) >= 24;
+				tile->stress = tile->stress + weight > 255 ? 255 : tile->stress + weight;
+			}
+		}
 }
 
 int main(int argc, char **argv)
 {
 	if (argc != 3) {
-		fprintf(stderr, "Usage: pb626-x11-epd DEFAULT.WBF FRAME.pgm\n");
+		fprintf(stderr, "Usage: pb626-x11-epd DEFAULT.WBF READY\n");
 		return EXIT_FAILURE;
 	}
 	Display *display = XOpenDisplay(NULL);
@@ -312,8 +526,11 @@ int main(int argc, char **argv)
 	if (toggle)
 		XGrabKey(display, toggle, AnyModifier, root, False, GrabModeAsync, GrabModeAsync);
 	int damage_event, damage_error;
-	Damage damage = XDamageQueryExtension(display, &damage_event, &damage_error) ?
+	int fixes_event, fixes_error;
+	Damage damage = XDamageQueryExtension(display, &damage_event, &damage_error) &&
+			XFixesQueryExtension(display, &fixes_event, &fixes_error) ?
 			XDamageCreate(display, root, XDamageReportNonEmpty) : None;
+	XserverRegion region = damage ? XFixesCreateRegion(display, NULL, 0) : None;
 	Window previous_window = None;
 	struct controls controls = { .fallback = getenv("PB626_POINTER_FALLBACK") != NULL };
 	struct pollfd sources[3] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
@@ -328,11 +545,18 @@ int main(int argc, char **argv)
 	}
 	free(paths);
 	static uint8_t frame[PIXELS], previous[PIXELS];
-	unsigned int partial_pixels = 0;
+	const struct rect full = {0, 0, WIDTH, HEIGHT};
+	struct rect pointer = {0};
+	struct worker worker;
+	if (start_worker(&worker, argv[1]))
+		return EXIT_FAILURE;
+	unlink(argv[2]);
+	int profile = getenv("PB626_EPD_PROFILE") != NULL;
+	int offset = (width - WIDTH) / 2;
 	unsigned int failures = 0;
-	int dirty = 1, focus_changed = 1, has_frame = 0;
-	const struct timespec interval = { .tv_nsec = damage ? 25000000L : 250000000L };
-	const struct timespec keyboard_layout = { .tv_nsec = 180000000L };
+	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
+	uint64_t last_damage = 0, pending_since = 0, next_capture = 0, layout_until = 0;
+
 	for (;;) {
 		XEvent event;
 		while (XPending(display)) {
@@ -350,81 +574,157 @@ int main(int argc, char **argv)
 			keyboard_focus(display, root, active, keyboard, &previous_window, &controls);
 			focus_changed = 0;
 		}
+		int pointer_changed = 0;
 		for (nfds_t i = 1; i < source_count; i++)
 			if (sources[i].fd >= 0)
-				dirty |= handle_buttons(display, root, keyboard, sources[i].fd, &controls);
+				pointer_changed |= handle_buttons(display, root, keyboard, sources[i].fd, &controls);
+		uint64_t now = now_us();
 		if (controls.keyboard_changed) {
-			/* Let the window manager resize the application and let it repaint. */
 			XFlush(display);
-			nanosleep(&keyboard_layout, NULL);
+			layout_until = now + QUIET_US;
 			controls.keyboard_changed = 0;
-			continue;
 		}
-		if (damage && !dirty) {
-			XFlush(display);
-			if (XPending(display))
-				continue;
-			if (poll(sources, source_count, -1) < 0) {
-				if (errno == EINTR)
-					continue;
-				return EXIT_FAILURE;
-			}
-			const short disconnected = POLLERR | POLLHUP | POLLNVAL;
-			if (sources[0].revents & disconnected)
-				return EXIT_FAILURE;
-			for (nfds_t i = 1; i < source_count; i++) {
-				if (sources[i].revents & disconnected) {
-					close(sources[i].fd);
-					sources[i].fd = -1;
-				}
-			}
-			continue;
+		if (pointer_changed) {
+			/* Retain the old cursor rectangle across the layout debounce. */
+			dirty = 1;
 		}
-		/* Give one burst of X requests time to finish before capturing it. */
-		nanosleep(&interval, NULL);
-		if (damage)
-			XDamageSubtract(display, damage, None, None);
-		dirty = 0;
-		XImage *image = XGetImage(display, root, 0, 0, width, HEIGHT, AllPlanes, ZPixmap);
-		if (!image)
-			return EXIT_FAILURE;
-		capture(image, frame);
-		XDestroyImage(image);
-		if (controls.pointer_visible)
-			draw_pointer(display, root, (width - WIDTH) / 2, controls.vertical, frame);
+		/* Force a fresh grab on a manual reset, including after a failed update. */
+		if (!has_frame || controls.clean_requested)
+			dirty = 1;
 
-		unsigned int changed = 0;
-		int direct = 1;
-		for (size_t i = 0; i < PIXELS; i++) {
-			if (frame[i] == previous[i])
-				continue;
-			changed++;
-			direct &= (frame[i] == 0 && previous[i] == 15) ||
-				  (frame[i] == 15 && previous[i] == 0);
+		struct capture_stats stats = {0};
+		uint64_t capture_start = now;
+		int captured = 0;
+		if ((dirty || !damage) && now >= next_capture && now >= layout_until) {
+			struct rect areas[MAX_REGIONS];
+			int count = damage ? damage_regions(display, damage, region, offset, areas) : 0;
+			if (!has_frame || !damage || controls.clean_requested) {
+				areas[0] = full;
+				count = 1;
+			}
+			if (controls.pointer_visible) {
+				struct rect next = pointer_rect(display, root, offset);
+				struct rect area = clipped(united(pointer, next), 0);
+				if (nonempty(area) && count < MAX_REGIONS)
+					areas[count++] = area;
+				else if (nonempty(area))
+					areas[0] = united(areas[0], area);
+				pointer = next;
+			}
+			for (int i = 0; i < count; i++)
+				if (capture(display, root, offset, areas[i], frame, pointer, controls.vertical, &stats))
+					goto failed;
+			captured = count != 0;
+			dirty = 0;
+			now = now_us();
+			next_capture = now + (damage ? 16000 : 250000);
 		}
-		int clean = controls.clean_requested || failures;
-		if (controls.clean_requested || failures || !has_frame || changed) {
-			/* Small updates can accumulate wear but cannot trigger a full refresh. */
-			int full = clean || !has_frame || changed >= FULL_PAGE_CHANGE ||
-				   (partial_pixels >= FULL_DAMAGE_BUDGET && changed >= MIN_FULL_DAMAGE);
-			const char *mode = full ? "full" : direct ? "du" : "partial";
-			if (paint(argv[1], mode, argv[2], frame, clean)) {
-				if (++failures == 3) {
-					fprintf(stderr, "pb626-x11-epd: the panel rejected three updates\n");
+
+		if (!has_frame && !captured)
+			goto wait_input;
+		int different = memcmp(frame, previous, PIXELS) != 0;
+		unsigned int stress = 0;
+		for (int y = 0; y < TILE_ROWS; y++)
+			for (int x = 0; x < TILE_COLS; x++)
+				if (history[y][x].stress > stress)
+					stress = history[y][x].stress;
+		if (stats.changed && different)
+			last_damage = now;
+		if (different || stress >= GHOST_LIMIT) {
+			if (!pending)
+				pending_since = now;
+			pending = 1;
+		} else {
+			pending = 0;
+		}
+
+		uint8_t command = 0;
+		int idle = now >= last_damage + QUIET_US || now >= pending_since + MAX_PENDING_US;
+		if (captured && (!has_frame || controls.clean_requested))
+			command = RESET;
+		else if (!dirty && now >= layout_until && stress >= GHOST_LIMIT && (idle || stress >= GHOST_URGENT))
+			command = CLEAN;
+		else if (!dirty && now >= layout_until && different && idle)
+			command = SETTLE;
+		else if (captured && different)
+			command = PREVIEW;
+
+		uint64_t prepare_start = now_us();
+		unsigned int changes = command ? prepare(command, frame, previous, worker.frame) : 0;
+		uint64_t submit_start = now_us();
+		if (changes) {
+			if (submit(&worker, command)) {
+				stop_worker(&worker);
+				if (++failures >= 3)
 					return EXIT_FAILURE;
-				}
-				dirty = 1;
+				has_frame = 0;
+				controls.clean_requested = 1;
 				sleep(1);
-			} else {
-				failures = 0;
-				controls.clean_requested = 0;
-				has_frame = 1;
-				memcpy(previous, frame, PIXELS);
-				if (full)
-					partial_pixels = 0;
-				else if (partial_pixels < FULL_DAMAGE_BUDGET)
-					partial_pixels += changed;
+				if (start_worker(&worker, argv[1]))
+					return EXIT_FAILURE;
+				continue;
+			}
+			acknowledge(command, worker.frame, previous);
+			if (!has_frame) {
+				FILE *ready = fopen(argv[2], "w");
+				if (!ready)
+					goto failed;
+				fputs("ready\n", ready);
+				if (fclose(ready))
+					goto failed;
+			}
+			has_frame = 1;
+			failures = 0;
+			controls.clean_requested = 0;
+			if (command == CLEAN || command == SETTLE)
+				pending_since = now_us();
+		}
+		if (profile && (captured || changes))
+			fprintf(stderr, "x11-epd: mode=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu ipc_update_us=%llu total_us=%llu\n",
+				command ? command : '-', stats.pixels, changes,
+				(unsigned long long)stats.read_us, (unsigned long long)stats.quant_us,
+				(unsigned long long)(submit_start - prepare_start),
+				(unsigned long long)(changes ? now_us() - submit_start : 0),
+				(unsigned long long)(now_us() - capture_start));
+		if (changes)
+			continue; /* Discard intermediate frames and consume accumulated damage. */
+
+wait_input:
+		now = now_us();
+		uint64_t deadline = UINT64_MAX;
+		if (dirty || !damage)
+			deadline = next_capture > layout_until ? next_capture : layout_until;
+		if (pending && has_frame && !dirty) {
+			uint64_t settle = last_damage + QUIET_US;
+			if (settle > pending_since + MAX_PENDING_US)
+				settle = pending_since + MAX_PENDING_US;
+			if (settle < layout_until)
+				settle = layout_until;
+			if (settle < deadline)
+				deadline = settle;
+		}
+		XFlush(display);
+		if (XPending(display))
+			continue;
+		int timeout = deadline == UINT64_MAX ? -1 :
+			      deadline <= now ? 0 : (int)((deadline - now + 999) / 1000);
+		if (poll(sources, source_count, timeout) < 0) {
+			if (errno == EINTR)
+				continue;
+			goto failed;
+		}
+		const short disconnected = POLLERR | POLLHUP | POLLNVAL;
+		if (sources[0].revents & disconnected)
+			goto failed;
+		for (nfds_t i = 1; i < source_count; i++) {
+			if (sources[i].revents & disconnected) {
+				close(sources[i].fd);
+				sources[i].fd = -1;
 			}
 		}
 	}
+
+failed:
+	stop_worker(&worker);
+	return EXIT_FAILURE;
 }

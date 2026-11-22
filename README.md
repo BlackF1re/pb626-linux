@@ -26,9 +26,11 @@ or Home when touch input is available.
 If touch input is absent, Left and Right move the onscreen pointer, Home changes
 the movement axis, and a short Menu press clicks. Hold Menu for at least one
 second and release to clear ghosting and redraw the desktop.
-Small changes use partial refresh. The desktop uses a full refresh for large
-changes or after 16 partial updates and clears the panel on every 96th update.
-The USB console stays available.
+The desktop uses black/white DU previews during interaction and restores grays
+with GL16 once the image settles. Frequently updated 32 × 32 pixel tiles
+can receive a local GC16 cleanup. The panel still scans all rows. For timing
+logs, launch the desktop with `PB626_EPD_PROFILE=1` in its environment and
+read its log at `/run/pb626-desktop.log`. The USB console stays available.
 
 ## Experimental installation to internal eMMC
 

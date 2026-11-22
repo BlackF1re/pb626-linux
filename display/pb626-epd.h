@@ -1,0 +1,42 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+#ifndef PB626_EPD_H
+#define PB626_EPD_H
+
+#include <stdint.h>
+#include <time.h>
+
+enum { WIDTH = 758, HEIGHT = 1024, PIXELS = WIDTH * HEIGHT, WHITE = 15 };
+enum { KEEP = 255, SCRUB = 128 };
+enum command { PREVIEW = 'D', SETTLE = 'L', CLEAN = 'G', RESET = 'R' };
+
+static inline uint64_t now_us(void)
+{
+	struct timespec time;
+	clock_gettime(CLOCK_MONOTONIC, &time);
+	return (uint64_t)time.tv_sec * 1000000 + time.tv_nsec / 1000;
+}
+
+static inline uint8_t paper_level(unsigned int value, unsigned int contrast, int x, int y)
+{
+	static const uint8_t bayer[4][4] = {
+		{ 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 },
+	};
+	unsigned int scaled = value * WHITE;
+	unsigned int threshold = 127;
+
+	/* Round fine edges to the closest level to avoid cutting holes in strokes.
+	 * Keep dither fixed to the panel, including across adjacent damage regions.
+	 */
+	if (contrast < 48)
+		threshold = bayer[y & 3][x & 3] * 16 + 8;
+	return (scaled + threshold) / 255;
+}
+
+static inline uint8_t preview_level(uint8_t target, uint8_t previous)
+{
+	/* Apply a dead band to fast previews of near-midpoint luminance. */
+	unsigned int threshold = previous == 0 ? 9 : previous == WHITE ? 7 : 8;
+	return target < threshold ? 0 : WHITE;
+}
+
+#endif
