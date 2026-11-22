@@ -21,8 +21,9 @@ build_userspace() {
   fetch_source matchbox-window-manager ce8c1053270d960a7235ab5c3435f707541810a4
   fetch_source matchbox-keyboard 630d89068dc0a1e9199306d405cb32f892dfa4d3
   fetch_source matchbox-desktop b7e5fd6f08c046505615ce992e379bea9531e39d
+  fetch_source matchbox-panel 886605280c1032f76e382f68f9a1d2e57012f4db
   fetch_source matchbox-common 3055fb158054d059e9a50141e7ded2a41ecfbd47
-  sudo install -m 644 display/{pb626-x11-epd.c,matchbox-keyboard-eink.patch} desktop-root/tmp/
+  sudo install -m 644 display/{pb626-x11-epd.c,matchbox-keyboard-eink.patch,matchbox-panel-power-supply.patch} desktop-root/tmp/
   sudo install -m 755 /usr/bin/qemu-arm-static desktop-root/usr/bin/
   sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
 
@@ -72,21 +73,30 @@ build_userspace() {
   ./configure --prefix=/usr --sysconfdir=/etc --disable-static
   make -j2
   make install
+  cd /tmp/matchbox-panel
+  patch -l -p1 < /tmp/matchbox-panel-power-supply.patch
+  autoreconf -fi
+  ./configure --prefix=/usr --enable-linux-power-supply
+  make -j2
+  make install
   cp /tmp/matchbox-common/icons/*.png /tmp/matchbox-common/icons/*.xpm /usr/share/pixmaps/
   cd /tmp
   cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXtst -lXdamage
   strip /usr/bin/pb626-x11-epd /usr/bin/matchbox-window-manager /usr/bin/matchbox-keyboard \
-    /usr/bin/matchbox-desktop /usr/lib/matchbox/desktop/*.so
+    /usr/bin/matchbox-desktop /usr/bin/matchbox-panel /usr/bin/mb-applet-battery \
+    /usr/lib/matchbox/desktop/*.so
   '
   in_root /sbin/apk del .pb626-x-build
   in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-window-manager
   in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-keyboard
   in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-desktop
+  in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-panel
+  in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/mb-applet-battery
   in_root /usr/bin/Xorg -version
   sudo rm -rf desktop-root/tmp/libmatchbox \
     desktop-root/tmp/matchbox-window-manager desktop-root/tmp/matchbox-keyboard \
-    desktop-root/tmp/matchbox-desktop desktop-root/tmp/matchbox-common
-  sudo rm -f desktop-root/tmp/{pb626-x11-epd.c,matchbox-keyboard-eink.patch} \
+    desktop-root/tmp/matchbox-desktop desktop-root/tmp/matchbox-panel desktop-root/tmp/matchbox-common
+  sudo rm -f desktop-root/tmp/{pb626-x11-epd.c,matchbox-keyboard-eink.patch,matchbox-panel-power-supply.patch} \
     desktop-root/usr/bin/qemu-arm-static
   printf 'nameserver 1.1.1.1\n' | sudo tee desktop-root/etc/resolv.conf >/dev/null
 }

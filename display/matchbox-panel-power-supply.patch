@@ -1,0 +1,154 @@
+--- a/configure.ac
++++ b/configure.ac
+@@ -85,0 +86,6 @@
++
++AC_ARG_ENABLE([linux-power-supply],
++    [AS_HELP_STRING([--enable-linux-power-supply], [Read battery status from Linux power_supply sysfs])])
++if test "x$enable_linux_power_supply" = xyes; then
++  AC_DEFINE([USE_LINUX_POWER_SUPPLY], [1], [Use Linux power_supply sysfs])
++fi
+@@ -189 +195,3 @@
+-if test x$enable_acpi_linux = xyes; then
++if test "x$enable_linux_power_supply" = xyes; then
++  miniapm_enabled="yes, with Linux power_supply"
++elif test x$enable_acpi_linux = xyes; then
+@@ -207 +215 @@
+-AM_CONDITIONAL(WANT_ACPI, test x$enable_acpi_linux = xyes)
++AM_CONDITIONAL(WANT_BATTERY, test x"$miniapm_enabled" = xyes || test x$enable_acpi_linux = xyes || test "x$enable_linux_power_supply" = xyes)
+--- a/applets/mb-applet-battery.c
++++ b/applets/mb-applet-battery.c
+@@ -86 +86 @@
+-#define CHECK_TIME_SLICE  2 	/* 2 seconds between battery checks */
++#define CHECK_TIME_SLICE 30
+@@ -137 +137,24 @@
+-#ifdef USE_ACPI_LINUX
++#if defined(USE_LINUX_POWER_SUPPLY)
++static int
++read_number(const char *path, int fallback)
++{
++  FILE *file = fopen(path, "r");
++  int value;
++
++  if (!file)
++    return fallback;
++
++  int result = fscanf(file, "%d", &value);
++  fclose(file);
++  return result == 1 ? value : fallback;
++}
++
++static int
++read_apm(int *values)
++{
++  values[TIME_LEFT] = 0;
++  values[PERCENTAGE] = read_number("/sys/class/power_supply/axp20x-battery/capacity", -1);
++  values[AC_POWER] = read_number("/sys/class/power_supply/axp20x-usb/online", 0);
++  return 1;
++}
++#elif defined(USE_ACPI_LINUX)
+@@ -371 +393,0 @@
+-  unsigned char r = 0, g = 0, b = 0;
+@@ -395,12 +416,0 @@
+-  if (apm_vals[PERCENTAGE] <= 0 || apm_vals[PERCENTAGE] > 100)
+-    {
+-      r = 0x66; g = 0xff; b = 0x33; ac_power = True;
+-      apm_vals[PERCENTAGE] = -1;
+-    }
+-  else if (apm_vals[PERCENTAGE] <= 25)
+-    { r = 0xff; g = 0; b = 0; }
+-  else if (apm_vals[PERCENTAGE] <= 50)
+-    { r = 0xff; g = 0x99; b = 0x33; }
+-  else if (apm_vals[PERCENTAGE] <= 100)
+-    { r = 0x66; g = 0xff; b = 0x33; }
+-
+@@ -417,20 +427,9 @@
+-  /* Clear out bar first */
+-  for ( y = bar_y; y < bar_y + bar_height; y++)
+-    for ( x = bar_x; x < bar_x + bar_width; x++)
+-      if (ac_power)
+-	{
+-	  mb_pixbuf_img_plot_pixel(pb, img_backing, x, y, 0xff, 0xff, 0);
+-	}
+-      else
+-	{
+-	  mb_pixbuf_img_plot_pixel(pb, img_backing, x, y, 0, 0, 0);
+-	}
+-
+-  if (apm_vals[PERCENTAGE] > 0)
+-    {
+-      power_pixels = (apm_vals[PERCENTAGE] * ( bar_width) )/ 100 ;
+-
+-      for ( y = bar_y; y < bar_y + bar_height; y++)
+-	for ( x = bar_x; x < bar_x + power_pixels + 1; x++)
+-	  mb_pixbuf_img_plot_pixel(pb, img_backing, x, y, r, g, b);
+-    }
++  if (apm_vals[PERCENTAGE] >= 0 && apm_vals[PERCENTAGE] <= 100)
++    power_pixels = (apm_vals[PERCENTAGE] * bar_width) / 100;
++
++  for (y = bar_y; y < bar_y + bar_height; y++)
++    for (x = bar_x; x < bar_x + bar_width; x++)
++      {
++        unsigned char shade = x < bar_x + power_pixels ? 0 : 255;
++        mb_pixbuf_img_plot_pixel(pb, img_backing, x, y, shade, shade, shade);
++      }
+@@ -544,26 +543,6 @@
+-  if (apm_vals[AC_POWER] == AC_LINE_STATUS_ON)
+-    {
+-      if (apm_vals[PERCENTAGE] > 0
+-	  && apm_vals[PERCENTAGE] <= 100 )
+-	sprintf(tray_msg, _("AC Connected\nCharging: %.2i %%\n")
+-		, apm_vals[PERCENTAGE]);
+-      else
+-	sprintf(tray_msg, _("AC Connected\nFully charged.\n"));
+-    } else {
+-      if (apm_vals[PERCENTAGE] > 0
+-	  && apm_vals[PERCENTAGE] <= 100 )
+-        {
+-	  if (apm_vals[TIME_LEFT] > 0 )
+-	    {
+-	      sprintf(tray_msg,
+-		      _("Battery Power\nJuice %.2i %%\nTime left: %.2i h. %.2i min.\n"), apm_vals[PERCENTAGE], (apm_vals[TIME_LEFT]/60), (apm_vals[TIME_LEFT]%60));
+-	    }
+-          else
+-	    {
+-	      sprintf(tray_msg,
+-	   	      _("Battery Power\nJuice %.2i %%\n"), apm_vals[PERCENTAGE]);
+-	    }
+-
+-        }
+-      else sprintf(tray_msg, _("Battery Power\n Device read error.\n"));
+-    }
++  const char *source = apm_vals[AC_POWER] == AC_LINE_STATUS_ON
++    ? _("USB power") : _("Battery power");
++  if (apm_vals[PERCENTAGE] >= 0 && apm_vals[PERCENTAGE] <= 100)
++    snprintf(tray_msg, sizeof(tray_msg), "%s\n%d %%", source, apm_vals[PERCENTAGE]);
++  else
++    snprintf(tray_msg, sizeof(tray_msg), "%s\n%s", source, _("Battery level unavailable"));
+--- a/applets/Makefile.am
++++ b/applets/Makefile.am
+@@ -11,11 +11 @@
+-if WANT_APM
+-bin_PROGRAMS =                                                    \
+-  mb-applet-clock    mb-applet-menu-launcher  mb-applet-battery   \
+-  mb-applet-launcher mb-applet-system-monitor
+-
+-  mb_applet_battery_SOURCES   =      mb-applet-battery.c
+-  mb_applet_battery_LDADD   =        $(LIBMB_LIBS) $(SN_LIBS) -lapm
+-
+-else
+-bin_PROGRAMS =                                 \
+-  mb-applet-clock    mb-applet-menu-launcher    \
++bin_PROGRAMS = mb-applet-clock mb-applet-menu-launcher \
+@@ -23 +12,0 @@
+-endif
+@@ -29 +18 @@
+-if WANT_ACPI
++if WANT_BATTERY
+@@ -31,2 +20,5 @@
+-  mb_applet_battery_SOURCES   =      mb-applet-battery.c
+-  mb_applet_battery_LDADD   =        $(LIBMB_LIBS) $(SN_LIBS)
++  mb_applet_battery_SOURCES = mb-applet-battery.c
++  mb_applet_battery_LDADD = $(LIBMB_LIBS) $(SN_LIBS)
++if WANT_APM
++  mb_applet_battery_LDADD += -lapm
++endif

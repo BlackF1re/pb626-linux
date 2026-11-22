@@ -10,6 +10,7 @@ on:
       - 'display/pb626-x11-epd.c'
       - 'display/eink-fonts.conf'
       - 'display/matchbox-keyboard-eink.patch'
+      - 'display/matchbox-panel-power-supply.patch'
       - 'display/xorg.conf'
       - 'display/matchbox/**'
       - 'scripts/build-megi-desktop.sh'

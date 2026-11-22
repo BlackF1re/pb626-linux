@@ -20,7 +20,8 @@
 #include <unistd.h>
 
 enum { WIDTH = 758, HEIGHT = 1024, PIXELS = WIDTH * HEIGHT };
-enum { FULL_INTERVAL = 16, CLEAN_INTERVAL = 96, MENU_HOLD_US = 1000000 };
+enum { FULL_DAMAGE_BUDGET = 2 * PIXELS, FULL_PAGE_CHANGE = PIXELS / 3,
+       MIN_FULL_DAMAGE = PIXELS / 16, MENU_HOLD_US = 1000000 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 
 struct controls {
@@ -204,10 +205,10 @@ static uint8_t paper_level(unsigned int value, const uint8_t *pixel, int x, int 
 	 * levels, using the neighborhood to handle light lettering on dark fills.
 	 */
 	if (lightest - darkest < 64)
-		return value < 180 ? 0 : 15;
+		return value < 128 ? 0 : 15;
 	int dark_background = sum < 4 * 128;
 	unsigned int shade = dark_background ? 255 - value : value;
-	uint8_t level = shade < 157 ? 0 : shade < 194 ? 4 : shade < 222 ? 10 : 15;
+	uint8_t level = shade < 112 ? 0 : shade < 168 ? 5 : shade < 206 ? 11 : 15;
 	return dark_background ? 15 - level : level;
 }
 
@@ -323,11 +324,10 @@ int main(int argc, char **argv)
 	}
 	free(paths);
 	static uint8_t frame[PIXELS], previous[PIXELS];
-	unsigned int partials = FULL_INTERVAL;
-	unsigned int updates = 0;
+	unsigned int partial_pixels = 0;
 	unsigned int failures = 0;
 	int dirty = 1, focus_changed = 1, has_frame = 0;
-	const struct timespec interval = { .tv_nsec = 250000000L };
+	const struct timespec interval = { .tv_nsec = damage ? 25000000L : 250000000L };
 	for (;;) {
 		XEvent event;
 		while (XPending(display)) {
@@ -366,6 +366,8 @@ int main(int argc, char **argv)
 			}
 			continue;
 		}
+		/* Give one burst of X requests time to finish before capturing it. */
+		nanosleep(&interval, NULL);
 		if (damage)
 			XDamageSubtract(display, damage, None, None);
 		dirty = 0;
@@ -378,17 +380,25 @@ int main(int argc, char **argv)
 			draw_pointer(display, root, (width - WIDTH) / 2, controls.vertical, frame);
 
 		unsigned int changed = 0;
-		for (size_t i = 0; i < PIXELS; i++)
-			changed += frame[i] != previous[i];
-		int clean = controls.clean_requested || failures || updates >= CLEAN_INTERVAL - 1;
+		int direct = 1;
+		for (size_t i = 0; i < PIXELS; i++) {
+			if (frame[i] == previous[i])
+				continue;
+			changed++;
+			direct &= (frame[i] == 0 && previous[i] == 15) ||
+				  (frame[i] == 15 && previous[i] == 0);
+		}
+		int clean = controls.clean_requested || failures;
 		if (controls.clean_requested || failures || !has_frame || changed) {
-			int full = clean || partials >= FULL_INTERVAL || changed >= PIXELS / 4;
-			if (paint(argv[1], full ? "full" : "partial", argv[2], frame, clean)) {
+			/* Small updates can accumulate wear but cannot trigger a full refresh. */
+			int full = clean || !has_frame || changed >= FULL_PAGE_CHANGE ||
+				   (partial_pixels >= FULL_DAMAGE_BUDGET && changed >= MIN_FULL_DAMAGE);
+			const char *mode = full ? "full" : direct ? "du" : "partial";
+			if (paint(argv[1], mode, argv[2], frame, clean)) {
 				if (++failures == 3) {
 					fprintf(stderr, "pb626-x11-epd: the panel rejected three updates\n");
 					return EXIT_FAILURE;
 				}
-				partials = FULL_INTERVAL;
 				dirty = 1;
 				sleep(1);
 			} else {
@@ -396,10 +406,11 @@ int main(int argc, char **argv)
 				controls.clean_requested = 0;
 				has_frame = 1;
 				memcpy(previous, frame, PIXELS);
-				partials = full ? 0 : partials + 1;
-				updates = clean ? 0 : updates + 1;
+				if (full)
+					partial_pixels = 0;
+				else if (partial_pixels < FULL_DAMAGE_BUDGET)
+					partial_pixels += changed;
 			}
 		}
-		nanosleep(&interval, NULL);
 	}
 }

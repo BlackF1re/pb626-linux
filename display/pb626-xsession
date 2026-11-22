@@ -8,6 +8,12 @@ xset s off
 xsetroot -solid white
 matchbox-window-manager -use_titlebar yes &
 wm=$!
+panel=
+if command -v matchbox-panel >/dev/null; then
+    matchbox-panel --orientation south --size 48 --bgcolor white --no-session \
+        --default-apps mb-applet-menu-launcher,mb-applet-battery,mb-applet-clock &
+    panel=$!
+fi
 matchbox-keyboard --daemon us &
 keyboard=$!
 pb626-x11-epd "$1" "$2" &
@@ -15,5 +21,5 @@ screen=$!
 matchbox-desktop --bg col-solid:white --font 'Sans bold 21px' \
     --fontcol black --no-outline --no-title --icon-size 56 --icon-padding 24 &
 desktop=$!
-trap 'kill "$wm" "$keyboard" "$screen" "$desktop" 2>/dev/null || true' EXIT
+trap 'kill "$wm" "$keyboard" "$screen" "$desktop" ${panel:+"$panel"} 2>/dev/null || true' EXIT
 wait -n "$desktop" "$screen"
