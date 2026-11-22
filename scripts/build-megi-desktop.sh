@@ -9,7 +9,7 @@ gzip -cd "$bundle/pb626-megi-initramfs.cpio.gz" |
   (cd desktop-root && sudo cpio -id --quiet --no-absolute-filenames)
 
 build_userspace() {
-  local xorg=xorg-server-21.1.26
+  local xorg_package
   fetch_source() {
     local project=$1 tag=$2 revision=$3
     git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$tag" \
@@ -20,10 +20,6 @@ build_userspace() {
   fetch_source libmatchbox 1.14 04b214a0d5cf8285e196d90bf2332626b12c74ef
   fetch_source matchbox-window-manager 1.2.3 ce8c1053270d960a7235ab5c3435f707541810a4
   fetch_source matchbox-keyboard 0.1.1 630d89068dc0a1e9199306d405cb32f892dfa4d3
-  curl -fsSL --retry 3 "https://www.x.org/releases/individual/xserver/$xorg.tar.xz" -o "$xorg.tar.xz"
-  echo "c8609f9cdafde14de7ec7cb406dac9507add1d536df8d3c3e3d3d9c1cd864066  $xorg.tar.xz" |
-    sha256sum -c -
-  sudo tar -xJf "$xorg.tar.xz" -C desktop-root/tmp/
   sudo install -m 644 display/pb626-x11-epd.c desktop-root/tmp/
   sudo install -m 755 /usr/bin/qemu-arm-static desktop-root/usr/bin/
   sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
@@ -32,26 +28,22 @@ build_userspace() {
   in_root /sbin/apk add --no-cache \
     xf86-video-dummy xf86-input-evdev xinit xauth xset xsetroot xdotool libxtst \
     libxfont2 pixman nettle libxcvt libpciaccess libxft libpng libjpeg-turbo libxcursor libxfixes libfakekey \
+    xorg-server-common libxau libxdmcp libxshmfence libdrm eudev-libs \
     xkbcomp xkeyboard-config font-misc-misc font-cursor-misc font-liberation \
     xmessage xterm mc nedit xcalc htop
+  # The dummy driver uses the core Xorg executable without the Mesa-backed modules.
+  in_root /sbin/apk fetch --no-cache --output /tmp xorg-server
+  in_root /bin/sh -ec 'apk verify /tmp/xorg-server-*.apk'
+  xorg_package=$(mktemp -d)
+  sudo tar --ignore-zeros --warning=no-unknown-keyword -xzf desktop-root/tmp/xorg-server-*.apk \
+    -C "$xorg_package" usr/libexec/Xorg
+  sudo install -m 755 "$xorg_package/usr/libexec/Xorg" desktop-root/usr/bin/Xorg
+  sudo rm -rf "$xorg_package"
+  sudo rm -f desktop-root/tmp/xorg-server-*.apk
   in_root /sbin/apk add --no-cache --virtual .pb626-x-build \
     build-base linux-headers autoconf automake libtool pkgconf libx11-dev libxext-dev libxft-dev \
-    libxrender-dev libxcursor-dev libxfixes-dev libxtst-dev libpng-dev libjpeg-turbo-dev expat-dev libfakekey-dev \
-    meson xorgproto xtrans libxfont2-dev pixman-dev nettle-dev libxcvt-dev libxau-dev libxkbfile-dev \
-    libpciaccess-dev
+    libxrender-dev libxcursor-dev libxfixes-dev libxtst-dev libpng-dev libjpeg-turbo-dev expat-dev libfakekey-dev
   in_root /bin/sh -e -c '
-  cd "/tmp/$1"
-  sed -i s/termio.h/termios.h/ hw/xfree86/os-support/xf86_OSlib.h
-  CFLAGS=-Wno-error=array-bounds meson setup build --prefix=/usr --libdir=lib --buildtype=minsize --strip \
-    -Dxorg=true -Dxvfb=false -Dxnest=false -Dxwin=false -Dxquartz=false \
-    -Dglx=false -Dglamor=false -Ddrm=false -Ddri1=false -Ddri2=false -Ddri3=false \
-    -Dint10=false -Dvgahw=false -Dudev=false -Dudev_kms=false \
-    -Dsystemd_logind=false -Dhal=false \
-    -Dxdmcp=false -Dxdm-auth-1=false -Dsecure-rpc=false -Ddocs=false -Ddevel-docs=false \
-    -Dxkb_dir=/usr/share/X11/xkb -Dxkb_output_dir=/var/lib/xkb \
-    -Ddefault_font_path=/usr/share/fonts/misc
-  meson compile -C build -j4
-  meson install --no-rebuild -C build
   rm -f /usr/share/X11/xorg.conf.d/10-evdev.conf
   mkdir -p /var/lib/xkb
   export CFLAGS="-O2 -std=gnu17"
@@ -61,6 +53,7 @@ build_userspace() {
   make -j2
   make install
   cd /tmp/matchbox-window-manager
+  sed -i "s/^AM_GCONF_SOURCE_2$/AM_CONDITIONAL([GCONF_SCHEMAS_INSTALL], [false])/" configure.ac
   autoreconf -fi
   ./configure --prefix=/usr --enable-expat --disable-xrm
   make -j2
@@ -73,11 +66,12 @@ build_userspace() {
   cd /tmp
   cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXtst
   strip /usr/bin/pb626-x11-epd /usr/bin/matchbox-window-manager /usr/bin/matchbox-keyboard
-  ' sh "$xorg"
+  '
   in_root /sbin/apk del .pb626-x-build
   in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-window-manager
+  in_root /lib/ld-musl-armhf.so.1 --list /usr/bin/matchbox-keyboard
   in_root /usr/bin/Xorg -version
-  sudo rm -rf "desktop-root/tmp/$xorg" desktop-root/tmp/libmatchbox \
+  sudo rm -rf desktop-root/tmp/libmatchbox \
     desktop-root/tmp/matchbox-window-manager desktop-root/tmp/matchbox-keyboard
   sudo rm -f desktop-root/tmp/pb626-x11-epd.c desktop-root/usr/bin/qemu-arm-static
   printf 'nameserver 1.1.1.1\n' | sudo tee desktop-root/etc/resolv.conf >/dev/null
