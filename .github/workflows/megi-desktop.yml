@@ -8,6 +8,7 @@ on:
       - 'display/pb626-desktop'
       - 'display/pb626-xsession'
       - 'display/pb626-x11-epd.c'
+      - 'display/test-pb626-x11-epd.c'
       - 'display/eink-fonts.conf'
       - 'display/extras/**'
       - 'display/matchbox-keyboard-eink.patch'

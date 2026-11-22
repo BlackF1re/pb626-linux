@@ -118,18 +118,20 @@ fi
 
 # Always rebuild the bridge, even when reusing a previous desktop rootfs.
 sudo install -m 755 /usr/bin/qemu-arm-static desktop-root/usr/bin/
-test "$(/usr/bin/qemu-arm-static desktop-root/usr/bin/pb626-epd --protocol)" = pb626-epd-shm-1
-sudo install -m 644 display/{pb626-x11-epd.c,pb626-epd.h} desktop-root/tmp/
+test "$(/usr/bin/qemu-arm-static desktop-root/usr/bin/pb626-epd --protocol)" = pb626-epd-shm-2
+sudo install -m 644 display/{pb626-x11-epd.c,test-pb626-x11-epd.c,pb626-epd.h} desktop-root/tmp/
 sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
 sudo chroot desktop-root /usr/bin/qemu-arm-static /sbin/apk add --no-cache --virtual .pb626-bridge-build \
   build-base linux-headers libx11-dev libxtst-dev libxdamage-dev libxfixes-dev
 sudo chroot desktop-root /usr/bin/qemu-arm-static /bin/sh -ec '
   cd /tmp
   cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXtst -lXdamage -lXfixes
+  cc -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXtst -lXdamage -lXfixes
+  ./test-pb626-x11-epd
   strip /usr/bin/pb626-x11-epd
   apk del .pb626-bridge-build
 '
-sudo rm -f desktop-root/tmp/{pb626-x11-epd.c,pb626-epd.h} desktop-root/usr/bin/qemu-arm-static
+sudo rm -f desktop-root/tmp/{pb626-x11-epd.c,test-pb626-x11-epd.c,test-pb626-x11-epd,pb626-epd.h} desktop-root/usr/bin/qemu-arm-static
 printf 'nameserver 1.1.1.1\n' | sudo tee desktop-root/etc/resolv.conf >/dev/null
 
 sudo install -m 755 display/pb626-desktop display/pb626-xsession desktop-root/usr/bin/

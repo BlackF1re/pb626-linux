@@ -538,7 +538,7 @@ static void invalidate(void)
 }
 
 static void apply(struct renderer *renderer, enum mode mode, const uint8_t *image,
-		  bool reset, bool fallback)
+		  const uint8_t (*tiles)[TILE_COLS], bool reset, bool fallback)
 {
 	uint64_t started = now_us();
 	bool reset_first = reset || !renderer->known || mode == INIT;
@@ -549,31 +549,45 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 	if (reset_first)
 		memset(previous, WHITE, PIXELS);
 	if (mode != INIT) {
-		memset(renderer->transitions, 0, sizeof(renderer->transitions));
-		memset(renderer->rows, 0, sizeof(renderer->rows));
-		for (unsigned int source = 0; source < SOURCES; source++)
-			for (unsigned int x = 0; x < GATES; x++) {
-				size_t portrait = source * WIDTH + x;
-				uint8_t sample = image[portrait];
-				if (sample == KEEP) {
+		for (unsigned int gate = 0; gate < GATES; gate++) {
+			struct span_range old = renderer->rows[gate];
+			memset(renderer->transitions + gate * SOURCES + 4 * old.first, 0,
+			       4 * (old.end - old.first) * sizeof(*renderer->transitions));
+			renderer->rows[gate] = (struct span_range){0};
+		}
+		for (int ty = 0; ty < TILE_ROWS; ty++)
+			for (int tx = 0; tx < TILE_COLS; tx++) {
+				if (tiles && !tiles[ty][tx]) {
 					if (reset_first)
-						fail("a recovery frame must supply all pixels");
+						fail("a recovery frame must supply every tile");
 					continue;
 				}
-				if (sample & ~(SCRUB | WHITE))
-					fail("invalid E Ink pixel");
-				unsigned int old = previous[portrait], level = sample & WHITE;
-				if (old == level && !(mode == GC16 && (sample & SCRUB)))
-					continue;
-				unsigned int gate = GATES - 1 - x;
-				unsigned int t = old | (level << 4);
-				active[t] = true;
-				changed = true;
-				renderer->transitions[gate * SOURCES + source] = t + 1;
-				struct span_range *row = &renderer->rows[gate];
-				if (!row->end)
-					row->first = source / 4;
-				row->end = source / 4 + 1;
+				int right, bottom;
+				tile_bounds(tx, ty, &right, &bottom);
+				for (int source = ty * TILE; source < bottom; source++)
+					for (int x = tx * TILE; x < right; x++) {
+						size_t portrait = source * WIDTH + x;
+						uint8_t sample = image[portrait];
+						if (sample == KEEP) {
+							if (reset_first)
+								fail("a recovery frame must supply all pixels");
+							continue;
+						}
+						if (sample & ~(SCRUB | WHITE))
+							fail("invalid E Ink pixel");
+						unsigned int old = previous[portrait], level = sample & WHITE;
+						if (old == level && !(mode == GC16 && (sample & SCRUB)))
+							continue;
+						unsigned int gate = GATES - 1 - x;
+						unsigned int t = old | (level << 4);
+						active[t] = true;
+						changed = true;
+						renderer->transitions[gate * SOURCES + source] = t + 1;
+						struct span_range *row = &renderer->rows[gate];
+						if (!row->end)
+							row->first = source / 4;
+						row->end = source / 4 + 1;
+					}
 			}
 	}
 	if (!reset_first && !changed)
@@ -614,10 +628,16 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 		refresh(renderer, mode);
 		scan_us += now_us() - start;
 	}
+	/* Only commit transitions after STREAMOFF confirmed every phase. */
 	if (mode != INIT)
-		for (size_t i = 0; i < PIXELS; i++)
-			if (image[i] != KEEP)
-				previous[i] = image[i] & WHITE;
+		for (unsigned int gate = 0; gate < GATES; gate++) {
+			struct span_range row = renderer->rows[gate];
+			for (unsigned int source = 4 * row.first; source < 4 * row.end; source++) {
+				uint16_t transition = renderer->transitions[gate * SOURCES + source];
+				if (transition)
+					previous[portrait_index(gate, source)] = (transition - 1) >> 4;
+			}
+		}
 	renderer->known = true;
 	if (renderer->profile) {
 		uint64_t total = now_us() - started;
@@ -647,7 +667,7 @@ static void save_state(const uint8_t *previous, uint8_t *scan_order)
 int main(int argc, char **argv)
 {
 	if (argc == 2 && !strcmp(argv[1], "--protocol")) {
-		puts("pb626-epd-shm-1");
+		puts("pb626-epd-shm-2");
 		return EXIT_SUCCESS;
 	}
 	if ((argc == 2 && !strcmp(argv[1], "--help")) || argc < 3 || argc > 4) {
@@ -702,9 +722,9 @@ int main(int argc, char **argv)
 		long frame_fd = strtol(argv[3], &end, 10);
 		struct stat info;
 		if (!*argv[3] || *end || frame_fd < 3 || frame_fd > INT32_MAX ||
-		    fstat(frame_fd, &info) || info.st_size != PIXELS)
+		    fstat(frame_fd, &info) || info.st_size != (off_t)sizeof(struct shared_frame))
 			fail("invalid shared frame descriptor");
-		const uint8_t *image = mmap(NULL, PIXELS, PROT_READ, MAP_SHARED, frame_fd, 0);
+		const struct shared_frame *image = mmap(NULL, sizeof(*image), PROT_READ, MAP_SHARED, frame_fd, 0);
 		close(frame_fd);
 		if (image == MAP_FAILED)
 			fail("could not map shared frame");
@@ -716,7 +736,7 @@ int main(int argc, char **argv)
 			case CLEAN: case RESET: mode = GC16; break;
 			default: fail("invalid update command");
 			}
-			apply(&renderer, mode, image, command == RESET, true);
+			apply(&renderer, mode, image->pixels, image->tiles, command == RESET, true);
 			if (fputc(command, stdout) == EOF || fflush(stdout))
 				fail("could not acknowledge E Ink update");
 		}
@@ -729,7 +749,7 @@ int main(int argc, char **argv)
 				for (size_t i = 0; i < PIXELS; i++)
 					renderer.target[i] |= SCRUB;
 		}
-		apply(&renderer, mode, renderer.target, false, false);
+		apply(&renderer, mode, renderer.target, NULL, false, false);
 	}
 	if (renderer.known)
 		save_state(renderer.previous, renderer.target);

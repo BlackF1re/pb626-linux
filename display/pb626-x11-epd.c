@@ -26,7 +26,6 @@
 #include "pb626-epd.h"
 
 enum { MENU_HOLD_US = 1000000, QUIET_US = 180000, MAX_PENDING_US = 850000,
-       TILE = 32, TILE_COLS = (WIDTH + TILE - 1) / TILE, TILE_ROWS = (HEIGHT + TILE - 1) / TILE,
        GHOST_LIMIT = 16, GHOST_URGENT = 28, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 
@@ -218,6 +217,8 @@ static unsigned int channel(unsigned long pixel, unsigned long mask)
 	return ((pixel & mask) >> shift) * 255 / (mask >> shift);
 }
 
+static uint8_t dirty_tiles[TILE_ROWS][TILE_COLS];
+
 struct capture_stats {
 	uint64_t read_us, quant_us;
 	unsigned int pixels, changed;
@@ -278,8 +279,11 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 						abs((int)value - (int)by);
 			uint8_t *output = frame + y * WIDTH + x;
 			uint8_t next = pointer_level(pointer, vertical, x, y, paper_level(value, contrast, x, y));
-			stats->changed += *output != next;
-			*output = next;
+			if (*output != next) {
+				stats->changed++;
+				dirty_tiles[y / TILE][x / TILE] = 1;
+				*output = next;
+			}
 		}
 	stats->quant_us += now_us() - start;
 	stats->pixels += (area.right - area.left) * (area.bottom - area.top);
@@ -346,7 +350,7 @@ static int damage_regions(Display *display, Damage damage, XserverRegion region,
 struct worker {
 	int socket;
 	pid_t pid;
-	uint8_t *frame;
+	struct shared_frame *frame;
 };
 
 static int start_worker(struct worker *worker, const char *waveform)
@@ -357,14 +361,14 @@ static int start_worker(struct worker *worker, const char *waveform)
 	if (fd < 0)
 		return -1;
 	int unlinked = unlink(path);
-	if (unlinked || ftruncate(fd, PIXELS)) {
+	if (unlinked || ftruncate(fd, sizeof(struct shared_frame))) {
 		close(fd);
 		return -1;
 	}
-	uint8_t *frame = mmap(NULL, PIXELS, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	struct shared_frame *frame = mmap(NULL, sizeof(*frame), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	if (frame == MAP_FAILED || socketpair(AF_UNIX, SOCK_STREAM, 0, sockets)) {
 		if (frame != MAP_FAILED)
-			munmap(frame, PIXELS);
+			munmap(frame, sizeof(*frame));
 		close(fd);
 		return -1;
 	}
@@ -384,7 +388,7 @@ static int start_worker(struct worker *worker, const char *waveform)
 	close(sockets[1]);
 	if (pid < 0) {
 		close(sockets[0]);
-		munmap(frame, PIXELS);
+		munmap(frame, sizeof(*frame));
 		return -1;
 	}
 	*worker = (struct worker){ .socket = sockets[0], .pid = pid, .frame = frame };
@@ -396,7 +400,7 @@ static void stop_worker(struct worker *worker)
 	close(worker->socket);
 	while (waitpid(worker->pid, NULL, 0) < 0 && errno == EINTR)
 		;
-	munmap(worker->frame, PIXELS);
+	munmap(worker->frame, sizeof(*worker->frame));
 }
 
 static int submit(const struct worker *worker, uint8_t command)
@@ -421,70 +425,80 @@ struct tile_history {
 
 static struct tile_history history[TILE_ROWS][TILE_COLS];
 
-static void tile_bounds(int tx, int ty, int *right, int *bottom)
-{
-	*right = tx + 1 == TILE_COLS ? WIDTH : (tx + 1) * TILE;
-	*bottom = ty + 1 == TILE_ROWS ? HEIGHT : (ty + 1) * TILE;
-}
-
 static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8_t *panel,
-			    uint8_t *frame)
+			    struct shared_frame *frame)
 {
 	unsigned int changes = 0;
 	if (command == RESET) {
+		memset(frame->tiles, 1, sizeof(frame->tiles));
 		for (size_t i = 0; i < PIXELS; i++)
-			frame[i] = desired[i] | SCRUB;
+			frame->pixels[i] = desired[i] | SCRUB;
 		return PIXELS;
 	}
+	memset(frame->tiles, 0, sizeof(frame->tiles));
 	for (int ty = 0; ty < TILE_ROWS; ty++)
 		for (int tx = 0; tx < TILE_COLS; tx++) {
-			int right, bottom;
-			tile_bounds(tx, ty, &right, &bottom);
 			int scrub = command == CLEAN && history[ty][tx].stress >= GHOST_LIMIT;
+			if (command == CLEAN ? !scrub : !dirty_tiles[ty][tx])
+				continue;
+			int right, bottom, differs = 0;
+			tile_bounds(tx, ty, &right, &bottom);
 			for (int y = ty * TILE; y < bottom; y++)
 				for (int x = tx * TILE; x < right; x++) {
 					size_t i = y * WIDTH + x;
 					uint8_t target = desired[i], old = panel[i];
 					uint8_t level = target;
+					differs |= target != old;
 					if (command == PREVIEW)
 						level = abs(target - old) >= 3 ? preview_level(target, old) : old;
 					if (scrub || (command != CLEAN && level != old)) {
-						frame[i] = level | (scrub ? SCRUB : 0);
+						frame->pixels[i] = level | (scrub ? SCRUB : 0);
+						frame->tiles[ty][tx] = 1;
 						changes++;
 					} else {
-						frame[i] = KEEP;
+						frame->pixels[i] = KEEP;
 					}
 				}
+			if (!differs)
+				dirty_tiles[ty][tx] = 0;
 		}
 	return changes;
 }
 
-static void acknowledge(uint8_t command, const uint8_t *frame, uint8_t *panel)
+static void acknowledge(uint8_t command, const struct shared_frame *frame,
+			const uint8_t *desired, uint8_t *panel)
 {
 	if (command == RESET) {
 		memset(history, 0, sizeof(history));
-		for (size_t i = 0; i < PIXELS; i++)
-			panel[i] = frame[i] & WHITE;
+		memset(dirty_tiles, 0, sizeof(dirty_tiles));
+		memcpy(panel, desired, PIXELS);
 		return;
 	}
 	for (int ty = 0; ty < TILE_ROWS; ty++)
 		for (int tx = 0; tx < TILE_COLS; tx++) {
+			if (!frame->tiles[ty][tx])
+				continue;
 			int right, bottom;
 			tile_bounds(tx, ty, &right, &bottom);
 			struct tile_history *tile = &history[ty][tx];
 			unsigned int changed = 0;
-			int net = 0, cleaned = 0;
+			int net = 0, cleaned = 0, differs = 0;
 			for (int y = ty * TILE; y < bottom; y++)
 				for (int x = tx * TILE; x < right; x++) {
 					size_t i = y * WIDTH + x;
-					if (frame[i] == KEEP)
+					uint8_t sample = frame->pixels[i];
+					if (sample == KEEP) {
+						differs |= panel[i] != desired[i];
 						continue;
-					uint8_t level = frame[i] & WHITE;
-					cleaned |= frame[i] & SCRUB;
+					}
+					uint8_t level = sample & WHITE;
+					differs |= level != desired[i];
+					cleaned |= sample & SCRUB;
 					changed += panel[i] != level;
 					net += level - panel[i];
 					panel[i] = level;
 				}
+			dirty_tiles[ty][tx] = differs;
 			if (cleaned) {
 				*tile = (struct tile_history){0};
 			} else if (changed) {
@@ -622,12 +636,14 @@ int main(int argc, char **argv)
 
 		if (!has_frame && !captured)
 			goto wait_input;
-		int different = memcmp(frame, previous, PIXELS) != 0;
+		int different = 0;
 		unsigned int stress = 0;
 		for (int y = 0; y < TILE_ROWS; y++)
-			for (int x = 0; x < TILE_COLS; x++)
+			for (int x = 0; x < TILE_COLS; x++) {
+				different |= dirty_tiles[y][x];
 				if (history[y][x].stress > stress)
 					stress = history[y][x].stress;
+			}
 		if (stats.changed && different)
 			last_damage = now;
 		if (different || stress >= GHOST_LIMIT) {
@@ -664,7 +680,7 @@ int main(int argc, char **argv)
 					return EXIT_FAILURE;
 				continue;
 			}
-			acknowledge(command, worker.frame, previous);
+			acknowledge(command, worker.frame, frame, previous);
 			if (!has_frame) {
 				FILE *ready = fopen(argv[2], "w");
 				if (!ready)
@@ -686,7 +702,7 @@ int main(int argc, char **argv)
 				(unsigned long long)(submit_start - prepare_start),
 				(unsigned long long)(changes ? now_us() - submit_start : 0),
 				(unsigned long long)(now_us() - capture_start));
-		if (changes)
+		if (changes || command == SETTLE)
 			continue; /* Discard intermediate frames and consume accumulated damage. */
 
 wait_input:

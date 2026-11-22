@@ -29,8 +29,8 @@ second and release to clear ghosting and redraw the desktop.
 The desktop uses black/white DU previews during interaction and restores grays
 with GL16 once the image settles. Frequently updated 32 × 32 pixel tiles
 can receive a local GC16 cleanup. The panel still scans all rows. For timing
-logs, launch the desktop with `PB626_EPD_PROFILE=1` in its environment and
-read its log at `/run/pb626-desktop.log`. The USB console stays available.
+logs, pass `-ProfileDisplay` to the desktop launcher and read
+`/run/pb626-desktop.log` over USB. The USB console stays available.
 
 ## Experimental installation to internal eMMC
 

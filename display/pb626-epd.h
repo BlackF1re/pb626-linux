@@ -7,6 +7,18 @@
 
 enum { WIDTH = 758, HEIGHT = 1024, PIXELS = WIDTH * HEIGHT, WHITE = 15 };
 enum { KEEP = 255, SCRUB = 128 };
+enum { TILE = 32, TILE_COLS = (WIDTH + TILE - 1) / TILE, TILE_ROWS = (HEIGHT + TILE - 1) / TILE };
+
+struct shared_frame {
+	uint8_t tiles[TILE_ROWS][TILE_COLS];
+	uint8_t pixels[PIXELS];
+};
+
+static inline void tile_bounds(int tx, int ty, int *right, int *bottom)
+{
+	*right = tx + 1 == TILE_COLS ? WIDTH : (tx + 1) * TILE;
+	*bottom = ty + 1 == TILE_ROWS ? HEIGHT : (ty + 1) * TILE;
+}
 enum command { PREVIEW = 'D', SETTLE = 'L', CLEAN = 'G', RESET = 'R' };
 
 static inline uint64_t now_us(void)
