@@ -120,8 +120,24 @@ backup to recover the original FAT contents of p1.
 On the ELAN unit, the RAM preflight matched the factory BT0, BT1, and FAT
 files. Alpine was installed on p1, passed `e2fsck -fn`, and was verified
 by a read-only mount. The three boot files and the selected INI passed FAT
-readback. Cold boot requires independent confirmation through USB and the
-root mount.
+readback. The first cold boot with standalone U-Boot at 0x4a000000 showed
+no PE8 or USB activity. The exact same zImage and DTB were then started
+via FEL without an initramfs. Linux 7.2 reached PID 1, USB ACM (0525:a4a7,
+COM12) answered, and mountinfo matched the eMMC p1 device (179:1) for
+`/`, ext4 rw. A file created under `/root` was synced and read back.
+This verifies Linux and the installed Alpine p1 independently of boot.axf.
+
+The stock-address shim bundle adds `linux/pb626ax.bin`. In its update kit,
+`linux.ini.shim` differs from the factory INI only in the segment filename,
+and `AXF-BOOT-SHA256SUMS` lists the matching `linux/pb626-zImage` and
+`linux/pb626.dtb` already on p2. Include both in the kit manifest. Run
+`activate-shim` from the same FEL backup variant to stage and verify the
+shim before changing the active INI. Use that same kit for `rollback-boot`.
+Before the cold test, clear and read back AXP209 data buffer register
+`0x0e`. After a failure, read it through FEL with
+`i2cget -y -f 0 0x34 0x0e`. Values 0x71, 0x72, and 0x74 mark AXF shim
+entry, U-Boot autoboot, and successful FAT reads respectively. 0x75 means
+`bootz` returned and 0x7e means no MMC candidate supplied both files.
 
 ## Hardware-side plan (agent must execute carefully)
 

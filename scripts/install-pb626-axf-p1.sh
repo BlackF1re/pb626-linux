@@ -4,10 +4,10 @@ set -eu
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 
-[ "$#" -eq 2 ] || fail "Usage: $0 {check|install-root|stage-boot|activate|rollback-boot} CID"
+[ "$#" -eq 2 ] || fail "Usage: $0 {check|install-root|stage-boot|activate|activate-shim|rollback-boot} CID"
 action=$1
 case "$action" in
-  check|install-root|stage-boot|activate|rollback-boot) ;;
+  check|install-root|stage-boot|activate|activate-shim|rollback-boot) ;;
   *) fail "Unknown action: $action" ;;
 esac
 [ "$(id -u)" -eq 0 ] || fail "Run as root"
@@ -128,6 +128,8 @@ if cmp -s "$kit/linux.ini.factory" "$active"; then
   config=factory
 elif cmp -s "$kit/linux.ini.chainload" "$active"; then
   config=chainload
+elif [ -f "$kit/linux.ini.shim" ] && cmp -s "$kit/linux.ini.shim" "$active"; then
+  config=shim
 else
   fail "Unexpected active linux.ini"
 fi
@@ -177,11 +179,21 @@ case "$action" in
     check_staged
     cmp "$kit/linux.ini.factory" "$active"
     ;;
-  activate|rollback-boot)
+  activate|activate-shim|rollback-boot)
     if [ "$action" = activate ]; then
       check_root
       check_staged
       next=chainload
+    elif [ "$action" = activate-shim ]; then
+      check_root
+      sed 's@c:\\linux\\bImage@c:\\linux\\pb626ax.bin@' "$kit/linux.ini.factory" | cmp - "$kit/linux.ini.shim"
+      [ "$(wc -c < "$kit/linux/pb626ax.bin")" -eq 8388608 ] ||
+        fail "The shim must fill the stock AXF segment"
+      (cd "$boot" && sha256sum -c "$kit/AXF-BOOT-SHA256SUMS")
+      if [ -e "$boot/linux/pb626ax.bin" ]; then
+        cmp "$kit/linux/pb626ax.bin" "$boot/linux/pb626ax.bin" || fail "Conflicting factory-address shim"
+      fi
+      next=shim
     else
       next=factory
     fi
@@ -190,11 +202,23 @@ case "$action" in
       unlock "$p2"
       mount -t vfat "$p2" "$boot"
       cmp "$kit/linux.ini.$config" "$active"
+      if [ "$next" = shim ] && [ ! -e "$boot/linux/pb626ax.bin" ]; then
+        write_boot_file "$kit/linux/pb626ax.bin" "$boot/linux/pb626ax.bin"
+        umount "$boot"
+        mount -t vfat -o ro "$p2" "$boot"
+        cmp "$kit/linux/pb626ax.bin" "$boot/linux/pb626ax.bin"
+        umount "$boot"
+        mount -t vfat "$p2" "$boot"
+        cmp "$kit/linux.ini.$config" "$active"
+      fi
       write_boot_file "$kit/linux.ini.$next" "$active"
       umount "$boot"
       mount -t vfat -o ro "$p2" "$boot"
     fi
     cmp "$kit/linux.ini.$next" "$active"
+    if [ "$next" = shim ]; then
+      cmp "$kit/linux/pb626ax.bin" "$boot/linux/pb626ax.bin"
+    fi
     ;;
 esac
 printf '%s complete\n' "$action"
