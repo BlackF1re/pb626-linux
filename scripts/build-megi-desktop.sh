@@ -122,11 +122,11 @@ test "$(/usr/bin/qemu-arm-static desktop-root/usr/bin/pb626-epd --protocol)" = p
 sudo install -m 644 display/{pb626-x11-epd.c,test-pb626-x11-epd.c,pb626-epd.h} desktop-root/tmp/
 sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
 sudo chroot desktop-root /usr/bin/qemu-arm-static /sbin/apk add --no-cache --virtual .pb626-bridge-build \
-  build-base linux-headers libx11-dev libxtst-dev libxdamage-dev libxfixes-dev
+  build-base linux-headers libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev
 sudo chroot desktop-root /usr/bin/qemu-arm-static /bin/sh -ec '
   cd /tmp
-  cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXtst -lXdamage -lXfixes
-  cc -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXtst -lXdamage -lXfixes
+  cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes
+  cc -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes
   ./test-pb626-x11-epd
   strip /usr/bin/pb626-x11-epd
   apk del .pb626-bridge-build

@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory)][string]$BundleDir,
     [Parameter(Mandatory)][string]$Waveform,
     [switch]$UseMountedApps,
-    [switch]$ProfileDisplay
+    [switch]$ProfileDisplay,
+    [ValidateRange(0,100)][int]$FrontlightPercent
 )
 
 $ErrorActionPreference = 'Stop'
@@ -105,6 +106,17 @@ try {
         Replace('__APPS_MOUNT__', $appsMount).
         Replace('__WORK__', $work).Replace('__ROOT__', $rootName).Replace('__WBF__', $waveformName)
     $null = Invoke-Reader $launch
+    if ($PSBoundParameters.ContainsKey('FrontlightPercent')) {
+        # Xorg's VT switch can blank the frontlight without changing brightness.
+        $setLight = @'
+set -- /sys/class/backlight/*; light=$1; max=$(cat "$light/max_brightness") &&
+printf '%s\n' "$(((max * __PERCENT__ + 50) / 100))" >"$light/brightness" &&
+printf '%s\n' '__POWER__' >"$light/bl_power"
+'@
+        $power = if ($FrontlightPercent -eq 0) { '4' } else { '0' }
+        $setLight = $setLight.Replace('__PERCENT__', "$FrontlightPercent").Replace('__POWER__', $power)
+        $null = Invoke-Reader ($setLight -replace '\r?\n', ' ')
+    }
     Write-Output "PocketBook desktop started in RAM. USB console port is $Port."
 } finally {
     Write-Progress -Activity 'Sending kit to FEL RAM' -Completed

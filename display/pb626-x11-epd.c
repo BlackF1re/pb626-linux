@@ -6,6 +6,7 @@
 #include <X11/keysym.h>
 #include <X11/extensions/Xdamage.h>
 #include <X11/extensions/Xfixes.h>
+#include <X11/extensions/XShm.h>
 #include <X11/extensions/XTest.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -13,6 +14,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/shm.h>
 #include <sys/socket.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -219,21 +221,80 @@ static unsigned int channel(unsigned long pixel, unsigned long mask)
 
 static uint8_t dirty_tiles[TILE_ROWS][TILE_COLS];
 
+static int shm_attach_error;
+
+static int mark_shm_error(Display *display, XErrorEvent *event)
+{
+	(void)display;
+	(void)event;
+	shm_attach_error = 1;
+	return 0;
+}
+
+static void setup_shm(Display *display, XShmSegmentInfo *shm)
+{
+	if (!XShmQueryExtension(display))
+		return;
+	int screen = DefaultScreen(display);
+	XImage *image = XShmCreateImage(display, DefaultVisual(display, screen),
+				       DefaultDepth(display, screen), ZPixmap, NULL,
+				       shm, WIDTH, HEIGHT);
+	if (!image)
+		return;
+	int id = shmget(IPC_PRIVATE, (size_t)image->bytes_per_line * HEIGHT, IPC_CREAT | 0600);
+	XDestroyImage(image);
+	if (id < 0)
+		return;
+	char *address = shmat(id, NULL, 0);
+	if (address != (void *)-1) {
+		*shm = (XShmSegmentInfo){ .shmid = id, .shmaddr = address };
+		XSync(display, False);
+		XSetErrorHandler(mark_shm_error);
+		Bool attached = XShmAttach(display, shm);
+		XSync(display, False);
+		XSetErrorHandler(handle_x_error);
+		if (!attached || shm_attach_error) {
+			shmdt(address);
+			shm->shmaddr = NULL;
+		}
+	}
+	/* Keep the segment only for as long as the bridge or Xorg has it mapped. */
+	shmctl(id, IPC_RMID, NULL);
+}
+
+static XImage *read_image(Display *display, Window root, int x, int y, int width, int height,
+			  XShmSegmentInfo *shm)
+{
+	if (shm->shmaddr) {
+		int screen = DefaultScreen(display);
+		XImage *image = XShmCreateImage(display, DefaultVisual(display, screen),
+					       DefaultDepth(display, screen), ZPixmap,
+					       shm->shmaddr, shm, width, height);
+		if (image) {
+			if (XShmGetImage(display, root, image, x, y, AllPlanes))
+				return image;
+			XDestroyImage(image);
+		}
+	}
+	return XGetImage(display, root, x, y, width, height, AllPlanes, ZPixmap);
+}
+
 struct capture_stats {
 	uint64_t read_us, quant_us;
 	unsigned int pixels, changed;
 };
 
 static int capture(Display *display, Window root, int offset, struct rect dirty,
-		   uint8_t *frame, struct rect pointer, int vertical, struct capture_stats *stats)
+		   uint8_t *frame, struct rect pointer, int vertical, struct capture_stats *stats,
+		   XShmSegmentInfo *shm)
 {
 	static uint8_t lightness[PIXELS];
 	struct rect area = clipped(dirty, 1);
 	struct rect read_area = clipped(area, 1);
 	uint64_t start = now_us();
-	XImage *image = XGetImage(display, root, read_area.left + offset, read_area.top,
+	XImage *image = read_image(display, root, read_area.left + offset, read_area.top,
 				  read_area.right - read_area.left, read_area.bottom - read_area.top,
-				  AllPlanes, ZPixmap);
+				  shm);
 	if (!image)
 		return -1;
 	stats->read_us += now_us() - start;
@@ -269,16 +330,21 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 		for (int x = area.left; x < area.right; x++) {
 			const uint8_t *pixel = lightness + y * WIDTH + x;
 			unsigned int value = *pixel;
-			unsigned int lx = x > 0 ? pixel[-1] : value;
-			unsigned int rx = x + 1 < WIDTH ? pixel[1] : value;
-			unsigned int ty = y > 0 ? pixel[-WIDTH] : value;
-			unsigned int by = y + 1 < HEIGHT ? pixel[WIDTH] : value;
-			unsigned int contrast = abs((int)value - (int)lx) +
+			uint8_t next = value / 17;
+			/* Exact levels are independent of the contrast and dither thresholds. */
+			if (value != 17u * next) {
+				unsigned int lx = x > 0 ? pixel[-1] : value;
+				unsigned int rx = x + 1 < WIDTH ? pixel[1] : value;
+				unsigned int ty = y > 0 ? pixel[-WIDTH] : value;
+				unsigned int by = y + 1 < HEIGHT ? pixel[WIDTH] : value;
+				unsigned int contrast = abs((int)value - (int)lx) +
 						abs((int)value - (int)rx) +
 						abs((int)value - (int)ty) +
 						abs((int)value - (int)by);
+				next = paper_level(value, contrast, x, y);
+			}
 			uint8_t *output = frame + y * WIDTH + x;
-			uint8_t next = pointer_level(pointer, vertical, x, y, paper_level(value, contrast, x, y));
+			next = pointer_level(pointer, vertical, x, y, next);
 			if (*output != next) {
 				stats->changed++;
 				dirty_tiles[y / TILE][x / TILE] = 1;
@@ -566,6 +632,10 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	unlink(argv[2]);
 	int profile = getenv("PB626_EPD_PROFILE") != NULL;
+	XShmSegmentInfo shm = {0};
+	setup_shm(display, &shm);
+	if (profile)
+		fprintf(stderr, "x11-epd: capture=%s\n", shm.shmaddr ? "MIT-SHM" : "XGetImage");
 	int offset = (width - WIDTH) / 2;
 	unsigned int failures = 0;
 	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
@@ -626,7 +696,7 @@ int main(int argc, char **argv)
 				pointer = next;
 			}
 			for (int i = 0; i < count; i++)
-				if (capture(display, root, offset, areas[i], frame, pointer, controls.vertical, &stats))
+				if (capture(display, root, offset, areas[i], frame, pointer, controls.vertical, &stats, &shm))
 					goto failed;
 			captured = count != 0;
 			dirty = 0;
@@ -655,7 +725,7 @@ int main(int argc, char **argv)
 		}
 
 		uint8_t command = 0;
-		int idle = now >= last_damage + QUIET_US || now >= pending_since + MAX_PENDING_US;
+		int idle = now >= last_damage + QUIET_US;
 		if (captured && (!has_frame || controls.clean_requested))
 			command = RESET;
 		else if (!dirty && now >= layout_until && stress >= GHOST_LIMIT && (idle || stress >= GHOST_URGENT))
@@ -667,6 +737,13 @@ int main(int argc, char **argv)
 
 		uint64_t prepare_start = now_us();
 		unsigned int changes = command ? prepare(command, frame, previous, worker.frame) : 0;
+		/* Gray-only activity may have no useful DU transitions. Bound its
+		 * wait without interrupting motion that DU can still show.
+		 */
+		if (!changes && command == PREVIEW && now >= pending_since + MAX_PENDING_US) {
+			command = SETTLE;
+			changes = prepare(command, frame, previous, worker.frame);
+		}
 		uint64_t submit_start = now_us();
 		if (changes) {
 			if (submit(&worker, command)) {
@@ -712,8 +789,6 @@ wait_input:
 			deadline = next_capture > layout_until ? next_capture : layout_until;
 		if (pending && has_frame && !dirty) {
 			uint64_t settle = last_damage + QUIET_US;
-			if (settle > pending_since + MAX_PENDING_US)
-				settle = pending_since + MAX_PENDING_US;
 			if (settle < layout_until)
 				settle = layout_until;
 			if (settle < deadline)
