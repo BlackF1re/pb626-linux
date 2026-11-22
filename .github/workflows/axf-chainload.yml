@@ -7,6 +7,7 @@ on:
       - '.github/workflows/axf-chainload.yml'
       - 'boot/pb626-uboot-entry.S'
       - 'boot/pb626-uboot-linux.c'
+      - 'boot/pb626-emmc-init.c'
   workflow_dispatch:
     inputs:
       kernel_run_id:
@@ -37,7 +38,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-arm-linux-gnueabihf bc bison flex libssl-dev \
+            gcc-arm-linux-gnueabihf bc bison flex libssl-dev cpio \
             python3-pyelftools python3-setuptools device-tree-compiler
       - name: Build standalone U-Boot for factory AXF handoff
         run: |
@@ -92,22 +93,21 @@ jobs:
           dd if=original-bImage of=native.dtb bs=1 skip=$((kernel_size - 4)) status=none
           fdtget native.dtb /chosen pb626,emmc-root >/dev/null
           fdtget native.dtb /chosen pb626,display-bringup >/dev/null
-          # There is NO initramfs in this experiment.
-          for property in linux,initrd-start linux,initrd-end; do
-            if fdtget native.dtb /chosen "$property" >/dev/null 2>&1; then
-              fdtput -d native.dtb /chosen "$property"
-            fi
-          done
+          mkdir -p early-root/{dev,sys,newroot}
+          "${CROSS_COMPILE}gcc" -Os -Wall -Wextra -static -s \
+            boot/pb626-emmc-init.c -o early-root/init
+          (cd early-root && find . -print0 | cpio --null -o -H newc --owner=0:0 --quiet) \
+            | gzip -9 > factory-initrd.bin
+          initrd_end=$((0x45000000 + $(stat -c %s factory-initrd.bin)))
+          fdtput -t x native.dtb /chosen linux,initrd-start 45000000
+          fdtput -t x native.dtb /chosen linux,initrd-end "$(printf '%x' "$initrd_end")"
           fdtput -t s native.dtb /chosen bootargs \
             'console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rootwait rw init=/sbin/pb626-emmc-init'
           dtc -q -I dtb -O dtb -p 4096 -o dist/linux/pb626.dtb native.dtb
           test "$(fdtget -t s dist/linux/pb626.dtb /soc/mmc@1c11000 status)" = okay
-          ! fdtget dist/linux/pb626.dtb /chosen linux,initrd-start >/dev/null 2>&1
-          ! fdtget dist/linux/pb626.dtb /chosen linux,initrd-end >/dev/null 2>&1
           fdtget -t x dist/linux/pb626.dtb /memory@40000000 reg
           cp dist/linux/pb626-zImage factory-kernel.bin
           cp dist/linux/pb626.dtb factory-dtb.bin
-          touch factory-initrd.bin
           "${CROSS_COMPILE}as" --defsym STANDALONE_AXF=1 --defsym AXF_EMBEDDED_LINUX=1 boot/pb626-uboot-entry.S -o axf-entry.o
           "${CROSS_COMPILE}ld" -Ttext=0x40008000 -e _start axf-entry.o -o axf-entry.elf
           "${CROSS_COMPILE}objcopy" -O binary -j .text axf-entry.elf dist/linux/pb626ax.bin
@@ -119,9 +119,11 @@ jobs:
           Preserve the stock BT0, BT1, boot.axf and factory backups.
           Keep the stock [segment] address and limit. Set img_name to
           c:\linux\pb626ax.bin. It contains standalone U-Boot, the Linux
-          kernel and its p1 DTB, with no initramfs.
+          kernel, its p1 DTB, and a small initramfs that mounts p1.
           AXP209 register 0x0e records 0x71 (shim), 0x72 (U-Boot autoboot),
           0x78 (Linux handoff) or 0x79 (the U-Boot command failed/returned).
+          0x7a (early userspace), 0x7b (p1 mounted), 0x7c (p1 unavailable),
+          0x7d (early setup, switch-root, or exec failed) are written by Linux.
           The original factory linux.ini and recovery settings must be retained.
           The factory loader's behavior with this specific board is NOT verified.
           The eMMC partition p1 MUST contain the expected Alpine rootfs and

@@ -62,9 +62,9 @@ int main(void)
 {
     if (mount("devtmpfs", "/dev", "devtmpfs", 0, 0) < 0 ||
         mount("sysfs", "/sys", "sysfs", 0, 0) < 0)
-        STOP_BOOT(0x7f, "PB626: cannot initialize early userspace\r\n");
+        STOP_BOOT(0x7d, "PB626: cannot initialize early userspace\r\n");
 
-    mark_boot(0x70);
+    mark_boot(0x7a);
     WRITE_TEXT("/sys/class/leds/led/trigger", "heartbeat");
 
     for (int attempt = 0; attempt < 15 && access(ROOT, F_OK) < 0; ++attempt)
@@ -72,15 +72,15 @@ int main(void)
 
     if (mount(ROOT, "/newroot", "ext4", 0, 0) < 0 ||
         access("/newroot" INIT, X_OK) < 0)
-        STOP_BOOT(0x7e, "PB626: cannot boot Alpine from " ROOT "\r\n");
+        STOP_BOOT(0x7c, "PB626: cannot boot Alpine from " ROOT "\r\n");
 
-    mark_boot(0x71);
+    mark_boot(0x7b);
     if (chdir("/newroot") < 0 || umount2("/sys", MNT_DETACH) < 0 ||
         umount2("/dev", MNT_DETACH) < 0 || mount(".", "/", 0, MS_MOVE, 0) < 0 ||
         chroot(".") < 0 || chdir("/") < 0)
-        STOP_BOOT(0x7f, "PB626: cannot switch to the eMMC root\r\n");
+        STOP_BOOT(0x7d, "PB626: cannot switch to the eMMC root\r\n");
 
     execl(INIT, INIT, (char *)0);
-    STOP_BOOT(0x7f, "PB626: cannot start Alpine init\r\n");
+    STOP_BOOT(0x7d, "PB626: cannot start Alpine init\r\n");
     return 1;
 }

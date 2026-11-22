@@ -32,9 +32,8 @@ result does not establish on-device boot.
 2. Verified FEL/Megi 7.2 kernel + Alpine and USB ACM shell.
 3. Prior on-device FEL session successfully mounted Alpine eMMC **p1**
    as rw root. In that session Linux used `/dev/mmcblk2p1`.
-4. The owner subsequently restored the **entire factory image**, including
-   all three eMMC storage areas, and verified SHA-256. **Therefore assume
-   that Alpine p1 is NOT currently installed.** Recheck before booting.
+4. The owner restored all three factory eMMC regions and verified SHA-256
+   before this experiment. Alpine has since been installed on p1 again.
 5. Early factory stages: BootROM -> eGON.BT0 at user area 0x2000 ->
    eGON.BT1 from LBA 38192 -> /boot.axf from FAT p2 ->
    /linux/linux.ini -> /linux/bImage at 0x40008000.
@@ -53,6 +52,7 @@ Expected files in the standalone artifact:
 - `linux/u-boot.bin`
 - `linux/pb626-zImage`
 - `linux/pb626.dtb`
+- `linux/pb626ax.bin`
 - `SHA256SUMS`
 - `README.txt`
 
@@ -169,6 +169,22 @@ before writing `pb626z.bin`. In FEL recovery, run `rollback-boot` with
 the preload kit, verify that the stock INI is active, then remove only
 `linux/pb626ax.bin` after checking its hash against the shim kit. Run
 `activate-preload` again. This does not require reinstalling p1.
+
+On the reader, the three-segment configuration left the AXP209 marker
+at its initial value 0x70 and did not expose USB. The
+[single-segment build](https://github.com/BlackF1re/pb626-linux/actions/runs/45036145212)
+puts the same kernel and DTB inside the 8 MiB `pb626ax.bin`. The shim copies
+both to their FEL-tested addresses, and standalone U-Boot hands the DTB
+directly to the zImage using the ARM Linux boot protocol. Use
+`activate-shim` with the single-segment kit. To reclaim p2 space when
+switching from the three-segment test, restore the stock INI first, then
+remove only the verified duplicate `linux/pb626z.bin`. Marker 0x78
+records handoff and 0x79 records a failed or returning command.
+The single-segment image reached 0x78 after cold boot without a new
+ACM connection. The same kernel and DTB still booted p1 via FEL, with
+USB and a successful read/write probe. A subsequent build adds a small
+initramfs to record whether Linux reaches userspace and can mount p1
+before waiting for Alpine.
 
 ## Hardware-side plan (agent must execute carefully)
 
