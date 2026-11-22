@@ -12,10 +12,15 @@ evidence proves the new boot path.
 - Megi 7.2 + Alpine FEL bundle (successful):
   https://github.com/BlackF1re/pb626-linux/actions/runs/45002994505
   Artifact: `pb626-mainline-7.2-ram-bundle`.
+  SHA-256 of downloaded ZIP:
+  `b5c55c9979b45c9d89173eb5e670bb672a90fb99331155b1a7d23596edf8ddd2`.
 - Standalone AXF-to-U-Boot experiment:
-  https://github.com/BlackF1re/pb626-linux/actions/runs/45003183573
-  Expected artifact, **only after workflow success**:
-  `pb626-stock-axf-chainload-experiment`.
+  https://github.com/BlackF1re/pb626-linux/actions/runs/45003395855
+  Artifact: `pb626-stock-axf-chainload-experiment` (successful).
+  SHA-256 of downloaded ZIP:
+  `f2c5ce919692aab8ca9d5044c5afc73526dfcb84f6df68cf158958ccaabc09a5`.
+  The previous run 45003183573 failed during DTB property deletion and
+  MUST NOT be used.
 
 Build provenance MUST be checked again at handoff time (run conclusion,
 artifact checksum, source revision, matching kernel and DTB). A green CI
