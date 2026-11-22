@@ -49,7 +49,12 @@ jobs:
           sed -i '/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;/{N;s/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;\n[[:blank:]]*writel(rval, \&priv->reg->clkcr);/clrbits_le32(\&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);/;}' u-boot/drivers/mmc/sunxi_mmc.c
           grep -Fq 'clrbits_le32(&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);' u-boot/drivers/mmc/sunxi_mmc.c
           cp boot/pb626-uboot-linux.c u-boot/cmd/pb626_linux.c
-          printf '\nobj-y += pb626_linux.o\n' >> u-boot/cmd/Makefile
+          cat >> u-boot/cmd/Makefile <<'EOF'
+
+          ifndef CONFIG_SPL_BUILD
+          obj-y += pb626_linux.o
+          endif
+          EOF
           make -C u-boot pocketbook_touch_lux_3_defconfig
           sed -i -E '/^(# )?CONFIG_(SYS_TEXT_BASE|USE_BOOTCOMMAND|BOOTCOMMAND|CMD_I2C|ENV_IS_NOWHERE|ENV_IS_IN_MMC|ENV_IS_IN_FAT|ENV_IS_IN_SPI_FLASH)(=| is not set)/d' u-boot/.config
           cat >>u-boot/.config <<'EOF'
