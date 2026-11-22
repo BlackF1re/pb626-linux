@@ -5,6 +5,19 @@ PocketBook 626 Plus / Touch Lux 3 (Allwinner A13, ELAN revision) using RAM-only
 USB FEL boot.** This is an experimental Linux bring-up. RAM variants leave
 the factory eMMC untouched.
 
+## E Ink desktop in RAM
+
+Download `pb626-megi-eink-desktop` from the
+[Megi E Ink desktop workflow](.github/workflows/megi-desktop.yml) and run its
+`Start-PB626.ps1 -BundleDir <bundle> -Variant elan-display -Profile diagnostic`
+after entering cold FEL. Both MMC controllers are disabled in this image.
+Transfer the factory `default.wbf` for the reader to `/run/default.wbf`
+through the USB console, then start the session with `pb626-desktop`.
+Xorg and Matchbox provide a launcher, onscreen keyboard, XTerm, Midnight
+Commander, NEdit, XCalc and Htop. Close an application to return to the launcher.
+If touch input is absent, Left and Right move the onscreen pointer, Home changes
+the movement axis, and Menu clicks. The USB console stays available.
+
 ## Experimental installation to internal eMMC
 
 For the verified ELAN board with the factory Samsung 8WPD3R layout, save a

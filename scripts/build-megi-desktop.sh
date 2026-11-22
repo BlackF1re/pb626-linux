@@ -29,20 +29,21 @@ sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
 in_root() { sudo chroot desktop-root /usr/bin/qemu-arm-static "$@"; }
 in_root /sbin/apk add --no-cache \
   xf86-video-dummy xf86-input-evdev xinit xauth xset xsetroot xdotool libxtst \
-  libxfont2 pixman nettle libxcvt libxft libpng libjpeg-turbo libxcursor libxfixes libfakekey \
+  libxfont2 pixman nettle libxcvt libpciaccess libxft libpng libjpeg-turbo libxcursor libxfixes libfakekey \
   xkbcomp xkeyboard-config font-misc-misc font-cursor-misc font-liberation \
   xmessage xterm mc nedit xcalc htop
 in_root /sbin/apk add --no-cache --virtual .pb626-x-build \
   build-base autoconf automake libtool pkgconf libx11-dev libxext-dev libxft-dev \
   libxrender-dev libxcursor-dev libxfixes-dev libxtst-dev libpng-dev libjpeg-turbo-dev expat-dev libfakekey-dev \
-  meson xorgproto xtrans libxfont2-dev pixman-dev nettle-dev libxcvt-dev libxau-dev libxkbfile-dev
+  meson xorgproto xtrans libxfont2-dev pixman-dev nettle-dev libxcvt-dev libxau-dev libxkbfile-dev \
+  libpciaccess-dev
 in_root /bin/sh -e -c '
   cd "/tmp/$1"
   sed -i s/termio.h/termios.h/ hw/xfree86/os-support/xf86_OSlib.h
-  meson setup build --prefix=/usr --libdir=lib --buildtype=release --strip \
+  CFLAGS=-Wno-error=array-bounds meson setup build --prefix=/usr --libdir=lib --buildtype=release --strip \
     -Dxorg=true -Dxvfb=false -Dxnest=false -Dxwin=false -Dxquartz=false \
     -Dglx=false -Dglamor=false -Ddrm=false -Ddri1=false -Ddri2=false -Ddri3=false \
-    -Dpciaccess=false -Dint10=false -Dvgahw=false -Dudev=false -Dudev_kms=false \
+    -Dint10=false -Dvgahw=false -Dudev=false -Dudev_kms=false \
     -Dsystemd_logind=false -Dhal=false \
     -Dxdmcp=false -Dxdm-auth-1=false -Dsecure-rpc=false -Ddocs=false -Ddevel-docs=false \
     -Dxkb_dir=/usr/share/X11/xkb -Dxkb_output_dir=/var/lib/xkb \
