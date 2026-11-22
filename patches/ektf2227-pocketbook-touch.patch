@@ -13,10 +13,10 @@ index 79c41f3..06dd4d9 100644
  obj-$(CONFIG_TOUCHSCREEN_EGALAX_SERIAL)	+= egalax_ts_serial.o
 diff --git a/drivers/input/touchscreen/ektf2227.c b/drivers/input/touchscreen/ektf2227.c
 new file mode 100644
-index 0000000..5ab0d5d
+index 0000000..132657c
 --- /dev/null
 +++ b/drivers/input/touchscreen/ektf2227.c
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,151 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/* ELAN eKTF2227, the eight-byte protocol used by PocketBook Touch Lux 3. */
 +#include <linux/delay.h>
@@ -89,6 +89,7 @@ index 0000000..5ab0d5d
 +static int ektf2227_probe(struct i2c_client *client)
 +{
 +	struct device *dev = &client->dev;
++	struct gpio_descs *mode;
 +	struct gpio_desc *reset;
 +	struct input_dev *input;
 +	u8 hello[EKTF2227_PACKET_SIZE];
@@ -96,6 +97,10 @@ index 0000000..5ab0d5d
 +
 +	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
 +		return -EOPNOTSUPP;
++
++	mode = devm_gpiod_get_array(dev, "mode", GPIOD_OUT_LOW);
++	if (IS_ERR(mode))
++		return dev_err_probe(dev, PTR_ERR(mode), "could not select the touch power path\n");
 +
 +	reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
 +	if (IS_ERR(reset))
@@ -114,8 +119,9 @@ index 0000000..5ab0d5d
 +	ret = ektf2227_read(client, hello, sizeof(hello));
 +	if (ret)
 +		return dev_err_probe(dev, ret, "could not read touch hello packet\n");
-+	if (memcmp(hello, "\x55\x55\x55\x55", 4))
-+		return dev_err_probe(dev, -EPROTO, "unexpected touch hello %8ph\n", hello);
++	/* The factory protocol also accepts an all-zero power-on packet. */
++	if (!memcmp(hello, "\x55\x55\x80\x80", 4))
++		return dev_err_probe(dev, -EPROTO, "touch controller is in recovery mode\n");
 +
 +	msleep(10);
 +	x = ektf2227_resolution(client, 0x60);

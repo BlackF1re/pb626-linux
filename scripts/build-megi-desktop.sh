@@ -20,13 +20,13 @@ build_userspace() {
   fetch_source libmatchbox 1.14 04b214a0d5cf8285e196d90bf2332626b12c74ef
   fetch_source matchbox-window-manager 1.2.3 ce8c1053270d960a7235ab5c3435f707541810a4
   fetch_source matchbox-keyboard 0.1.1 630d89068dc0a1e9199306d405cb32f892dfa4d3
-  sudo install -m 644 display/pb626-x11-epd.c desktop-root/tmp/
+  sudo install -m 644 display/{pb626-x11-epd.c,matchbox-keyboard-eink.patch} desktop-root/tmp/
   sudo install -m 755 /usr/bin/qemu-arm-static desktop-root/usr/bin/
   sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
 
   in_root() { sudo chroot desktop-root /usr/bin/qemu-arm-static "$@"; }
   in_root /sbin/apk add --no-cache \
-    xf86-video-dummy xf86-input-evdev xinit xauth xset xsetroot xdotool libxtst \
+    xf86-video-dummy xf86-input-evdev xinit xauth xset xsetroot xdotool libxtst libxdamage \
     libxfont2 pixman nettle libxcvt libpciaccess libxft libpng libjpeg-turbo libxcursor libxfixes libfakekey \
     xorg-server-common libxau libxdmcp libxshmfence libdrm eudev-libs \
     xkbcomp xkeyboard-config font-misc-misc font-cursor-misc font-liberation \
@@ -42,7 +42,8 @@ build_userspace() {
   sudo rm -f desktop-root/tmp/xorg-server-*.apk
   in_root /sbin/apk add --no-cache --virtual .pb626-x-build \
     build-base linux-headers autoconf automake libtool pkgconf libx11-dev libxext-dev libxft-dev \
-    libxrender-dev libxcursor-dev libxfixes-dev libxtst-dev libpng-dev libjpeg-turbo-dev expat-dev libfakekey-dev
+    libxrender-dev libxcursor-dev libxfixes-dev libxtst-dev libxdamage-dev \
+    libpng-dev libjpeg-turbo-dev expat-dev libfakekey-dev
   in_root /bin/sh -e -c '
   rm -f /usr/share/X11/xorg.conf.d/10-evdev.conf
   mkdir -p /var/lib/xkb
@@ -59,12 +60,13 @@ build_userspace() {
   make -j2
   make install
   cd /tmp/matchbox-keyboard
+  patch -p1 < /tmp/matchbox-keyboard-eink.patch
   autoreconf -fi
   ./configure --prefix=/usr
   make -j2
   make install
   cd /tmp
-  cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXtst
+  cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXtst -lXdamage
   strip /usr/bin/pb626-x11-epd /usr/bin/matchbox-window-manager /usr/bin/matchbox-keyboard
   '
   in_root /sbin/apk del .pb626-x-build
@@ -73,7 +75,8 @@ build_userspace() {
   in_root /usr/bin/Xorg -version
   sudo rm -rf desktop-root/tmp/libmatchbox \
     desktop-root/tmp/matchbox-window-manager desktop-root/tmp/matchbox-keyboard
-  sudo rm -f desktop-root/tmp/pb626-x11-epd.c desktop-root/usr/bin/qemu-arm-static
+  sudo rm -f desktop-root/tmp/{pb626-x11-epd.c,matchbox-keyboard-eink.patch} \
+    desktop-root/usr/bin/qemu-arm-static
   printf 'nameserver 1.1.1.1\n' | sudo tee desktop-root/etc/resolv.conf >/dev/null
 }
 
@@ -81,7 +84,11 @@ if [[ -n $previous ]]; then
   (cd "$previous" && sha256sum -c SHA256SUMS)
   mv desktop-root fel-root
   mkdir desktop-root
-  gzip -cd "$previous/pb626-megi-initramfs.cpio.gz" |
+  archive="$previous/pb626-desktop-root.cpio.gz"
+  if [[ ! -f $archive ]]; then
+    archive="$previous/pb626-megi-initramfs.cpio.gz"
+  fi
+  gzip -cd "$archive" |
     (cd desktop-root && sudo cpio -id --quiet --no-absolute-filenames)
   sudo rm -rf desktop-root/lib/modules
   sudo cp -a fel-root/lib/modules desktop-root/lib/
@@ -92,21 +99,19 @@ fi
 
 sudo install -m 755 display/pb626-desktop display/pb626-xsession desktop-root/usr/bin/
 sudo install -D -m 644 display/xorg.conf desktop-root/etc/pb626/xorg.conf
+sudo install -D -m 644 display/eink-fonts.conf desktop-root/etc/fonts/conf.d/99-pb626-eink.conf
 test -x desktop-root/usr/bin/pb626-epd
 # Leave at least 120 MiB for the kernel, display buffers and live applications.
 size=$(sudo du -sm desktop-root | cut -f1)
 echo "Unpacked desktop: $size MiB"
 test "$size" -le 130
 (cd desktop-root && sudo find . -print0 | sudo cpio --null -o -H newc --quiet) |
-  gzip -3 > dist/pb626-megi-initramfs.cpio.gz
+  gzip -3 > dist/pb626-desktop-root.cpio.gz
 
-cp "$bundle"/{pb626-megi-zImage,pb626-elan-display.dtb,KERNELRELEASE} dist/
-cp scripts/{Start-PB626.ps1,fel-boot.sh} dist/
+cp "$bundle"/{pb626-megi-initramfs.cpio.gz,pb626-megi-zImage,pb626-elan-display.dtb,KERNELRELEASE} dist/
+cp scripts/{Start-PB626.ps1,Start-PB626Desktop.ps1,fel-boot.sh} dist/
 dtb=dist/pb626-elan-display.dtb
 for mmc in 1c0f000 1c11000; do
   test "$(fdtget -t s "$dtb" "/soc/mmc@$mmc" status)" = disabled
 done
-initrd_end=$((0x45000000 + $(stat -c %s dist/pb626-megi-initramfs.cpio.gz)))
-test "$initrd_end" -lt $((0x50000000))
-fdtput -t x "$dtb" /chosen linux,initrd-end "$(printf '%x' "$initrd_end")"
 (cd dist && sha256sum pb626-* KERNELRELEASE > SHA256SUMS)

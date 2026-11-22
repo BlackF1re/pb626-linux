@@ -2,6 +2,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/Xatom.h>
+#include <X11/keysym.h>
+#include <X11/extensions/Xdamage.h>
 #include <X11/extensions/XTest.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -10,22 +13,83 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
-enum { WIDTH = 758, HEIGHT = 1024, PIXELS = WIDTH * HEIGHT, FULL_INTERVAL = 24 };
+enum { WIDTH = 758, HEIGHT = 1024, PIXELS = WIDTH * HEIGHT, FULL_INTERVAL = 16 };
+enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 
-static void move_pointer(Display *display, int fd, int *vertical)
+static void keyboard_command(Display *display, Window root, Atom command, long operation)
 {
+	XEvent event = { .xclient = {
+		.type = ClientMessage, .window = root, .message_type = command,
+		.format = 32, .data.l = { operation },
+	} };
+	XSendEvent(display, root, False, SubstructureNotifyMask, &event);
+}
+
+static void keyboard_focus(Display *display, Window root, Atom active, Atom command,
+			   Window *previous)
+{
+	Atom type;
+	int format;
+	unsigned long count, after;
+	unsigned char *value = NULL;
+	if (XGetWindowProperty(display, root, active, 0, 1, False, XA_WINDOW,
+			       &type, &format, &count, &after, &value) != Success)
+		return;
+	Window window = count && type == XA_WINDOW ? *(Window *)value : None;
+	if (value)
+		XFree(value);
+	if (window == *previous)
+		return;
+	*previous = window;
+
+	XClassHint hint = { 0 };
+	if (window != None)
+		XGetClassHint(display, window, &hint);
+	const char *class = hint.res_class ? hint.res_class : "";
+	int typing = !strcasecmp(class, "XTerm") || !strcasecmp(class, "NEdit");
+	if (hint.res_name && !strcmp(hint.res_name, "pb626-monitor"))
+		typing = 0;
+	keyboard_command(display, root, command, typing ? KEYBOARD_SHOW : KEYBOARD_HIDE);
+	if (hint.res_name)
+		XFree(hint.res_name);
+	if (hint.res_class)
+		XFree(hint.res_class);
+}
+
+static int handle_x_error(Display *display, XErrorEvent *event)
+{
+	if (event->error_code != BadWindow) {
+		char message[128];
+		XGetErrorText(display, event->error_code, message, sizeof(message));
+		fprintf(stderr, "pb626-x11-epd: %s\n", message);
+	}
+	return 0;
+}
+
+static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
+			  int fallback, int *vertical)
+{
+	int changed = 0;
 	struct input_event event;
 	while (read(fd, &event, sizeof(event)) == (ssize_t)sizeof(event)) {
 		if (event.type != EV_KEY || !event.value)
 			continue;
+		if (!fallback) {
+			if (event.code == KEY_HOME && event.value == 1)
+				keyboard_command(display, root, keyboard, KEYBOARD_TOGGLE);
+			continue;
+		}
 		switch (event.code) {
 		case KEY_HOME:
-			if (event.value == 1)
+			if (event.value == 1) {
 				*vertical = !*vertical;
+				changed = 1;
+			}
 			break;
 		case KEY_MENU:
 			if (event.value == 1) {
@@ -40,10 +104,12 @@ static void move_pointer(Display *display, int fd, int *vertical)
 				step = -step;
 			XTestFakeRelativeMotionEvent(display, *vertical ? 0 : step,
 						     *vertical ? step : 0, CurrentTime);
+			changed = 1;
 			break;
 		}
 		}
 	}
+	return changed;
 }
 
 static void draw_pointer(Display *display, Window root, int offset, int vertical,
@@ -98,7 +164,12 @@ static void capture(const XImage *image, uint8_t *frame)
 				g = channel(pixel, image->green_mask);
 				b = channel(pixel, image->blue_mask);
 			}
-			frame[y * WIDTH + x] = ((77 * r + 150 * g + 29 * b) * 15 + 32640) / 65280;
+			/* Keep thin antialiased strokes and colored labels against paper white. */
+			unsigned int low = r < g ? r : g;
+			if (b < low)
+				low = b;
+			frame[y * WIDTH + x] = 57 * r + 112 * g + 23 * b + 64 * low >=
+					      180 * 256 ? 15 : 0;
 		}
 	}
 }
@@ -148,6 +219,17 @@ int main(int argc, char **argv)
 	}
 
 	Window root = RootWindow(display, screen);
+	XSetErrorHandler(handle_x_error);
+	Atom active = XInternAtom(display, "_NET_ACTIVE_WINDOW", False);
+	Atom keyboard = XInternAtom(display, "_MB_IM_INVOKER_COMMAND", False);
+	KeyCode toggle = XKeysymToKeycode(display, XK_F12);
+	if (toggle)
+		XGrabKey(display, toggle, AnyModifier, root, False, GrabModeAsync, GrabModeAsync);
+	int damage_event, damage_error;
+	Damage damage = XDamageQueryExtension(display, &damage_event, &damage_error) ?
+			XDamageCreate(display, root, XDamageReportNonEmpty) : None;
+	Window previous_window = None;
+	int fallback = getenv("PB626_POINTER_FALLBACK") != NULL;
 	int buttons[2], button_count = 0, vertical = 0;
 	const char *devices = getenv("PB626_BUTTON_DEVICES");
 	char *paths = devices ? strdup(devices) : NULL;
@@ -161,15 +243,33 @@ int main(int argc, char **argv)
 	static uint8_t frame[PIXELS], previous[PIXELS];
 	unsigned int partials = FULL_INTERVAL;
 	unsigned int failures = 0;
+	int dirty = 1;
+	const struct timespec interval = { .tv_nsec = 250000000L };
 	for (;;) {
+		keyboard_focus(display, root, active, keyboard, &previous_window);
+		XEvent event;
+		while (XPending(display)) {
+			XNextEvent(display, &event);
+			if (damage && event.type == damage_event + XDamageNotify)
+				dirty = 1;
+			else if (event.type == KeyPress && event.xkey.keycode == toggle)
+				keyboard_command(display, root, keyboard, KEYBOARD_TOGGLE);
+		}
 		for (int i = 0; i < button_count; i++)
-			move_pointer(display, buttons[i], &vertical);
+			dirty |= handle_buttons(display, root, keyboard, buttons[i], fallback, &vertical);
+		if (damage && !dirty) {
+			nanosleep(&interval, NULL);
+			continue;
+		}
+		if (damage)
+			XDamageSubtract(display, damage, None, None);
+		dirty = 0;
 		XImage *image = XGetImage(display, root, 0, 0, width, HEIGHT, AllPlanes, ZPixmap);
 		if (!image)
 			return EXIT_FAILURE;
 		capture(image, frame);
 		XDestroyImage(image);
-		if (devices)
+		if (fallback)
 			draw_pointer(display, root, (width - WIDTH) / 2, vertical, frame);
 
 		if (partials == FULL_INTERVAL || memcmp(frame, previous, PIXELS)) {
@@ -180,6 +280,7 @@ int main(int argc, char **argv)
 					return EXIT_FAILURE;
 				}
 				partials = FULL_INTERVAL;
+				dirty = 1;
 				sleep(1);
 			} else {
 				failures = 0;
@@ -187,7 +288,6 @@ int main(int argc, char **argv)
 				partials = partials == FULL_INTERVAL ? 0 : partials + 1;
 			}
 		}
-		const struct timespec interval = { .tv_nsec = 250000000L };
 		nanosleep(&interval, NULL);
 	}
 }

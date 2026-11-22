@@ -53,8 +53,9 @@ fi
 echo 'EndSection' >>"$work/xorg.conf"
 
 export XAUTHORITY="$work/Xauthority"
+export PB626_BUTTON_DEVICES="$button_devices"
 if [ "$touch" = no ]; then
-    export PB626_BUTTON_DEVICES="$button_devices"
+    export PB626_POINTER_FALLBACK=1
     echo 'Touch unavailable. Left/Right move the pointer, Home changes axis, Menu clicks.'
 fi
 touch "$XAUTHORITY"

@@ -1,0 +1,11 @@
+Fit Matchbox Keyboard to a portrait E Ink screen.
+
+--- a/src/matchbox-keyboard-ui.c
++++ b/src/matchbox-keyboard-ui.c
+@@ -809,0 +810 @@
++	      mb_kbd_ui_resize(ui, ui->dpy_width, ui->dpy_height / 3);
+--- a/src/matchbox-keyboard-ui-xft-backend.c
++++ b/src/matchbox-keyboard-ui-xft-backend.c
+@@ -346 +346 @@
+-  alloc_color(ui, &xft_backend->xcol_c5c5c5, "#c5c5c5");
++  alloc_color(ui, &xft_backend->xcol_c5c5c5, "#000000");

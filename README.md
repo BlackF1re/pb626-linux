@@ -11,10 +11,14 @@ Download `pb626-megi-eink-desktop` from the
 [Megi E Ink desktop workflow](.github/workflows/megi-desktop.yml) and run its
 `Start-PB626.ps1 -BundleDir <bundle> -Variant elan-display -Profile diagnostic`
 after entering cold FEL. Both MMC controllers are disabled in this image.
-Transfer the factory `default.wbf` for the reader to `/run/default.wbf`
-through the USB console, then start the session with `pb626-desktop`.
+Once the USB console appears, run
+`Start-PB626Desktop.ps1 -BundleDir <bundle> -Port COM12 -Waveform <default.wbf>`
+in PowerShell 7.4, with the console port available. The script verifies and
+transfers the desktop into RAM. Supply the factory waveform for the reader.
 Xorg and Matchbox provide a launcher, onscreen keyboard, XTerm, Midnight
 Commander, NEdit, XCalc and Htop. Close an application to return to the launcher.
+The keyboard opens for terminal and editor windows and can be toggled with F12
+or Home when touch input is available.
 If touch input is absent, Left and Right move the onscreen pointer, Home changes
 the movement axis, and Menu clicks. The USB console stays available.
 
