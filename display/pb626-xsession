@@ -1,5 +1,9 @@
 #!/bin/sh
 set -eu
+# Make HarfBuzz symbols available to FreeType's auto-hinter on musl.
+if [ -r /usr/lib/libharfbuzz.so.0 ]; then
+    export LD_PRELOAD="/usr/lib/libharfbuzz.so.0${LD_PRELOAD:+:$LD_PRELOAD}"
+fi
 xset s off
 xsetroot -solid white
 matchbox-window-manager -use_titlebar yes &
