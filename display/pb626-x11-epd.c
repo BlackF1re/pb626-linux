@@ -27,7 +27,8 @@
 
 #include "pb626-epd.h"
 
-enum { MENU_HOLD_US = 1000000, QUIET_US = 180000, MAX_PENDING_US = 850000,
+enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 180000, QUIET_US = 300000,
+       MAX_PENDING_US = 850000,
        CLEAN_QUIET_US = 1200000, CLEAN_AFTER = 8, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 
@@ -668,7 +669,7 @@ int main(int argc, char **argv)
 		uint64_t now = now_us();
 		if (controls.keyboard_changed) {
 			XFlush(display);
-			layout_until = now + QUIET_US;
+			layout_until = now + LAYOUT_QUIET_US;
 			controls.keyboard_changed = 0;
 		}
 		if (pointer_changed) {
@@ -764,8 +765,8 @@ int main(int argc, char **argv)
 			has_frame = 1;
 			failures = 0;
 			controls.clean_requested = 0;
-			if (command == CLEAN || command == SETTLE)
-				pending_since = now_us();
+			/* Bound gray-only starvation from the last visible progress. */
+			pending_since = now_us();
 		}
 		if (profile && (captured || changes))
 			fprintf(stderr, "x11-epd: mode=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu ipc_update_us=%llu total_us=%llu\n",

@@ -36,6 +36,7 @@ int main(void)
 	}
 	assert(fast_changes[pixel] == CLEAN_AFTER && cleanup_pixels[ty][tx] == 1);
 	assert(automatic_command(100000, 0, 1, 1, 1) == PREVIEW);
+	assert(automatic_command(200000, 0, 0, 1, 1) == 0);
 	assert(automatic_command(QUIET_US, 0, 0, 1, 1) == SETTLE);
 	assert(automatic_command(CLEAN_QUIET_US - 1, 0, 0, 0, 1) == 0);
 	assert(automatic_command(CLEAN_QUIET_US, 1, 0, 0, 1) == 0);
