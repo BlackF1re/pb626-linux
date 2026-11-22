@@ -1,9 +1,17 @@
-Fit Matchbox Keyboard to a portrait E Ink screen.
+Fit Matchbox Keyboard to a portrait E Ink screen and accept WM geometry.
 
 --- a/src/matchbox-keyboard-ui.c
 +++ b/src/matchbox-keyboard-ui.c
 @@ -809,0 +810 @@
 +	      mb_kbd_ui_resize(ui, ui->dpy_width, ui->dpy_height / 3);
+@@ -1035 +1036,6 @@
+-  XResizeWindow(ui->xdpy, ui->xwin, width, height);
++  /* Before creating the backbuffer we choose the initial window size.
++   * Later ConfigureNotify events already report the WM's decision, so
++   * resize only the layout and backbuffer in response to them.
++   */
++  if (!ui->backbuffer)
++    XResizeWindow(ui->xdpy, ui->xwin, width, height);
 --- a/src/matchbox-keyboard-ui-xft-backend.c
 +++ b/src/matchbox-keyboard-ui-xft-backend.c
 @@ -346 +346 @@
