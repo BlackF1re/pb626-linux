@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+
+waveform=${1:-/run/default.wbf}
+if [ ! -s "$waveform" ] ||
+   [ ! -f /proc/device-tree/chosen/pb626,display-bringup ]; then
+    echo 'Boot the ELAN display image and supply its factory waveform.' >&2
+    exit 1
+fi
+waveform=$(realpath "$waveform")
+umask 077
+work=/run/pb626-desktop
+mkdir "$work"
+trap 'rm -f "$work"/Xauthority "$work"/xorg.conf "$work"/frame.pgm "$work"/layout; rmdir "$work"' EXIT
+trap 'exit 1' HUP INT TERM
+
+count=0
+for event in /sys/class/input/event*; do
+    [ -r "$event/device/name" ] || continue
+    name=$(cat "$event/device/name")
+    case "$name" in
+        *[Ee][Ll][Aa][Nn]*)
+            role=CorePointer
+            # ELAN coordinates follow the panel's native 1024x758 axes.
+            options='Option "TransformationMatrix" "0 -1 1 1 0 0 0 0 1"'
+            ;;
+        'GPIO Keys'|*.lradc)
+            role=SendCoreEvents
+            options=
+            ;;
+        *) continue ;;
+    esac
+    count=$((count + 1))
+    cat >>"$work/xorg.conf" <<EOF
+Section "InputDevice"
+    Identifier "input$count"
+    Driver "evdev"
+    Option "Device" "/dev/input/${event##*/}"
+    $options
+EndSection
+EOF
+    printf '    InputDevice "input%s" "%s"\n' "$count" "$role" >>"$work/layout"
+done
+cat /etc/pb626/xorg.conf >>"$work/xorg.conf"
+printf 'Section "ServerLayout"\n    Identifier "PocketBook"\n    Screen "PocketBook"\n' >>"$work/xorg.conf"
+if [ -f "$work/layout" ]; then
+    cat "$work/layout" >>"$work/xorg.conf"
+    rm "$work/layout"
+fi
+echo 'EndSection' >>"$work/xorg.conf"
+
+export XAUTHORITY="$work/Xauthority"
+touch "$XAUTHORITY"
+cookie=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+xauth add :0 MIT-MAGIC-COOKIE-1 "$cookie"
+xinit /usr/bin/pb626-xsession "$waveform" "$work/frame.pgm" -- \
+    /usr/bin/Xorg :0 vt2 -nolisten tcp -nocursor -auth "$XAUTHORITY" \
+    -config "$work/xorg.conf" -logfile /run/pb626-xorg.log

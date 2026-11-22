@@ -1,0 +1,47 @@
+name: Megi E Ink desktop RAM image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/megi-desktop.yml'
+      - 'display/pb626-desktop'
+      - 'display/pb626-xsession'
+      - 'display/pb626-x11-epd.c'
+      - 'display/xorg.conf'
+      - 'scripts/build-megi-desktop.sh'
+      - 'scripts/fel-boot.sh'
+      - 'scripts/Start-PB626.ps1'
+  workflow_dispatch:
+    inputs:
+      kernel_run_id:
+        description: Successful Megi 7.2 FEL bundle workflow run
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-mainline-7.2-ram-bundle
+          run-id: ${{ inputs.kernel_run_id || '45002994505' }}
+          github-token: ${{ github.token }}
+          path: fel-bundle
+      - name: Install ARM emulator and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static cpio device-tree-compiler
+      - name: Build Alpine Xorg and Matchbox desktop
+        run: bash scripts/build-megi-desktop.sh fel-bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-megi-eink-desktop
+          path: dist/
+          if-no-files-found: error
