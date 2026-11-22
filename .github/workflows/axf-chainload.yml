@@ -68,6 +68,9 @@ jobs:
           cp u-boot/u-boot.bin dist/linux/u-boot.bin
           test -s dist/linux/u-boot.bin
           test "$(stat -c %s dist/linux/u-boot.bin)" -le $((0x80000))
+          # boot.axf requests exactly this segment size; zero-pad the file.
+          truncate -s $((0x80000)) dist/linux/u-boot.bin
+          test "$(stat -c %s dist/linux/u-boot.bin)" -eq $((0x80000))
       - name: Prepare separate Linux payloads for FAT p2
         run: |
           set -euo pipefail
@@ -81,7 +84,11 @@ jobs:
           fdtget native.dtb /chosen pb626,emmc-root >/dev/null
           fdtget native.dtb /chosen pb626,display-bringup >/dev/null
           # There is NO initramfs in this experiment.
-          fdtput -d native.dtb /chosen linux,initrd-start linux,initrd-end
+          for property in linux,initrd-start linux,initrd-end; do
+            if fdtget native.dtb /chosen "$property" >/dev/null 2>&1; then
+              fdtput -d native.dtb /chosen "$property"
+            fi
+          done
           fdtput -t s native.dtb /chosen bootargs \
             'console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rootwait rw init=/sbin/pb626-emmc-init'
           dtc -q -I dtb -O dtb -p 4096 -o dist/linux/pb626.dtb native.dtb
