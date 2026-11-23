@@ -61,7 +61,7 @@ static void test_indexed_scan(void)
 {
     static struct renderer renderer;
     static uint32_t direct[FRAME_WORDS];
-    static uint8_t indexed[SUN5I_EINK_HDR_SIZE + CLOCKS * ROWS];
+    _Alignas(uint32_t) static uint8_t indexed[SUN5I_EINK_HDR_SIZE + CLOCKS * ROWS];
     struct buffer full = { .data = direct };
     struct buffer small = { .data = (uint32_t *)indexed };
     struct phase phase = { .lut = { [0x0f] = 1, [0xf0] = 2,
