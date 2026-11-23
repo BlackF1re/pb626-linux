@@ -127,12 +127,33 @@ static void test_waveform_policy(void)
 	assert(renderer.planned.phases[2].lut[0x8f] == 1);
 }
 
+static void test_fast_mode_selection(void)
+{
+	static struct renderer renderer;
+	bool active[TRANSITIONS] = { [0xf0] = true };
+	renderer.auto_fast = true;
+	renderer.driven[A2][0xf0] = true;
+	renderer.driven[DU][0xf0] = true;
+	renderer.cache[A2].count = 10;
+	renderer.cache[DU].count = 15;
+	assert(select_a2_or_du(&renderer, active) == A2);
+	renderer.cache[DU].count = 10;
+	assert(select_a2_or_du(&renderer, active) == DU);
+	renderer.cache[DU].count = 9;
+	assert(select_a2_or_du(&renderer, active) == DU);
+	renderer.auto_fast = false;
+	assert(select_a2_or_du(&renderer, active) == A2);
+	renderer.driven[A2][0xf0] = false;
+	assert(select_a2_or_du(&renderer, active) == DU);
+}
+
 int main(void)
 {
 	test_quantization();
 	test_sparse_scan();
 	test_render_equivalence();
 	test_waveform_policy();
+	test_fast_mode_selection();
     assert(PREVIEW_A2 != PREVIEW && PREVIEW_DU4 != PREVIEW);
     assert(preview_level4(4) == 5 && preview_level4(8) == 10);
     assert(preview_level4(14) == WHITE);

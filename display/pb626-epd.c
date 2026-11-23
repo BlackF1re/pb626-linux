@@ -633,12 +633,17 @@ static void refresh(struct renderer *renderer, enum mode mode)
 	}
 }
 
-static unsigned int scan_count(const struct update *update)
+static enum mode select_a2_or_du(const struct renderer *renderer,
+				const bool *active)
 {
-	unsigned int scans = 0;
-	for (unsigned int i = 0; i < update->count; i++)
-		scans += update->phases[i].scans;
-	return scans;
+	if (!supports(renderer, A2, active))
+		return DU;
+	/* Decoding yields one LUT per physical scan. Only the subsequent plan
+	 * combines identical LUTs and assigns their repeat counts. */
+	if (renderer->auto_fast && supports(renderer, DU, active) &&
+	    renderer->cache[DU].count <= renderer->cache[A2].count)
+		return DU;
+	return A2;
 }
 
 static void invalidate(void)
@@ -716,10 +721,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 		cache_mode(renderer, mode);
 		if (fallback && mode == A2) {
 			cache_mode(renderer, DU);
-			if (!supports(renderer, A2, active) ||
-			    (renderer->auto_fast && supports(renderer, DU, active) &&
-			     scan_count(&renderer->cache[DU]) <= scan_count(&renderer->cache[A2])))
-				mode = DU;
+			mode = select_a2_or_du(renderer, active);
 		}
 		if (fallback && mode == DU4 && !supports(renderer, mode, active)) {
 			mode = GL16;
