@@ -6,6 +6,9 @@ on:
     paths:
       - .github/workflows/userland.yml
       - docs/USERLAND.md
+  pull_request:
+    paths:
+      - '.github/workflows/userland.yml'
   workflow_dispatch:
 
 permissions:

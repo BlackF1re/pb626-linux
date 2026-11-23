@@ -39,6 +39,8 @@ jobs:
           bash -n scripts/fel-boot.sh
           bash -n scripts/configure-megi-kernel.sh
           bash -n scripts/build-alpine-rootfs.sh
+          bash -n scripts/build-megi-desktop.sh
+          bash -n scripts/build-megi-variants.sh
           bash -n scripts/assemble-megi-ram.sh
           test -s board/megi/wifi-test.conf
           grep -Fqx '    ssid="ACCESS_POINT"' board/megi/wifi-test.conf
