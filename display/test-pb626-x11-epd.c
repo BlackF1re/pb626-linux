@@ -5,8 +5,44 @@
 
 #include <assert.h>
 
+static void test_gray(void)
+{
+	setup_gray(GRAY_BALANCED, 0, 1.0);
+	assert(gray_value(255, 0, 0) == 127);
+	assert(gray_value(0, 255, 0) == 220);
+	assert(gray_value(0, 0, 255) == 76);
+	for (unsigned int v = 0; v < 256; v++)
+		assert(gray_value(v, v, v) == v);
+	assert(gray_value(255, 255, 254) == 255);
+	setup_gray(GRAY_UI, 0, 1.0);
+	assert(quantize(127, 0, 0, 0) == 7 && quantize(127, 0, 1, 0) == 7);
+	setup_gray(GRAY_PHOTO, 0, 1.0);
+	int count = 0;
+	for (int y = 0; y < 16; y++)
+		for (int x = 0; x < 16; x++) {
+			for (unsigned int level = 0; level <= WHITE; level++)
+				assert(quantize(level * 17, 0, x, y) == level);
+			uint8_t level = quantize(127, 0, x, y);
+			assert(level == 7 || level == 8);
+			assert(level == quantize(127, 0, x + 16, y + 16));
+			assert(quantize(127, 48, x, y) == 7);
+			count += level == 8;
+		}
+	assert(count == 120);
+	setup_gray(GRAY_PHOTO, 1, 1.0);
+	assert(gray_value(0, 0, 255) == 82);
+	assert(gray_value(0, 0, 0) == 0 && gray_value(255, 255, 255) == 255);
+	setup_gray(GRAY_UI, 0, 1.2);
+	assert(gray_value(128, 128, 128) > 128);
+	setup_gray(GRAY_LEGACY, 0, 1.0);
+	assert(gray_value(255, 0, 0) == 56);
+	assert(quantize(127, 0, 0, 0) == paper_level(127, 0, 0, 0));
+	puts("E Ink grayscale profiles, neutral tones and stable dithering passed");
+}
+
 int main(void)
 {
+	test_gray();
 	static struct shared_frame frame;
 	static uint8_t desired[PIXELS], panel[PIXELS];
 	const size_t pixel = 100 * WIDTH + 50;

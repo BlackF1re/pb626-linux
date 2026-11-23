@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include <math.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -221,7 +222,89 @@ static unsigned int channel(unsigned long pixel, unsigned long mask)
 	return ((pixel & mask) >> shift) * 255 / (mask >> shift);
 }
 
+enum gray_profile { GRAY_BALANCED, GRAY_UI, GRAY_PHOTO, GRAY_LEGACY };
+enum { LUMA_STEPS = 4096 };
+static enum gray_profile gray_profile;
+static uint16_t linear_r[256], linear_g[256], linear_b[256];
+static uint8_t gray_tone[256], luma_tone[LUMA_STEPS];
 static uint8_t dirty_tiles[TILE_ROWS][TILE_COLS];
+
+static double srgb_decode(double v)
+{
+	return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4);
+}
+
+static double gray_encode(double y, int lightness)
+{
+	if (lightness)
+		return y <= 216.0 / 24389 ? y * (24389.0 / 2700) : (116 * cbrt(y) - 16) / 100;
+	return y <= 0.0031308 ? y * 12.92 : 1.055 * pow(y, 1 / 2.4) - 0.055;
+}
+
+static void setup_gray(enum gray_profile selected, int lightness, double gamma)
+{
+	gray_profile = selected;
+	if (selected == GRAY_LEGACY)
+		return;
+	for (int i = 0; i < 256; i++) {
+		double v = i / 255.0, y = srgb_decode(v);
+		double scaled = y * ((LUMA_STEPS - 1) * 16);
+		linear_r[i] = scaled * 0.2126 + 0.5;
+		linear_g[i] = scaled * 0.7152 + 0.5;
+		linear_b[i] = scaled * 0.0722 + 0.5;
+		gray_tone[i] = 255 * pow(lightness ? gray_encode(y, 1) : v, 1 / gamma) + 0.5;
+	}
+	for (int i = 0; i < LUMA_STEPS; i++)
+		luma_tone[i] = 255 * pow(gray_encode(i / (LUMA_STEPS - 1.0), lightness),
+					       1 / gamma) + 0.5;
+}
+
+static inline uint8_t gray_value(unsigned int r, unsigned int g, unsigned int b)
+{
+	if (gray_profile == GRAY_LEGACY) {
+		unsigned int low = r < g ? r : g;
+		if (b < low)
+			low = b;
+		return (57 * r + 112 * g + 23 * b + 64 * low) >> 8;
+	}
+	if (r == g && g == b)
+		return gray_tone[r];
+	return luma_tone[(linear_r[r] + linear_g[g] + linear_b[b] + 8) >> 4];
+}
+
+/* A toroidal void-and-cluster rank mask (Gaussian sigma 1.5). Keep the
+ * phase fixed in panel coordinates so separate XDamage grabs agree.
+ */
+static const uint8_t blue_noise[16][16] = {
+	{ 172,  74, 194,  93, 171, 238, 185,  95, 249, 117, 203, 243,  33, 218,  84,  21 },
+	{ 130,   9, 225,  53, 131,  72,  22, 139,  44, 157,  61,  91, 168, 190,  48, 253 },
+	{  96, 184, 114, 153,   1, 212, 161, 231,  85,  10, 226, 135,   0, 107, 146, 202 },
+	{ 228,  42,  69, 244, 187, 104,  40, 120, 192, 174, 113, 197,  43, 235,  65,  25 },
+	{  82, 165, 206,  26, 143,  78, 254,  62, 217,  32,  58, 250,  87, 179, 122, 150 },
+	{ 241,   7, 123,  98,  50, 199, 167,  13, 148,  81, 133,  20, 154, 211,  17, 195 },
+	{  57, 138, 221, 182, 233,  24, 126, 227, 103, 205, 169, 223,  64, 100,  41, 109 },
+	{ 159,  90,  34,  70, 115, 152,  86,  56, 186,   3, 119,  37, 145, 245, 173, 219 },
+	{  14, 252, 170, 201,   5, 242, 178,  31, 248,  73, 234, 181,  80,   8, 128,  75 },
+	{ 209, 121,  52, 142, 102,  60, 210, 136, 112, 155,  47,  97, 196, 230,  54, 188 },
+	{  38,  94, 229,  27, 220, 164,  15,  92, 200,  19, 214, 125,  30, 156, 101, 144 },
+	{ 183,  67, 158, 193,  77, 127,  46, 232,  63, 175, 141, 255,  66, 215,  23, 246 },
+	{   2, 239, 132,  11, 105, 251, 189, 149, 108,  39,  83,   6, 111, 177,  79, 118 },
+	{ 166,  89,  49, 213, 176,  35,  88,   4, 216, 240, 191, 160, 208,  45, 137, 224 },
+	{  36, 204, 116, 151,  68, 222, 134, 163,  76, 129,  55,  99, 237,  12, 198,  59 },
+	{ 236, 140,  29, 247,  16, 110,  51, 207,  28, 180,  18, 147,  71, 124, 162, 106 },
+};
+
+static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x, int y)
+{
+	if (gray_profile == GRAY_UI)
+		return (value * WHITE + 127) / 255;
+	if (gray_profile == GRAY_PHOTO && contrast < 48) {
+		unsigned int threshold = blue_noise[y & 15][x & 15];
+		/* Use the 256 rank midpoints; even rank 255 is below one full step. */
+		return (value * WHITE * 256 + threshold * 255 + 127) / (255 * 256);
+	}
+	return paper_level(value, contrast, x, y);
+}
 
 static int shm_attach_error;
 
@@ -291,8 +374,10 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 		   XShmSegmentInfo *shm)
 {
 	static uint8_t lightness[PIXELS];
-	struct rect area = clipped(dirty, 1);
-	struct rect read_area = clipped(area, 1);
+	int uses_contrast = gray_profile != GRAY_UI;
+	int draw_pointer = nonempty(pointer);
+	struct rect area = clipped(dirty, uses_contrast);
+	struct rect read_area = clipped(area, uses_contrast);
 	uint64_t start = now_us();
 	XImage *image = read_image(display, root, read_area.left + offset, read_area.top,
 				  read_area.right - read_area.left, read_area.bottom - read_area.top,
@@ -321,10 +406,7 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 				g = channel(pixel, image->green_mask);
 				b = channel(pixel, image->blue_mask);
 			}
-			unsigned int low = r < g ? r : g;
-			if (b < low)
-				low = b;
-			lightness[y * WIDTH + x] = (57 * r + 112 * g + 23 * b + 64 * low) >> 8;
+			lightness[y * WIDTH + x] = gray_value(r, g, b);
 		}
 	}
 	XDestroyImage(image);
@@ -335,18 +417,20 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 			uint8_t next = value / 17;
 			/* Exact levels are independent of the contrast and dither thresholds. */
 			if (value != 17u * next) {
-				unsigned int lx = x > 0 ? pixel[-1] : value;
-				unsigned int rx = x + 1 < WIDTH ? pixel[1] : value;
-				unsigned int ty = y > 0 ? pixel[-WIDTH] : value;
-				unsigned int by = y + 1 < HEIGHT ? pixel[WIDTH] : value;
-				unsigned int contrast = abs((int)value - (int)lx) +
-						abs((int)value - (int)rx) +
-						abs((int)value - (int)ty) +
-						abs((int)value - (int)by);
-				next = paper_level(value, contrast, x, y);
+				unsigned int contrast = 0;
+				if (uses_contrast) {
+					unsigned int lx = x > 0 ? pixel[-1] : value;
+					unsigned int rx = x + 1 < WIDTH ? pixel[1] : value;
+					unsigned int ty = y > 0 ? pixel[-WIDTH] : value;
+					unsigned int by = y + 1 < HEIGHT ? pixel[WIDTH] : value;
+					contrast = abs((int)value - (int)lx) + abs((int)value - (int)rx) +
+						   abs((int)value - (int)ty) + abs((int)value - (int)by);
+				}
+				next = quantize(value, contrast, x, y);
 			}
 			uint8_t *output = frame + y * WIDTH + x;
-			next = pointer_level(pointer, vertical, x, y, next);
+			if (draw_pointer)
+				next = pointer_level(pointer, vertical, x, y, next);
 			if (*output != next) {
 				stats->changed++;
 				dirty_tiles[y / TILE][x / TILE] = 1;
@@ -627,6 +711,35 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Usage: pb626-x11-epd DEFAULT.WBF READY\n");
 		return EXIT_FAILURE;
 	}
+	static const char *const profiles[] = {"balanced", "ui", "photo", "legacy"};
+	const char *gray = getenv("PB626_EPD_GRAY_PROFILE");
+	enum gray_profile selected = GRAY_BALANCED;
+	if (gray) {
+		for (; selected < sizeof(profiles) / sizeof(profiles[0]); selected++)
+			if (!strcmp(gray, profiles[selected]))
+				break;
+		if (selected == sizeof(profiles) / sizeof(profiles[0])) {
+			fprintf(stderr, "pb626-x11-epd: unknown gray profile %s\n", gray);
+			return EXIT_FAILURE;
+		}
+	}
+	const char *tone = getenv("PB626_EPD_TONE");
+	int lightness = tone && !strcmp(tone, "cie-lstar");
+	if (tone && !lightness && strcmp(tone, "srgb")) {
+		fprintf(stderr, "pb626-x11-epd: unknown tone %s\n", tone);
+		return EXIT_FAILURE;
+	}
+	const char *gamma_arg = getenv("PB626_EPD_GAMMA");
+	double gamma = 1.0;
+	if (gamma_arg) {
+		char *end;
+		gamma = strtod(gamma_arg, &end);
+		if (*end || !(gamma >= 0.5 && gamma <= 2.0)) {
+			fprintf(stderr, "pb626-x11-epd: gamma must be between 0.5 and 2.0\n");
+			return EXIT_FAILURE;
+		}
+	}
+	setup_gray(selected, lightness, gamma);
 	Display *display = XOpenDisplay(NULL);
 	if (!display) {
 		fprintf(stderr, "pb626-x11-epd: cannot connect to Xorg\n");
@@ -680,7 +793,9 @@ int main(int argc, char **argv)
 	XShmSegmentInfo shm = {0};
 	setup_shm(display, &shm);
 	if (profile)
-		fprintf(stderr, "x11-epd: capture=%s\n", shm.shmaddr ? "MIT-SHM" : "XGetImage");
+		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f\n",
+			shm.shmaddr ? "MIT-SHM" : "XGetImage", profiles[selected],
+			lightness ? "cie-lstar" : "srgb", gamma);
 	int offset = (width - WIDTH) / 2;
 	unsigned int failures = 0;
 	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
