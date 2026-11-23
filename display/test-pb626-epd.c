@@ -82,6 +82,9 @@ int main(void)
 	test_quantization();
 	test_sparse_scan();
 	test_waveform_policy();
+    assert(PREVIEW_A2 != PREVIEW && PREVIEW_DU4 != PREVIEW);
+    assert(preview_level4(4) == 5 && preview_level4(8) == 10);
+    assert(preview_level4(14) == WHITE);
 	puts("E Ink quantization, transition eligibility and scan buffer reuse passed");
 	return 0;
 }

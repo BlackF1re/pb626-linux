@@ -604,10 +604,15 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 	}
 	if (mode != INIT && changed) {
 		cache_mode(renderer, mode);
-		if (fallback && mode == GL16 && !supports(renderer, mode, active)) {
-			mode = GC16;
-			cache_mode(renderer, mode);
-		}
+		if (fallback && !supports(renderer, mode, active)) {
+            /* Keep a legal waveform even if a factory WBF differs. */
+            enum mode next = mode == A2 ? DU : mode == DU4 ? GL16 :
+                             mode == GL16 ? GC16 : mode;
+            if (next != mode) {
+                mode = next;
+                cache_mode(renderer, mode);
+            }
+        }
 		if (!supports(renderer, mode, active))
 			fail("this mode cannot perform every requested transition; use partial or full");
 	}
@@ -667,7 +672,7 @@ static void save_state(const uint8_t *previous, uint8_t *scan_order)
 int main(int argc, char **argv)
 {
 	if (argc == 2 && !strcmp(argv[1], "--protocol")) {
-		puts("pb626-epd-shm-2");
+		puts("pb626-epd-shm-3");
 		return EXIT_SUCCESS;
 	}
 	if ((argc == 2 && !strcmp(argv[1], "--help")) || argc < 3 || argc > 4) {
@@ -732,6 +737,8 @@ int main(int argc, char **argv)
 		while ((command = fgetc(stdin)) != EOF) {
 			switch (command) {
 			case PREVIEW: mode = DU; break;
+            case PREVIEW_A2: mode = A2; break;
+            case PREVIEW_DU4: mode = DU4; break;
 			case SETTLE: mode = GL16; break;
 			case CLEAN: case RESET: mode = GC16; break;
 			default: fail("invalid update command");

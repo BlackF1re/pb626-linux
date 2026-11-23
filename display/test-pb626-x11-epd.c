@@ -104,6 +104,28 @@ int main(void)
 
 	dirty_tiles[ty][tx] = 1; /* Damage that reverted before the next capture. */
 	assert(prepare(SETTLE, desired, panel, &frame) == 0 && !dirty_tiles[ty][tx]);
+    /* Fast-mode semantics: no fake gray->A2 conversion, exact DU4 levels. */
+    static struct shared_frame ff;
+    static uint8_t fd[PIXELS], fp[PIXELS];
+    memset(fd, WHITE, PIXELS);
+    memset(fp, WHITE, PIXELS);
+    memset(dirty_tiles, 0, sizeof(dirty_tiles));
+    const size_t p = 3 * WIDTH + 4;
+    fd[p] = 0; dirty_tiles[0][0] = 1;
+    assert(prepare(PREVIEW, fd, fp, &ff) == 1);
+    assert(a2_eligible(&ff, fp));
+    fp[p] = 7;
+    assert(!a2_eligible(&ff, fp));
+    fp[p] = 0; fd[p] = WHITE;
+    assert(prepare(PREVIEW, fd, fp, &ff) == 1);
+    assert(a2_eligible(&ff, fp));
+    fp[p] = WHITE; fd[p] = 9;
+    assert(prepare(PREVIEW_DU4, fd, fp, &ff) == 1);
+    assert(ff.pixels[p] == 10 && !a2_eligible(&ff, fp));
+    acknowledge(PREVIEW_DU4, &ff, fd, fp);
+    assert(fp[p] == 10 && fast_changes[p] == 1);
+    for (unsigned int i = 0; i <= WHITE; i++)
+        assert(preview_level4(i) <= WHITE && preview_level4(i) % 5 == 0);
 	puts("E Ink preview, settle, bounded local cleanup and sparse updates passed");
 	return 0;
 }

@@ -570,6 +570,37 @@ static int submit(const struct worker *worker, uint8_t command)
 	return done == 1 && ack == command ? 0 : -1;
 }
 
+/* A2 has only exact 0->15 / 15->0 transitions at every stock temperature.
+ * Check the committed source levels; preview pixels outside selected tiles
+ * may hold stale values in the shared frame.
+ */
+static int a2_eligible(const struct shared_frame *frame, const uint8_t *panel)
+{
+    unsigned int changes = 0;
+    for (int ty = 0; ty < TILE_ROWS; ty++)
+        for (int tx = 0; tx < TILE_COLS; tx++) {
+            if (!frame->tiles[ty][tx])
+                continue;
+            int right, bottom;
+            tile_bounds(tx, ty, &right, &bottom);
+            for (int y = ty * TILE; y < bottom; y++)
+                for (int x = tx * TILE; x < right; x++) {
+                    size_t i = y * WIDTH + x;
+                    uint8_t sample = frame->pixels[i];
+                    if (sample == KEEP)
+                        continue;
+                    unsigned int old = panel[i], level = sample & WHITE;
+                    if ((sample & SCRUB) ||
+                        !((old == 0 && level == WHITE) || (old == WHITE && level == 0)))
+                        return 0;
+                    changes++;
+                }
+        }
+    return changes != 0;
+}
+
+enum fast_profile { FAST_DU, FAST_A2, FAST_DU4 };
+
 /* Count completed fast transitions. This budget does not model reflectance. */
 static uint8_t fast_changes[PIXELS];
 static uint16_t cleanup_pixels[TILE_ROWS][TILE_COLS];
@@ -647,8 +678,10 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 					int scrub = command == CLEAN && target == old && needs_scrub(panel, x, y);
 					uint8_t level = target;
 					differs |= target != old;
-					if (command == PREVIEW)
-						level = abs(target - old) >= 3 ? preview_level(target, old) : old;
+					if (command == PREVIEW || command == PREVIEW_A2)
+                        level = abs(target - old) >= 3 ? preview_level(target, old) : old;
+                    else if (command == PREVIEW_DU4)
+                        level = preview_level4(target);
 					if (scrub || (command != CLEAN && level != old)) {
 						frame->pixels[i] = level | (scrub ? SCRUB : 0);
 						frame->tiles[ty][tx] = 1;
@@ -694,8 +727,9 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 						if (fast_changes[i] == CLEAN_AFTER)
 							cleanup_pixels[ty][tx]--;
 						fast_changes[i] = 0;
-					} else if (command == PREVIEW && panel[i] != level &&
-						   fast_changes[i] < CLEAN_AFTER) {
+					} else if ((command == PREVIEW || command == PREVIEW_A2 ||
+                             command == PREVIEW_DU4) && panel[i] != level &&
+                             fast_changes[i] < CLEAN_AFTER) {
 						if (++fast_changes[i] == CLEAN_AFTER)
 							cleanup_pixels[ty][tx]++;
 					}
@@ -740,6 +774,18 @@ int main(int argc, char **argv)
 		}
 	}
 	setup_gray(selected, lightness, gamma);
+    const char *fast = getenv("PB626_EPD_FAST_MODE");
+    enum fast_profile fast_mode = FAST_DU;
+    if (fast && strcmp(fast, "du")) {
+        if (!strcmp(fast, "a2"))
+            fast_mode = FAST_A2;
+        else if (!strcmp(fast, "du4"))
+            fast_mode = FAST_DU4;
+        else {
+            fprintf(stderr, "pb626-x11-epd: fast mode must be du, a2, or du4\n");
+            return EXIT_FAILURE;
+        }
+    }
 	Display *display = XOpenDisplay(NULL);
 	if (!display) {
 		fprintf(stderr, "pb626-x11-epd: cannot connect to Xorg\n");
@@ -793,9 +839,10 @@ int main(int argc, char **argv)
 	XShmSegmentInfo shm = {0};
 	setup_shm(display, &shm);
 	if (profile)
-		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f\n",
-			shm.shmaddr ? "MIT-SHM" : "XGetImage", profiles[selected],
-			lightness ? "cie-lstar" : "srgb", gamma);
+		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f fast=%s\n",
+                shm.shmaddr ? "MIT-SHM" : "XGetImage", profiles[selected],
+                lightness ? "cie-lstar" : "srgb", gamma,
+                fast_mode == FAST_A2 ? "a2" : fast_mode == FAST_DU4 ? "du4" : "du");
 	int offset = (width - WIDTH) / 2;
 	unsigned int failures = 0;
 	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
@@ -885,19 +932,26 @@ int main(int argc, char **argv)
 		}
 
 		uint8_t command = captured && (!has_frame || controls.clean_requested) ? RESET :
-			automatic_command(now - last_damage, dirty || now < layout_until,
-					  captured, different, cleanup_count);
+            automatic_command(now - last_damage, dirty || now < layout_until,
+                              captured, different, cleanup_count);
+        if (command == PREVIEW && fast_mode == FAST_DU4)
+            command = PREVIEW_DU4;
 
 		uint64_t prepare_start = now_us();
 		unsigned int changes = command ? prepare(command, frame, previous, worker.frame) : 0;
 		/* Gray-only activity may have no useful DU transitions. Bound its
 		 * wait without interrupting motion that DU can still show.
 		 */
-		if (!changes && command == PREVIEW && now >= pending_since + MAX_PENDING_US) {
+		if (!changes && (command == PREVIEW || command == PREVIEW_DU4) &&
+            now >= pending_since + MAX_PENDING_US) {
 			command = SETTLE;
 			changes = prepare(command, frame, previous, worker.frame);
 		}
-		uint64_t submit_start = now_us();
+		/* A2 only when every changed pixel is an exact binary transition. */
+        if (changes && command == PREVIEW && fast_mode == FAST_A2 &&
+            a2_eligible(worker.frame, previous))
+            command = PREVIEW_A2;
+        uint64_t submit_start = now_us();
 		if (changes) {
 			if (submit(&worker, command)) {
 				stop_worker(&worker);
