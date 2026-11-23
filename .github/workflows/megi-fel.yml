@@ -199,6 +199,11 @@ jobs:
         with:
           name: pb626-alpine-base-stage
           path: alpine-base
+      - name: Test E Ink waveform planning, scan buffers and quantization
+        run: |
+          gcc -O2 -Wall -Wextra -Werror -I kernel-stage/uapi \
+            display/test-pb626-epd.c -o test-pb626-epd
+          ./test-pb626-epd
       - name: Install packaging tools and the display utility cross-compiler
         timeout-minutes: 9
         run: |
@@ -218,11 +223,6 @@ jobs:
             sleep 5
           done
           exit 1
-      - name: Test E Ink waveform planning, scan buffers and quantization
-        run: |
-          gcc -O2 -Wall -Wextra -Werror -I kernel-stage/uapi \
-            display/test-pb626-epd.c -o test-pb626-epd
-          ./test-pb626-epd
       - name: Compile the ARMv7 E Ink display utility
         run: |
           arm-linux-gnueabihf-gcc -O3 -Wall -Wextra -Werror -static -I kernel-stage/uapi \

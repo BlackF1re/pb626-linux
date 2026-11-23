@@ -674,9 +674,10 @@ int main(int argc, char **argv)
     /* Never silently accept an unsupported scanout setting. The factory
      * pin-level frame needs more than 256 possible palette states. */
     const char *scanout = getenv("PB626_EPD_SCANOUT");
-    if (scanout && strcmp(scanout, "pin32"))
+    if (scanout && strcmp(scanout, "pin32")) {
         fail("IDX8 cannot losslessly encode all ED060XD4 control states; use pin32");
-	if (argc == 2 && !strcmp(argv[1], "--protocol")) {
+    }
+    if (argc == 2 && !strcmp(argv[1], "--protocol")) {
 		puts("pb626-epd-shm-3");
 		return EXIT_SUCCESS;
 	}
