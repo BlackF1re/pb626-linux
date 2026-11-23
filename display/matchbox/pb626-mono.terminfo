@@ -1,0 +1,4 @@
+pb626-mono|PocketBook monochrome xterm,
+	colors@, pairs@, bce@, setaf@, setab@, setf@, setb@, op@, oc@,
+	Cr@, Cs@,
+	use=xterm,

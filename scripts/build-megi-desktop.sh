@@ -138,6 +138,7 @@ sudo install -m 755 display/pb626-desktop display/pb626-xsession desktop-root/us
 sudo install -D -m 644 display/xorg.conf desktop-root/etc/pb626/xorg.conf
 sudo install -D -m 644 display/eink-fonts.conf desktop-root/etc/fonts/conf.d/99-pb626-eink.conf
 sudo install -D -m 644 display/matchbox/Xresources desktop-root/etc/pb626/Xresources
+sudo tic -x -o desktop-root/etc/terminfo display/matchbox/pb626-mono.terminfo
 sudo install -d desktop-root/usr/share/themes/PB626/matchbox
 sudo install -m 644 display/matchbox/PB626/* desktop-root/usr/share/themes/PB626/matchbox/
 sudo install -d desktop-root/usr/share/matchbox/vfolders
