@@ -1,5 +1,9 @@
 *foreground: black
 *background: white
+Xft.antialias: 0
+Xft.hinting: 1
+Xft.hintstyle: hintfull
+Xft.rgba: none
 *VT100.colorMode: false
 *VT100.allowColorOps: false
 *termName: pb626-mono

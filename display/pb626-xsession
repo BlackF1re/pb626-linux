@@ -7,6 +7,7 @@ fi
 xset s off
 xsetroot -solid white
 export XENVIRONMENT=/etc/pb626/Xresources
+xrdb -merge "$XENVIRONMENT"
 if [ -x /mnt/pb626-apps/bin/pb626-settings ]; then
     for shortcut in /mnt/pb626-apps/share/applications/pb626-*.desktop; do
         [ -f "$shortcut" ] || continue
