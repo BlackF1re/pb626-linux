@@ -73,6 +73,31 @@ are unchanged.
 The stock waveform is *never edited*. Neither the A13 scanout timing nor
 the TPS65185 power configuration is changed.
 
+## Stage 3b — lossless 8-bit DEBE scanout
+
+The pinned kernel already has **both** `SUN5I_EINK_FMT_PIN32` and
+`SUN5I_EINK_FMT_IDX8` in the real hardware scanout driver. The factory
+waveform encodes only three source voltage states (0, 1, 2), so four source
+pixels have `3^4=81` possible combinations per scan clock, not 256.
+There are two gate/control baselines and a small number of fixed control
+clocks; the entire set maps to **173 unique pin words**, fitting the
+hardware 256-entry palette exactly.
+
+Added opt-in `PB626_EPD_SCANOUT=idx8` transport, keeping `pin32`
+default. The original 32-bit template is used to construct the palette
+and the indexed scan template. The renderer then produces byte indices
+to the *exact same physical pin states*, with 64-byte identical frame
+headers and unchanged phases, scan counts, voltage, VCOM and timestamps.
+Kernel V4L2 DMA buffers are `64 + 304×767 = 233232` bytes each,
+versus `64 + 4×304×767 = 932736` bytes for PIN32. At queue size eight,
+the potential kernel DMA buffer saving alone is about 5.3 MiB. CPU cost
+and on-device optical validity still require testing.
+
+A complete-frames test compares every decoded palette pin word to the
+existing PIN32 renderer for sparse, reset, and stale-region cases.
+A dynamic palette cannot be changed during streaming, so it is created
+once before the first V4L2 STREAMON.
+
 ## Stage 4 — verification and future work
 
 CI/host assertions:

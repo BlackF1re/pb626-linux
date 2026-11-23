@@ -64,7 +64,11 @@ struct buffer {
 };
 
 struct renderer {
-	int fd, profile;
+	int fd, profile, indexed;
+    size_t frame_bytes;
+    struct sun5i_eink_palette palette;
+    unsigned int palette_used;
+    uint8_t neutral8[CLOCKS * ROWS], indexed_signals[2][256];
 	unsigned int buffers_count;
 	struct buffer buffers[QUEUE_SIZE];
 	struct waveform wbf;
@@ -412,9 +416,92 @@ static uint32_t source_word(unsigned int data)
 	return ((data & 0x1f) << 3) | ((data & 0xe0) << 5);
 }
 
+
+/* Factory waveforms drive source pins with 0/1/2, never 3. Each scan
+ * data clock thus has only 3^4=81 possibilities, with two control-word
+ * baselines (first gate, subsequent gates). Including the fixed control
+ * clocks fits in the A13 DEBE 256-entry RGB palette.
+ *
+ * Preserve the exact original pin states. This is a lossless transport
+ * optimization, NOT 8-bit image quantization.
+ */
+static uint8_t palette_index(struct renderer *renderer, uint32_t pins)
+{
+    for (unsigned int i = 0; i < renderer->palette_used; i++)
+        if (renderer->palette.lut[i] == pins)
+            return i;
+    if (renderer->palette_used == 256)
+        fail("E Ink control states exceed indexed DEBE palette");
+    unsigned int index = renderer->palette_used++;
+    renderer->palette.lut[index] = pins;
+    return index;
+}
+
+static void init_indexed(struct renderer *renderer)
+{
+    /* Start with every fixed pulse/control state, including the odd row
+     * after the visible gates; create exactly the same neutral frame.
+     */
+    for (size_t i = 0; i < CLOCKS * ROWS; i++)
+        renderer->neutral8[i] = palette_index(renderer,
+                                             renderer->neutral[HEADER_WORDS + i]);
+
+    for (int row_type = 0; row_type < 2; row_type++) {
+        uint32_t base = BASE | (row_type ? S_OE : 0);
+        for (unsigned int a = 0; a < 3; a++)
+            for (unsigned int b = 0; b < 3; b++)
+                for (unsigned int c = 0; c < 3; c++)
+                    for (unsigned int d = 0; d < 3; d++) {
+                        unsigned int signals = (a << 6) | (b << 4) | (c << 2) | d;
+                        renderer->indexed_signals[row_type][signals] =
+                            palette_index(renderer, base | source_word(signals));
+                    }
+    }
+}
+
+static void render_indexed(struct buffer *buffer, const struct renderer *renderer,
+                           const struct phase *phase, bool reset)
+{
+    buffer->data[3] = htole32(phase->scans - 1);
+    uint8_t *data = (uint8_t *)buffer->data + SUN5I_EINK_HDR_SIZE;
+    for (unsigned int y = 0; y < GATES; y++) {
+        struct span_range old = buffer->rows[y];
+        struct span_range row = reset ? (struct span_range){0, GROUPS} : renderer->rows[y];
+        size_t off = (DATA_ROW + y) * CLOCKS + DATA_CLOCK;
+        uint8_t *out = data + off;
+        const uint8_t *neutral = renderer->neutral8 + off;
+        if (old.end > old.first && row.end == row.first) {
+            memcpy(out + old.first, neutral + old.first, old.end - old.first);
+        } else if (row.end > row.first) {
+            if (old.first < row.first && old.end > old.first) {
+                unsigned int end = old.end < row.first ? old.end : row.first;
+                memcpy(out + old.first, neutral + old.first, end - old.first);
+            }
+            if (old.end > row.end) {
+                unsigned int first = old.first > row.end ? old.first : row.end;
+                memcpy(out + first, neutral + first, old.end - first);
+            }
+            const uint16_t *pixels = renderer->transitions + y * SOURCES + 4 * row.first;
+            for (unsigned int x = row.first; x < row.end; x++, pixels += 4) {
+                unsigned int signals = reset ? phase->lut[0] * 0x55 :
+                    (pixels[0] ? phase->lut[pixels[0] - 1] << 6 : 0) |
+                    (pixels[1] ? phase->lut[pixels[1] - 1] << 4 : 0) |
+                    (pixels[2] ? phase->lut[pixels[2] - 1] << 2 : 0) |
+                    (pixels[3] ? phase->lut[pixels[3] - 1] : 0);
+                out[x] = renderer->indexed_signals[y ? 1 : 0][signals];
+            }
+        }
+        buffer->rows[y] = row;
+    }
+}
+
 static void render(struct buffer *buffer, const struct renderer *renderer,
 		   const struct phase *phase, bool reset)
 {
+    if (renderer->indexed) {
+        render_indexed(buffer, renderer, phase, reset);
+        return;
+    }
 	uint32_t pins[4][TRANSITIONS + 1] = {0};
 	buffer->data[3] = htole32(phase->scans - 1);
 	if (!reset) {
@@ -469,13 +556,19 @@ static void allocate_queue(struct renderer *renderer)
 
 	for (unsigned int i = 0; i < req.count; i++) {
 		struct v4l2_buffer info = { .index = i, .type = type, .memory = V4L2_MEMORY_MMAP };
-		if (retry_ioctl(renderer->fd, VIDIOC_QUERYBUF, &info) || info.length < FRAME_BYTES)
+		if (retry_ioctl(renderer->fd, VIDIOC_QUERYBUF, &info) || info.length < renderer->frame_bytes)
 			fail("could not query an E Ink scanout buffer");
 		renderer->buffers[i].data = mmap(NULL, info.length, PROT_READ | PROT_WRITE,
 						 MAP_SHARED, renderer->fd, info.m.offset);
 		if (renderer->buffers[i].data == MAP_FAILED)
 			fail("could not map an E Ink scanout buffer");
-		memcpy(renderer->buffers[i].data, renderer->neutral, FRAME_BYTES);
+		if (renderer->indexed) {
+            memcpy(renderer->buffers[i].data, renderer->neutral, SUN5I_EINK_HDR_SIZE);
+            memcpy((uint8_t *)renderer->buffers[i].data + SUN5I_EINK_HDR_SIZE,
+                   renderer->neutral8, CLOCKS * ROWS);
+        } else {
+            memcpy(renderer->buffers[i].data, renderer->neutral, FRAME_BYTES);
+        }
 	}
 }
 
@@ -483,7 +576,7 @@ static void enqueue(struct renderer *renderer, unsigned int index, const struct 
 		    bool reset, uint64_t *render_us)
 {
 	struct v4l2_buffer info = { .index = index, .type = type, .memory = V4L2_MEMORY_MMAP,
-				   .bytesused = FRAME_BYTES, .field = V4L2_FIELD_NONE };
+				   .bytesused = renderer->frame_bytes, .field = V4L2_FIELD_NONE };
 	uint64_t start = renderer->profile ? now_us() : 0;
 	render(&renderer->buffers[index], renderer, phase, reset);
 	if (renderer->profile)
@@ -699,15 +792,25 @@ int main(int argc, char **argv)
 	    strcmp((const char *)caps.driver, "sun5i-eink"))
 		fail("could not acquire the sun5i-eink output (is the desktop running?)");
 
-	struct v4l2_format fmt = { .type = type, .fmt.pix = {
-		.width = CLOCKS, .height = ROWS, .pixelformat = SUN5I_EINK_FMT_PIN32,
-	} };
-	if (retry_ioctl(fd, VIDIOC_S_FMT, &fmt) || fmt.fmt.pix.sizeimage != FRAME_BYTES ||
-	    fmt.fmt.pix.bytesperline != CLOCKS * 4)
-		fail("the output does not support the ED060XD4 scanout format");
+	const char *format = getenv("PB626_EPD_SCANOUT");
+    int indexed = format && !strcmp(format, "idx8");
+    if (format && !indexed && strcmp(format, "pin32"))
+        fail("scanout must be pin32 or idx8");
+    size_t frame_bytes = SUN5I_EINK_HDR_SIZE +
+                         (size_t)CLOCKS * ROWS * (indexed ? 1 : 4);
+    struct v4l2_format fmt = { .type = type, .fmt.pix = {
+        .width = CLOCKS, .height = ROWS,
+        .pixelformat = indexed ? SUN5I_EINK_FMT_IDX8 : SUN5I_EINK_FMT_PIN32,
+    } };
+    if (retry_ioctl(fd, VIDIOC_S_FMT, &fmt) ||
+        fmt.fmt.pix.sizeimage != frame_bytes ||
+        fmt.fmt.pix.bytesperline != CLOCKS * (indexed ? 1 : 4))
+        fail("the output does not support the ED060XD4 scanout format");
 
 	static struct renderer renderer;
 	renderer.fd = fd;
+    renderer.indexed = indexed;
+    renderer.frame_bytes = frame_bytes;
 	renderer.profile = getenv("PB626_EPD_PROFILE") != NULL;
 	load_waveform(&renderer.wbf, argv[1]);
 	/* The stock WBF targets 85 scans/s. The A13 clock tree supplies
@@ -720,6 +823,14 @@ int main(int argc, char **argv)
 	if (retry_ioctl(fd, SUN5I_EINK_S_TIMING, &timing))
 		fail("could not select the factory WBF scan rate");
 	scan_template(renderer.neutral);
+    if (renderer.indexed) {
+        init_indexed(&renderer);
+        if (retry_ioctl(fd, SUN5I_EINK_S_PALETTE, &renderer.palette))
+            fail("could not program A13 DEBE indexed pin palette");
+        if (renderer.profile)
+            fprintf(stderr, "epd: indexed scanout palette=%u entries\n",
+                    renderer.palette_used);
+    }
 	renderer.known = load_state(renderer.previous, renderer.target);
 
 	if (serve) {
