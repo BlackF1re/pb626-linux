@@ -804,8 +804,9 @@ int main(int argc, char **argv)
     } };
     if (retry_ioctl(fd, VIDIOC_S_FMT, &fmt) ||
         fmt.fmt.pix.sizeimage != frame_bytes ||
-        fmt.fmt.pix.bytesperline != CLOCKS * (indexed ? 1 : 4))
+        fmt.fmt.pix.bytesperline != CLOCKS * (indexed ? 1 : 4)) {
         fail("the output does not support the ED060XD4 scanout format");
+    }
 
 	static struct renderer renderer;
 	renderer.fd = fd;
