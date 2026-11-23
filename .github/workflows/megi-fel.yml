@@ -200,10 +200,24 @@ jobs:
           name: pb626-alpine-base-stage
           path: alpine-base
       - name: Install packaging tools and the display utility cross-compiler
+        timeout-minutes: 9
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cpio device-tree-compiler e2fsprogs kmod zstd gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+          set -euo pipefail
+          for attempt in 1 2; do
+            echo "APT setup attempt $attempt/2"
+            if sudo timeout 180s apt-get -o Acquire::Retries=2 \
+                -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update &&
+               sudo timeout 240s apt-get -o Acquire::Retries=2 \
+                -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+                install -y --no-install-recommends \
+                  cpio device-tree-compiler e2fsprogs kmod zstd \
+                  gcc-arm-linux-gnueabihf libc6-dev-armhf-cross; then
+              exit 0
+            fi
+            echo "APT setup attempt $attempt failed or timed out"
+            sleep 5
+          done
+          exit 1
       - name: Test E Ink waveform planning, scan buffers and quantization
         run: |
           gcc -O2 -Wall -Wextra -Werror -I kernel-stage/uapi \
