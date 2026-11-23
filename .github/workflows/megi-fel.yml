@@ -177,6 +177,15 @@ jobs:
           cp dtb-stage/pb626-*.dtb kernel-stage/
           install -D -m 0644 linux/include/uapi/linux/sun5i-eink.h kernel-stage/uapi/linux/sun5i-eink.h
           test "$(find kernel-stage -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 9
+      - name: Test and compile the E Ink utility with the existing ARM toolchain
+        run: |
+          set -euo pipefail
+          gcc -O2 -Wall -Wextra -Werror -I kernel-stage/uapi \
+            display/test-pb626-epd.c -o test-pb626-epd
+          ./test-pb626-epd
+          arm-linux-gnueabihf-gcc -O3 -Wall -Wextra -Werror -static -I kernel-stage/uapi \
+            display/pb626-epd.c -o kernel-stage/pb626-epd
+          test -s kernel-stage/pb626-epd
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-kernel-stage
@@ -199,11 +208,6 @@ jobs:
         with:
           name: pb626-alpine-base-stage
           path: alpine-base
-      - name: Test E Ink waveform planning, scan buffers and quantization
-        run: |
-          gcc -O2 -Wall -Wextra -Werror -I kernel-stage/uapi \
-            display/test-pb626-epd.c -o test-pb626-epd
-          ./test-pb626-epd
       - name: Install packaging tools and the display utility cross-compiler
         timeout-minutes: 9
         run: |
@@ -215,18 +219,19 @@ jobs:
                sudo timeout 240s apt-get -o Acquire::Retries=2 \
                 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
                 install -y --no-install-recommends \
-                  cpio device-tree-compiler e2fsprogs kmod zstd \
-                  gcc-arm-linux-gnueabihf libc6-dev-armhf-cross; then
+                  cpio device-tree-compiler e2fsprogs kmod zstd; then
               exit 0
             fi
             echo "APT setup attempt $attempt failed or timed out"
             sleep 5
           done
           exit 1
-      - name: Compile the ARMv7 E Ink display utility
+      - name: Use the verified ARM E Ink utility from the kernel stage
         run: |
-          arm-linux-gnueabihf-gcc -O3 -Wall -Wextra -Werror -static -I kernel-stage/uapi \
-            display/pb626-epd.c -o pb626-epd
+          set -euo pipefail
+          test -s kernel-stage/pb626-epd
+          cp kernel-stage/pb626-epd pb626-epd
+          chmod +x pb626-epd
       - name: Assemble full Alpine RAM image from independent stages
         run: bash scripts/assemble-megi-ram.sh
       - uses: actions/upload-artifact@v4
