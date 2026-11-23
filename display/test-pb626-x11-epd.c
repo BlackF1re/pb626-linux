@@ -7,6 +7,7 @@
 
 static void test_gray(void)
 {
+	quant_reference = 1;
 	setup_gray(GRAY_BALANCED, 0, 1.0);
 	assert(gray_value(255, 0, 0) == 127);
 	assert(gray_value(0, 255, 0) == 220);
@@ -37,7 +38,18 @@ static void test_gray(void)
 	setup_gray(GRAY_LEGACY, 0, 1.0);
 	assert(gray_value(255, 0, 0) == 56);
 	assert(quantize(127, 0, 0, 0) == paper_level(127, 0, 0, 0));
-	puts("E Ink grayscale profiles, neutral tones and stable dithering passed");
+	unsetenv("PB626_EPD_QUANT_REFERENCE");
+	for (int profile = GRAY_BALANCED; profile <= GRAY_LEGACY; profile++) {
+		setup_gray(profile, 0, 1.0);
+		setup_quantization();
+		for (int y = 0; y < 16; y++)
+			for (int x = 0; x < 16; x++)
+				for (unsigned int v = 0; v < 256; v++) {
+					assert(quantize(v, 47, x, y) == quantize_reference(v, 47, x, y));
+					assert(quantize(v, 48, x, y) == quantize_reference(v, 48, x, y));
+				}
+	}
+	puts("E Ink grayscale profiles, exact lookup and stable dithering passed");
 }
 
 int main(void)

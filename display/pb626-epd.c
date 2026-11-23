@@ -571,12 +571,18 @@ static void refresh(struct renderer *renderer, enum mode mode)
 
 	uint64_t preloaded = now_us(), first_irq = 0, last_irq = 0, max_gap = 0;
 	enum v4l2_buf_type stream = type;
-	if (retry_ioctl(fd, VIDIOC_STREAMON, &stream)) {
+	unsigned int start_retries = 0;
+	while (retry_ioctl(fd, VIDIOC_STREAMON, &stream)) {
 		int error = errno;
 		fprintf(stderr, "epd: STREAMON mode=%s queued=%u interval=%u us=%llu errno=%d\n",
 			modes[mode], queued, renderer->wbf.interval,
 			(unsigned long long)(now_us() - preloaded), error);
-		fail("could not start E Ink scanout");
+		/* sun5i-eink returns queued buffers before TCON starts on power failure.
+		 * Retry only PMIC startup timeouts, while all phases remain queued.
+		 */
+		if (error != ETIMEDOUT || start_retries++)
+			fail("could not start E Ink scanout");
+		usleep(100000);
 	}
 	uint64_t streaming = now_us();
 	for (; queued < renderer->buffers_count && queued < update->count; queued++)
@@ -618,12 +624,12 @@ static void refresh(struct renderer *renderer, enum mode mode)
 			modes[mode], scans, update->count, (unsigned long long)render_us,
 			(unsigned long long)(elapsed - render_us), (unsigned long long)elapsed);
 		fprintf(stderr, "epd: index_us=%llu patterns=%u preload_us=%llu streamon_us=%llu "
-			"first_irq_us=%llu last_irq_us=%llu max_irq_excess_us=%llu streamoff_us=%llu interval=%u\n",
+			"first_irq_us=%llu last_irq_us=%llu first_scans=%u max_irq_excess_us=%llu streamoff_us=%llu interval=%u start_retries=%u\n",
 			(unsigned long long)(index_done - start), renderer->patterns_count,
 			(unsigned long long)(preloaded - index_done), (unsigned long long)(streaming - preloaded),
 			(unsigned long long)(first_irq - start), (unsigned long long)(last_irq - start),
-			(unsigned long long)max_gap, (unsigned long long)(now_us() - finished),
-			renderer->wbf.interval);
+			update->phases[0].scans, (unsigned long long)max_gap,
+			(unsigned long long)(now_us() - finished), renderer->wbf.interval, start_retries);
 	}
 }
 

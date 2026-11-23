@@ -883,14 +883,17 @@ int main(int argc, char **argv)
 	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
 	unsigned int cleanup_count = 0;
 	uint64_t last_damage = 0, pending_since = 0, next_capture = 0, layout_until = 0;
+	uint64_t damage_seen = 0;
 
 	for (;;) {
 		XEvent event;
 		while (XPending(display)) {
 			XNextEvent(display, &event);
-			if (damage && event.type == damage_event + XDamageNotify)
+			if (damage && event.type == damage_event + XDamageNotify) {
+				if (profile && !damage_seen)
+					damage_seen = now_us();
 				dirty = 1;
-			else if (event.type == PropertyNotify && event.xproperty.atom == active)
+			} else if (event.type == PropertyNotify && event.xproperty.atom == active)
 				focus_changed = 1;
 			else if (event.type == KeyPress && event.xkey.keycode == toggle) {
 				keyboard_command(display, root, keyboard, KEYBOARD_TOGGLE);
@@ -920,7 +923,7 @@ int main(int argc, char **argv)
 			dirty = 1;
 
 		struct capture_stats stats = {0};
-		uint64_t capture_start = now;
+		uint64_t capture_start = now, damage_wait = 0, ack = 0;
 		int captured = 0;
 		if ((dirty || !damage) && now >= next_capture && now >= layout_until) {
 			struct rect areas[MAX_REGIONS];
@@ -942,6 +945,9 @@ int main(int argc, char **argv)
 				if (capture(display, root, offset, areas[i], frame, pointer, controls.vertical, &stats, &shm))
 					goto failed;
 			captured = count != 0;
+			if (damage_seen)
+				damage_wait = capture_start - damage_seen;
+			damage_seen = 0;
 			dirty = 0;
 			now = now_us();
 			next_capture = now + (damage ? 16000 : 250000);
@@ -999,6 +1005,8 @@ int main(int argc, char **argv)
 					return EXIT_FAILURE;
 				continue;
 			}
+			if (profile)
+				ack = now_us();
 			acknowledge(command, worker.frame, frame, previous);
 			if (!has_frame) {
 				FILE *ready = fopen(argv[2], "w");
@@ -1015,12 +1023,14 @@ int main(int argc, char **argv)
 			pending_since = now_us();
 		}
 		if (profile && (captured || changes))
-			fprintf(stderr, "x11-epd: mode=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu ipc_update_us=%llu total_us=%llu\n",
+			fprintf(stderr, "x11-epd: mode=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu ipc_update_us=%llu total_us=%llu capture_mono_us=%llu damage_wait_us=%llu ack_mono_us=%llu\n",
 				command ? command : '-', stats.pixels, changes,
 				(unsigned long long)stats.read_us, (unsigned long long)stats.quant_us,
 				(unsigned long long)(submit_start - prepare_start),
 				(unsigned long long)(changes ? now_us() - submit_start : 0),
-				(unsigned long long)(now_us() - capture_start));
+				(unsigned long long)(now_us() - capture_start),
+				(unsigned long long)capture_start, (unsigned long long)damage_wait,
+				(unsigned long long)ack);
 		if (changes || command == SETTLE)
 			continue; /* Discard intermediate frames and consume accumulated damage. */
 
