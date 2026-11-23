@@ -21,14 +21,24 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-user
+      - name: Restore verified Alpine minirootfs cache
+        id: minirootfs-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            alpine-minirootfs-3.24.4-armv7.tar.gz
+            alpine-minirootfs-3.24.4-armv7.tar.gz.sha256
+          key: pb626-userland-minirootfs-v1-3.24.4-armv7
       - name: Fetch pinned Alpine minirootfs
         shell: bash
         run: |
           set -euo pipefail
           base=https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/armv7
           archive=alpine-minirootfs-3.24.4-armv7.tar.gz
-          curl -fL --retry 3 "${base}/${archive}" -o "$archive"
-          curl -fL --retry 3 "${base}/${archive}.sha256" -o "${archive}.sha256"
+          if [ ! -s "$archive" ] || [ ! -s "${archive}.sha256" ]; then
+            curl -fL --retry 3 "${base}/${archive}" -o "$archive"
+            curl -fL --retry 3 "${base}/${archive}.sha256" -o "${archive}.sha256"
+          fi
           sha256sum --check "${archive}.sha256"
           mkdir -p rootfs
           tar -xzf "$archive" -C rootfs
