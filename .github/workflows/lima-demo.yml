@@ -15,17 +15,36 @@ concurrency:
 jobs:
   armv7:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
         with:
           platforms: arm
-      - name: Build and verify the Alpine armv7 overlay
+      - name: Restore the verified Mesa build
+        id: mesa-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: mesa-cache
+          key: pb626-lima-mesa-armv7-${{ hashFiles('scripts/build-lima-mesa.sh') }}
+      - name: Compile Mesa for Alpine armv7
+        if: steps.mesa-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p mesa-cache
+          docker run --rm --platform linux/arm/v7 \
+            -v "$PWD:/src:ro" -v "$PWD/mesa-cache:/mesa-cache" \
+            alpine:3.24 sh /src/scripts/build-lima-mesa.sh
+      - name: Save Mesa before building the demo
+        if: steps.mesa-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: mesa-cache
+          key: ${{ steps.mesa-cache.outputs.cache-primary-key }}
+      - name: Package and verify the Alpine armv7 overlay
         run: |
           mkdir -p dist
           docker run --rm --platform linux/arm/v7 \
-            -v "$PWD:/src:ro" -v "$PWD/dist:/out" \
+            -v "$PWD:/src:ro" -v "$PWD/mesa-cache:/mesa-cache:ro" -v "$PWD/dist:/out" \
             alpine:3.24 sh /src/scripts/build-lima-demo.sh
       - uses: actions/upload-artifact@v4
         with:
