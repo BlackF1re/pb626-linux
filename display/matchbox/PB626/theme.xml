@@ -3,43 +3,43 @@
   <color id="paper" def="#ffffff"/>
   <color id="ink" def="#000000"/>
   <color id="select" def="#cccccc"/>
-  <font id="titlefont" def="Sans bold 40px"/>
-  <font id="menufont" def="Sans bold 32px"/>
+  <font id="titlefont" def="Sans bold 20px"/>
+  <font id="menufont" def="Sans bold 16px"/>
   <pixmap id="close" filename="close.png"/>
   <pixmap id="menu" filename="menu.png"/>
 
-  <frame id="main" height="80">
+  <frame id="main" height="40">
     <layer x="0" y="0" w="100%" h="100%" type="plain" color="paper"/>
-    <layer x="0" y="76" w="100%" h="4" type="plain" color="ink"/>
-    <layer x="84" y="0" w="100%-168" h="76" type="label"
+    <layer x="0" y="38" w="100%" h="2" type="plain" color="ink"/>
+    <layer x="42" y="0" w="100%-84" h="38" type="label"
            color="ink" justify="left" font="titlefont"/>
-    <button x="8" y="0" w="64" h="76" action="menu">
+    <button x="4" y="0" w="32" h="38" action="menu">
       <active pixmap="menu"/><inactive pixmap="menu"/>
     </button>
-    <button x="100%-72" y="0" w="64" h="76" action="close">
+    <button x="100%-36" y="0" w="32" h="38" action="close">
       <active pixmap="close"/><inactive pixmap="close"/>
     </button>
   </frame>
-  <frame id="dialog" height="80">
+  <frame id="dialog" height="40">
     <layer x="0" y="0" w="100%" h="100%" type="plain" color="paper"/>
-    <layer x="0" y="76" w="100%" h="4" type="plain" color="ink"/>
-    <layer x="12" y="0" w="100%-96" h="76" type="label"
+    <layer x="0" y="38" w="100%" h="2" type="plain" color="ink"/>
+    <layer x="6" y="0" w="100%-48" h="38" type="label"
            color="ink" justify="left" font="titlefont"/>
-    <button x="100%-72" y="0" w="64" h="76" action="close">
+    <button x="100%-36" y="0" w="32" h="38" action="close">
       <active pixmap="close"/><inactive pixmap="close"/>
     </button>
   </frame>
-  <frame id="dialog-east" width="4">
+  <frame id="dialog-east" width="2">
     <layer x="0" y="0" w="100%" h="100%" type="plain" color="ink"/>
   </frame>
-  <frame id="dialog-west" width="4">
+  <frame id="dialog-west" width="2">
     <layer x="0" y="0" w="100%" h="100%" type="plain" color="ink"/>
   </frame>
-  <frame id="dialog-south" height="4">
+  <frame id="dialog-south" height="2">
     <layer x="0" y="0" w="100%" h="100%" type="plain" color="ink"/>
   </frame>
-  <frame id="menu" border_north="4" border_south="4" border_west="4"
-         border_east="4" font="menufont" highlight="select" color="ink">
+  <frame id="menu" border_north="2" border_south="2" border_west="2"
+         border_east="2" font="menufont" highlight="select" color="ink">
     <layer x="0" y="0" w="100%" h="100%" type="plain" color="paper"/>
   </frame>
 </theme>

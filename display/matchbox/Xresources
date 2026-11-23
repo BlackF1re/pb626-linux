@@ -1,9 +1,9 @@
 *foreground: black
 *background: white
 XTerm*faceName: Liberation Mono:style=Bold
-XTerm*faceSize: 24
+XTerm*faceSize: 12
 XTerm*cursorBlink: false
 XTerm*resizeGravity: SouthWest
-NEdit*textFont: -*-fixed-bold-r-normal-*-20-*-*-*-*-*-iso10646-1
+NEdit*textFont: -*-fixed-bold-r-normal-*-14-*-*-*-*-*-iso10646-1
 NEdit*highlightSyntax: False
-XCalc*font: 10x20
+XCalc*font: 7x14
