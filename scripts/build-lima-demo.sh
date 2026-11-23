@@ -11,7 +11,7 @@ mkdir -p "$stage/bin"
 cc -std=c11 -O2 -Wall -Wextra -Werror -s \
     -I"$stage/include" /src/display/pb626-lima-demo.c -L"$stage/lib" \
     -Wl,-rpath,'$ORIGIN/../lib' -Wl,-rpath-link,"$stage/lib" \
-    -o "$stage/bin/pb626-lima-demo" -lEGL -lGLESv2 -lX11
+    -o "$stage/bin/pb626-lima-demo" -lEGL -lX11
 rm -rf "$stage/include" "$stage/lib/pkgconfig"
 
 for soname in libstdc++.so.6 libgcc_s.so.1 libexpat.so.1 libz.so.1 libdrm.so.2; do

@@ -11,19 +11,63 @@
 enum { width = 320, height = 320, channels = 4 };
 static unsigned char pixels[width * height * channels];
 
+// Use entry points from the EGL implementation that owns the context.
+#define GLES_FUNCTIONS(X) \
+    X(AttachShader) \
+    X(BindAttribLocation) \
+    X(Clear) \
+    X(ClearColor) \
+    X(CompileShader) \
+    X(CreateProgram) \
+    X(CreateShader) \
+    X(DeleteShader) \
+    X(DrawArrays) \
+    X(EnableVertexAttribArray) \
+    X(GetError) \
+    X(GetProgramInfoLog) \
+    X(GetProgramiv) \
+    X(GetShaderInfoLog) \
+    X(GetShaderiv) \
+    X(GetString) \
+    X(LinkProgram) \
+    X(ReadPixels) \
+    X(ShaderSource) \
+    X(UseProgram) \
+    X(VertexAttribPointer) \
+    X(Viewport)
+
+static struct {
+#define GLES_FIELD(name) __typeof__(&gl##name) name;
+    GLES_FUNCTIONS(GLES_FIELD)
+#undef GLES_FIELD
+} gles;
+
+static int load_gles(void)
+{
+#define GLES_LOAD(name)                                                 \
+    gles.name = (__typeof__(gles.name))eglGetProcAddress("gl" #name);    \
+    if (!gles.name) {                                                   \
+        fprintf(stderr, "Missing GLES2 entry point: gl%s\n", #name);   \
+        return 0;                                                       \
+    }
+    GLES_FUNCTIONS(GLES_LOAD)
+#undef GLES_LOAD
+    return 1;
+}
+
 static GLuint compile_shader(GLenum type, const char *source)
 {
-    GLuint shader = glCreateShader(type);
+    GLuint shader = gles.CreateShader(type);
     GLint compiled;
     char log[512];
 
-    glShaderSource(shader, 1, &source, NULL);
-    glCompileShader(shader);
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    gles.ShaderSource(shader, 1, &source, NULL);
+    gles.CompileShader(shader);
+    gles.GetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
     if (!compiled) {
-        glGetShaderInfoLog(shader, sizeof(log), NULL, log);
+        gles.GetShaderInfoLog(shader, sizeof(log), NULL, log);
         fprintf(stderr, "Shader compilation failed: %s\n", log);
-        glDeleteShader(shader);
+        gles.DeleteShader(shader);
         return 0;
     }
     return shader;
@@ -47,33 +91,33 @@ static int draw_scene(void)
     if (!vs || !fs)
         return 0;
 
-    GLuint program = glCreateProgram();
+    GLuint program = gles.CreateProgram();
     GLint linked;
-    glAttachShader(program, vs);
-    glAttachShader(program, fs);
-    glBindAttribLocation(program, 0, "position");
-    glBindAttribLocation(program, 1, "tone");
-    glLinkProgram(program);
-    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    gles.AttachShader(program, vs);
+    gles.AttachShader(program, fs);
+    gles.BindAttribLocation(program, 0, "position");
+    gles.BindAttribLocation(program, 1, "tone");
+    gles.LinkProgram(program);
+    gles.GetProgramiv(program, GL_LINK_STATUS, &linked);
     if (!linked) {
         char log[512];
-        glGetProgramInfoLog(program, sizeof(log), NULL, log);
+        gles.GetProgramInfoLog(program, sizeof(log), NULL, log);
         fprintf(stderr, "Shader linking failed: %s\n", log);
         return 0;
     }
 
-    glViewport(0, 0, width, height);
-    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glUseProgram(program);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, vertices);
-    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 0, tones);
-    glEnableVertexAttribArray(0);
-    glEnableVertexAttribArray(1);
-    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-    glDrawArrays(GL_TRIANGLES, 4, 3);
-    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    GLenum error = glGetError();
+    gles.Viewport(0, 0, width, height);
+    gles.ClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    gles.Clear(GL_COLOR_BUFFER_BIT);
+    gles.UseProgram(program);
+    gles.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, vertices);
+    gles.VertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 0, tones);
+    gles.EnableVertexAttribArray(0);
+    gles.EnableVertexAttribArray(1);
+    gles.DrawArrays(GL_TRIANGLE_FAN, 0, 4);
+    gles.DrawArrays(GL_TRIANGLES, 4, 3);
+    gles.ReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    GLenum error = gles.GetError();
     unsigned corner = pixels[0];
     unsigned dark = pixels[(48 * width + 40) * channels];
     unsigned center = pixels[((height / 2) * width + width / 2) * channels];
@@ -115,17 +159,20 @@ static int render(void)
     if (surface == EGL_NO_SURFACE || context == EGL_NO_CONTEXT ||
         !eglMakeCurrent(display, surface, surface, context)) {
         fprintf(stderr, "GLES2 context setup failed: 0x%x\n", eglGetError());
-    } else {
-        const char *renderer = (const char *)glGetString(GL_RENDERER);
-        printf("EGL %d.%d vendor=%s\nGL_RENDERER=%s\nGL_VERSION=%s\n",
-               major, minor, eglQueryString(display, EGL_VENDOR),
-               renderer ? renderer : "(unavailable)", glGetString(GL_VERSION));
+    } else if (load_gles()) {
+        const char *renderer = (const char *)gles.GetString(GL_RENDERER);
+        const char *version = (const char *)gles.GetString(GL_VERSION);
+        printf("EGL %d.%d vendor=%s\n", major, minor, eglQueryString(display, EGL_VENDOR));
+        printf("GL_RENDERER=%s\n", renderer ? renderer : "(unavailable)");
+        printf("GL_VERSION=%s\n", version ? version : "(unavailable)");
+        fflush(stdout);
         if (renderer && (strstr(renderer, "Mali400") || strstr(renderer, "Mali-400")))
             passed = draw_scene();
         else
             fprintf(stderr, "A hardware Mali-400 renderer is required\n");
-        eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
+    if (eglGetCurrentContext() != EGL_NO_CONTEXT)
+        eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     if (surface != EGL_NO_SURFACE)
         eglDestroySurface(display, surface);
     if (context != EGL_NO_CONTEXT)
