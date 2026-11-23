@@ -88,8 +88,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            git gcc-arm-linux-gnueabihf make bc bison flex libssl-dev libelf-dev \
-            device-tree-compiler libncurses-dev lz4 kmod
+            git gcc-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex \
+            libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod
+      - name: Validate ARM static-link toolchain before downloading the kernel
+        run: |
+          set -euo pipefail
+          printf 'int main(void) { return 0; }\n' |
+            arm-linux-gnueabihf-gcc -x c -static - -o /tmp/pb626-toolchain-smoke
+          test -s /tmp/pb626-toolchain-smoke
+          file /tmp/pb626-toolchain-smoke | grep -q 'ARM'
       - name: Record cross-compiler version for cache key
         id: compiler
         run: echo "version=$(arm-linux-gnueabihf-gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
