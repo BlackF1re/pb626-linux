@@ -18,7 +18,7 @@ wm=$!
 panel=
 if command -v matchbox-panel >/dev/null; then
     matchbox-panel --orientation south --size 48 --bgcolor white --no-session \
-        --default-apps mb-applet-menu-launcher,mb-applet-battery,mb-applet-clock &
+        --default-apps 'mb-applet-menu-launcher,mb-applet-launcher --desktop /etc/pb626/keyboard.desktop,mb-applet-battery,mb-applet-clock' &
     panel=$!
 fi
 matchbox-keyboard --daemon us &

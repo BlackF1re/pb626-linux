@@ -7,6 +7,16 @@ XTerm*faceName: Liberation Mono:style=Bold
 XTerm*faceSize: 12
 XTerm*cursorBlink: false
 XTerm*resizeGravity: SouthWest
+XTerm*VT100.scrollBar: true
+XTerm*VT100.rightScrollBar: true
+XTerm*VT100.saveLines: 2000
+XTerm*VT100*scrollbar.width: 44
+XTerm*VT100*scrollbar.minimumThumb: 36
+XTerm*VT100*scrollbar.translations: #override \n\
+    <Btn1Down>: StartScroll(Continuous) MoveThumb() NotifyThumb() \n\
+    <Btn1Motion>: MoveThumb() NotifyThumb()
 NEdit*textFont: -*-fixed-bold-r-normal-*-14-*-*-*-*-*-iso10646-1
 NEdit*highlightSyntax: False
+NEdit*textVertScrollBar.width: 44
+NEdit*textHorScrollBar.height: 44
 XCalc*font: 7x14

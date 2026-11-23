@@ -14,6 +14,65 @@ Fit Matchbox Keyboard to a portrait E Ink screen and accept WM geometry.
 +    XResizeWindow(ui->xdpy, ui->xwin, width, height);
 --- a/src/matchbox-keyboard-ui-xft-backend.c
 +++ b/src/matchbox-keyboard-ui-xft-backend.c
-@@ -346 +346 @@
+@@ -24,7 +24,7 @@ typedef struct MBKeyboardUIBackendXft
+   MBKeyboardUIBackend backend;
+ 
+   XftFont            *font;
+-  XftColor            font_col; 
++  XftColor            font_col[2];
+   XftDraw            *xft_backbuffer;  
+   GC                  xgc;
+ 
+@@ -247,7 +247,7 @@ mb_kbd_ui_xft_redraw_key(MBKeyboardUI  *ui, MBKeyboardKey *key)
+ 	                             / 2 );
+ 	  
+ 	  XftDrawStringUtf8(xft_backend->xft_backbuffer,
+-			    &xft_backend->font_col,
++			    &xft_backend->font_col[mb_kbd_key_is_held(kbd, key)],
+ 			    xft_backend->font,
+ 			    x,
+ 			    y + xft_backend->font->ascent,
+@@ -320,15 +320,15 @@ mb_kbd_ui_xft_resources_create(MBKeyboardUI  *ui)
+ 							      mb_kbd_ui_x_screen(ui)));
+ 
+ 
+-  coltmp.red   = coltmp.green = coltmp.blue  = 0x0000; coltmp.alpha = 0xcccc;
+-
+-  XftColorAllocValue(mb_kbd_ui_x_display(ui),
+-		     DefaultVisual(mb_kbd_ui_x_display(ui), 
+-				   mb_kbd_ui_x_screen(ui)), 
+-		     DefaultColormap(mb_kbd_ui_x_display(ui), 
+-				     mb_kbd_ui_x_screen(ui)),
+-		     &coltmp,
+-		     &xft_backend->font_col);
++  for (int held = 0; held < 2; held++)
++    {
++      coltmp.red = coltmp.green = coltmp.blue = held ? 0xffff : 0x0000;
++      coltmp.alpha = 0xffff;
++      XftColorAllocValue(mb_kbd_ui_x_display(ui),
++                         DefaultVisual(mb_kbd_ui_x_display(ui), mb_kbd_ui_x_screen(ui)),
++                         DefaultColormap(mb_kbd_ui_x_display(ui), mb_kbd_ui_x_screen(ui)),
++                         &coltmp, &xft_backend->font_col[held]);
++    }
+ 
+   xft_backend->xgc = XCreateGC(mb_kbd_ui_x_display(ui), 
+ 			       mb_kbd_ui_x_win(ui), 0, NULL);
+@@ -343,12 +343,12 @@ mb_kbd_ui_xft_resources_create(MBKeyboardUI  *ui)
+ 
+   /* Crusty theme stuff  */
+ 
 -  alloc_color(ui, &xft_backend->xcol_c5c5c5, "#c5c5c5");
+-  alloc_color(ui, &xft_backend->xcol_d3d3d3, "#d3d3d3");
+-  alloc_color(ui, &xft_backend->xcol_f0f0f0, "#f0f0f0");
+-  alloc_color(ui, &xft_backend->xcol_f8f8f5, "#f8f8f5");
+-  alloc_color(ui, &xft_backend->xcol_f4f4f4, "#f4f4f4");
+-  alloc_color(ui, &xft_backend->xcol_a4a4a4, "#a4a4a4");
 +  alloc_color(ui, &xft_backend->xcol_c5c5c5, "#000000");
++  alloc_color(ui, &xft_backend->xcol_d3d3d3, "#000000");
++  alloc_color(ui, &xft_backend->xcol_f0f0f0, "#000000");
++  alloc_color(ui, &xft_backend->xcol_f8f8f5, "#ffffff");
++  alloc_color(ui, &xft_backend->xcol_f4f4f4, "#000000");
++  alloc_color(ui, &xft_backend->xcol_a4a4a4, "#000000");
+ 
+   return True;
+ }

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Toggle Keyboard
+Exec=xdotool key F12
+Icon=matchbox-keyboard.png
+X-MB-NoWindow=true
