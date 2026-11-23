@@ -41,12 +41,27 @@ int main(void)
 	assert(automatic_command(CLEAN_QUIET_US - 1, 0, 0, 0, 1) == 0);
 	assert(automatic_command(CLEAN_QUIET_US, 1, 0, 0, 1) == 0);
 	assert(automatic_command(CLEAN_QUIET_US, 0, 0, 0, 1) == CLEAN);
+	clean_halo = 0;
 	assert(prepare(CLEAN, desired, panel, &frame) == 1);
 	assert(frame.pixels[pixel] == (panel[pixel] | SCRUB));
 	assert(frame.pixels[pixel + 1] == KEEP);
 	assert(frame.tiles[ty][tx] && !frame.tiles[0][0]);
 	acknowledge(CLEAN, &frame, desired, panel);
 	assert(fast_changes[pixel] == 0 && cleanup_pixels[ty][tx] == 0 && !dirty_tiles[ty][tx]);
+
+	clean_halo = 1;
+	const size_t edge = (TILE - 1) * WIDTH + TILE - 1;
+	fast_changes[edge] = CLEAN_AFTER;
+	cleanup_pixels[0][0] = 1;
+	fast_changes[edge + WIDTH] = 2;
+	desired[edge + 1] = panel[edge + 1] = 0;
+	assert(prepare(CLEAN, desired, panel, &frame) == 8);
+	assert(frame.pixels[edge + 1] == KEEP);
+	assert(frame.pixels[edge + WIDTH + 1] == (WHITE | SCRUB) && frame.tiles[1][1]);
+	assert(frame.pixels[edge + WIDTH + 2] == KEEP && !frame.tiles[0][2]);
+	acknowledge(CLEAN, &frame, desired, panel);
+	assert(!cleanup_pixels[0][0] && !cleanup_pixels[1][0]);
+	assert(!fast_changes[edge] && !fast_changes[edge + WIDTH]);
 
 	dirty_tiles[ty][tx] = 1; /* Damage that reverted before the next capture. */
 	assert(prepare(SETTLE, desired, panel, &frame) == 0 && !dirty_tiles[ty][tx]);

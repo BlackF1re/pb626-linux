@@ -488,6 +488,38 @@ static int submit(const struct worker *worker, uint8_t command)
 /* Count completed fast transitions. This budget does not model reflectance. */
 static uint8_t fast_changes[PIXELS];
 static uint16_t cleanup_pixels[TILE_ROWS][TILE_COLS];
+static int clean_halo = 1;
+
+static int cleanup_near_tile(int tx, int ty)
+{
+	if (!clean_halo)
+		return cleanup_pixels[ty][tx] != 0;
+	for (int y = ty ? ty - 1 : ty; y <= ty + 1 && y < TILE_ROWS; y++)
+		for (int x = tx ? tx - 1 : tx; x <= tx + 1 && x < TILE_COLS; x++)
+			if (cleanup_pixels[y][x])
+				return 1;
+	return 0;
+}
+
+static int needs_scrub(const uint8_t *panel, int x, int y)
+{
+	size_t pixel = y * WIDTH + x;
+	if (fast_changes[pixel] == CLEAN_AFTER)
+		return 1;
+	if (!clean_halo)
+		return 0;
+
+	/* The reference chart showed a residual outline just beyond the changed
+	 * pixels. Include a one-pixel border on the same shade of paper.
+	 */
+	for (int ny = y ? y - 1 : y; ny <= y + 1 && ny < HEIGHT; ny++)
+		for (int nx = x ? x - 1 : x; nx <= x + 1 && nx < WIDTH; nx++) {
+			size_t neighbor = ny * WIDTH + nx;
+			if (fast_changes[neighbor] == CLEAN_AFTER && panel[neighbor] == panel[pixel])
+				return 1;
+		}
+	return 0;
+}
 
 static uint8_t automatic_command(uint64_t idle_us, int capture_pending, int captured,
 				 int different, int needs_cleanup)
@@ -514,7 +546,7 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 	memset(frame->tiles, 0, sizeof(frame->tiles));
 	for (int ty = 0; ty < TILE_ROWS; ty++)
 		for (int tx = 0; tx < TILE_COLS; tx++) {
-			if (command == CLEAN ? !cleanup_pixels[ty][tx] : !dirty_tiles[ty][tx])
+			if (command == CLEAN ? !cleanup_near_tile(tx, ty) : !dirty_tiles[ty][tx])
 				continue;
 			int right, bottom, differs = 0;
 			tile_bounds(tx, ty, &right, &bottom);
@@ -522,7 +554,7 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 				for (int x = tx * TILE; x < right; x++) {
 					size_t i = y * WIDTH + x;
 					uint8_t target = desired[i], old = panel[i];
-					int scrub = command == CLEAN && fast_changes[i] == CLEAN_AFTER;
+					int scrub = command == CLEAN && target == old && needs_scrub(panel, x, y);
 					uint8_t level = target;
 					differs |= target != old;
 					if (command == PREVIEW)
@@ -569,8 +601,9 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 					uint8_t level = sample & WHITE;
 					differs |= level != desired[i];
 					if (sample & SCRUB) {
+						if (fast_changes[i] == CLEAN_AFTER)
+							cleanup_pixels[ty][tx]--;
 						fast_changes[i] = 0;
-						cleanup_pixels[ty][tx]--;
 					} else if (command == PREVIEW && panel[i] != level &&
 						   fast_changes[i] < CLEAN_AFTER) {
 						if (++fast_changes[i] == CLEAN_AFTER)
@@ -636,6 +669,8 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	unlink(argv[2]);
 	int profile = getenv("PB626_EPD_PROFILE") != NULL;
+	const char *halo = getenv("PB626_EPD_CLEAN_HALO");
+	clean_halo = !halo || strcmp(halo, "0");
 	XShmSegmentInfo shm = {0};
 	setup_shm(display, &shm);
 	if (profile)
