@@ -14,11 +14,12 @@ echo "5296b88a0f1e012e2cb9ada150a2bbadf728ca81e5a4fb2ab43c83a4d2158606  $archive
 tar -xf "$archive"
 
 cd "mesa-$version"
+# Keep Mesa assertions active while diagnosing GLES context initialization.
 meson setup build --wrap-mode=nofallback --prefix="$prefix" --libdir=lib \
-    --buildtype=release --strip \
+    --buildtype=debugoptimized -Db_ndebug=false --strip \
     -Dgallium-drivers=lima -Dvulkan-drivers=[] -Dplatforms=[] \
     -Degl=enabled -Degl-native-platform=surfaceless -Dgles2=enabled \
-    -Dgles1=disabled -Dglx=disabled -Dopengl=false -Dgbm=disabled \
+    -Dgles1=disabled -Dglx=disabled -Dopengl=true -Dgbm=disabled \
     -Dllvm=disabled -Dglvnd=disabled -Dshader-cache=disabled \
     -Dlibunwind=disabled -Dlmsensors=disabled -Dvalgrind=disabled -Dzstd=disabled \
     -Dbuild-tests=false -Dgallium-va=disabled -Dgallium-rusticl=false
