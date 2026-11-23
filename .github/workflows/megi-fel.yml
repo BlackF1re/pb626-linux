@@ -97,15 +97,30 @@ jobs:
             arm-linux-gnueabihf-gcc -x c -static - -o /tmp/pb626-toolchain-smoke
           test -s /tmp/pb626-toolchain-smoke
           file /tmp/pb626-toolchain-smoke | grep -q 'ARM'
-      - name: Record cross-compiler version for cache key
+      - name: Fingerprint the complete kernel build toolchain
         id: compiler
-        run: echo "version=$(arm-linux-gnueabihf-gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          # Kconfig records GCC, assembler, linker, and Rust feature versions.
+          # A GCC-only key can restore a non-reproducible .config.
+          fingerprint=$(
+            {
+              arm-linux-gnueabihf-gcc --version | sed -n '1p'
+              arm-linux-gnueabihf-as --version | sed -n '1p'
+              arm-linux-gnueabihf-ld --version | sed -n '1p'
+              gcc --version | sed -n '1p'
+              rustc --version 2>/dev/null || echo 'rustc unavailable'
+              dpkg-query -W -f='${Version}\n' gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross
+            } | sha256sum | cut -c1-20
+          )
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "Toolchain fingerprint: $fingerprint"
       - name: Restore prebuilt kernel and modules cache
         id: cache
         uses: actions/cache@v4
         with:
           path: kernel-cache
-          key: pb626-megi-kernel-v2-facc87117511221-${{ runner.os }}-${{ runner.arch }}-gcc${{ steps.compiler.outputs.version }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch') }}
+          key: pb626-megi-kernel-v3-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch') }}
       - name: Fetch pinned Megi 7.2 source and verify A13 drivers
         run: |
           set -euo pipefail
@@ -126,11 +141,32 @@ jobs:
           git -C linux apply "$GITHUB_WORKSPACE/patches/pwm-backlight-disconnect-when-off.patch"
           git -C linux apply "$GITHUB_WORKSPACE/patches/ektf2227-pocketbook-touch.patch"
           grep -A 13 '^static void rtl8xxxu_remove_interface' linux/drivers/net/wireless/realtek/rtl8xxxu/core.c | grep -Fq 'NL80211_IFTYPE_UNSPECIFIED'
-      - name: Compile zImage and all modules only on cache miss
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Verify cached Kconfig reproducibility
+        id: kconfig
+        run: |
+          set -euo pipefail
+          echo "rebuild=false" >> "$GITHUB_OUTPUT"
+          if [ "${{ steps.cache.outputs.cache-hit }}" != "true" ]; then
+            echo 'No kernel cache: compile using the pinned source and current tools.'
+            exit 0
+          fi
+          export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
+          cp kernel-cache/pb626-megi.config linux/.config
+          make -C linux olddefconfig
+          if ! cmp -s linux/.config kernel-cache/pb626-megi.config; then
+            echo '::warning::Cached kernel .config differs from current Kconfig; rebuilding kernel and modules together.'
+            diff -u kernel-cache/pb626-megi.config linux/.config || true
+            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compile zImage and all modules on cache miss or config drift
+        if: steps.cache.outputs.cache-hit != 'true' || steps.kconfig.outputs.rebuild == 'true'
         run: |
           set -euo pipefail
           export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
+          # A stale cache must never be mixed with newly generated DTBs.
+          if [ "${{ steps.kconfig.outputs.rebuild }}" = true ]; then
+            rm -rf kernel-cache
+          fi
           bash scripts/configure-megi-kernel.sh
           make -C linux -j"$(nproc)" KCFLAGS=-Wno-error zImage modules
           mkdir -p kernel-cache module-root
@@ -167,13 +203,18 @@ jobs:
           grep -qx 'CONFIG_REGULATOR_TPS65185=y' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_DRM_LIMA=m' kernel-cache/pb626-megi.config
           echo "Prebuilt kernel cache hit: ${{ steps.cache.outputs.cache-hit }}"
+          echo "Rebuilt for Kconfig drift: ${{ steps.kconfig.outputs.rebuild }}"
       - name: Build current Device Trees
         run: |
           set -euo pipefail
           export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
           cp kernel-cache/pb626-megi.config linux/.config
           make -C linux olddefconfig
-          cmp -s linux/.config kernel-cache/pb626-megi.config
+          if ! cmp -s linux/.config kernel-cache/pb626-megi.config; then
+            echo "::error::DTB Kconfig differs from the kernel that supplied zImage/modules"
+            diff -u kernel-cache/pb626-megi.config linux/.config || true
+            exit 1
+          fi
           mkdir -p dtb-stage
           bash scripts/build-megi-variants.sh linux dtb-stage "$PWD"
       - name: Assemble portable kernel-stage artifact
