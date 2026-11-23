@@ -26,7 +26,8 @@ enum { SOURCES = HEIGHT, GATES = WIDTH,
        HEADER_WORDS = SUN5I_EINK_HDR_SIZE / sizeof(uint32_t),
        FRAME_WORDS = HEADER_WORDS + CLOCKS * ROWS, FRAME_BYTES = FRAME_WORDS * 4,
        LEVELS = 16, TRANSITIONS = LEVELS * LEVELS,
-       LUT_BYTES = TRANSITIONS / 4, MAX_PHASES = 256, QUEUE_SIZE = 8 };
+       LUT_BYTES = TRANSITIONS / 4, MAX_PHASES = 256, QUEUE_SIZE = 8,
+       GROUP_CODES = 256, GROUP_HASH_SIZE = 2 * GROUP_CODES };
 
 enum { S_LE = 1 << 13, G_MODE = 1 << 15, S_OE = 1 << 20,
        S_SP = 1 << 21, G_CLK = 1 << 22, G_SP = 1 << 23,
@@ -63,9 +64,15 @@ struct buffer {
 	struct span_range rows[GATES];
 };
 
+enum render_style { RENDER_SCALAR, RENDER_STAGED, RENDER_INDEXED };
+
 struct renderer {
 	int fd, profile;
-	unsigned int buffers_count;
+	unsigned int buffers_count, prefill;
+	enum render_style style;
+	uint8_t *group_codes;
+	uint16_t group_patterns[GROUP_CODES][4];
+	unsigned int patterns_count;
 	struct buffer buffers[QUEUE_SIZE];
 	struct waveform wbf;
 	struct update cache[DU4 + 1], planned;
@@ -75,7 +82,7 @@ struct renderer {
 	uint8_t previous[PIXELS], target[PIXELS];
 	uint16_t transitions[PIXELS];
 	struct span_range rows[GATES];
-	bool known;
+	bool known, auto_fast;
 };
 
 static _Noreturn void fail(const char *message)
@@ -412,6 +419,36 @@ static uint32_t source_word(unsigned int data)
 	return ((data & 0x1f) << 3) | ((data & 0xe0) << 5);
 }
 
+/* Index repeated four-source patterns once per update. The bounded table
+ * leaves complex frames on the general renderer and keeps each phase LUT hot.
+ */
+static unsigned int index_groups(struct renderer *renderer)
+{
+	uint16_t hash[GROUP_HASH_SIZE] = {0};
+	unsigned int count = 0;
+	for (unsigned int y = 0; y < GATES; y++) {
+		struct span_range row = renderer->rows[y];
+		for (unsigned int x = row.first; x < row.end; x++) {
+			const uint16_t *p = renderer->transitions + y * SOURCES + 4 * x;
+			unsigned int slot = (p[0] * 137 + p[1] * 149 + p[2] * 167 +
+					     p[3] * 179) & (GROUP_HASH_SIZE - 1);
+			while (hash[slot] &&
+			       memcmp(p, renderer->group_patterns[hash[slot] - 1],
+				      sizeof(renderer->group_patterns[0])))
+				slot = (slot + 1) & (GROUP_HASH_SIZE - 1);
+			if (!hash[slot]) {
+				if (count == GROUP_CODES)
+					return 0;
+				memcpy(renderer->group_patterns[count], p,
+				       sizeof(renderer->group_patterns[0]));
+				hash[slot] = ++count;
+			}
+			renderer->group_codes[y * GROUPS + x] = hash[slot] - 1;
+		}
+	}
+	return count;
+}
+
 static void render(struct buffer *buffer, const struct renderer *renderer,
 		   const struct phase *phase, bool reset)
 {
@@ -423,6 +460,14 @@ static void render(struct buffer *buffer, const struct renderer *renderer,
 				pins[pixel][t + 1] = htole32(source_word(phase->lut[t] << (6 - 2 * pixel)));
 	}
 	uint32_t uniform = htole32(source_word(phase->lut[0] * 0x55));
+	uint32_t group_pins[GROUP_CODES];
+	bool indexed = !reset && renderer->patterns_count;
+	if (indexed)
+		for (unsigned int i = 0; i < renderer->patterns_count; i++) {
+			const uint16_t *p = renderer->group_patterns[i];
+			group_pins[i] = pins[0][p[0]] | pins[1][p[1]] |
+					pins[2][p[2]] | pins[3][p[3]];
+		}
 	for (unsigned int y = 0; y < GATES; y++) {
 		struct span_range old = buffer->rows[y];
 		struct span_range row = reset ? (struct span_range){0, GROUPS} : renderer->rows[y];
@@ -441,10 +486,23 @@ static void render(struct buffer *buffer, const struct renderer *renderer,
 				memcpy(out + first, neutral + first, (old.end - first) * sizeof(*out));
 			}
 			const uint16_t *pixels = renderer->transitions + y * SOURCES + 4 * row.first;
-			for (unsigned int x = row.first; x < row.end; x++, pixels += 4)
-				out[x] = neutral[x] | (reset ? uniform :
-					pins[0][pixels[0]] | pins[1][pixels[1]] |
-					pins[2][pixels[2]] | pins[3][pixels[3]]);
+			uint32_t staged[GROUPS];
+			uint32_t *dest = renderer->style == RENDER_SCALAR ? out : staged;
+			if (reset) {
+				for (unsigned int x = row.first; x < row.end; x++)
+					dest[x] = neutral[x] | uniform;
+			} else if (indexed) {
+				const uint8_t *codes = renderer->group_codes + y * GROUPS;
+				for (unsigned int x = row.first; x < row.end; x++)
+					dest[x] = neutral[x] | group_pins[codes[x]];
+			} else {
+				for (unsigned int x = row.first; x < row.end; x++, pixels += 4)
+					dest[x] = neutral[x] | pins[0][pixels[0]] | pins[1][pixels[1]] |
+						  pins[2][pixels[2]] | pins[3][pixels[3]];
+			}
+			if (dest == staged)
+				memcpy(out + row.first, staged + row.first,
+				       (row.end - row.first) * sizeof(*out));
 		}
 		buffer->rows[y] = row;
 	}
@@ -501,12 +559,28 @@ static void refresh(struct renderer *renderer, enum mode mode)
 	for (unsigned int i = 0; i < update->count; i++)
 		scans += update->phases[i].scans;
 
-	for (; queued < renderer->buffers_count && queued < update->count; queued++)
+	unsigned int initial = renderer->buffers_count;
+	if (renderer->prefill && renderer->prefill < initial)
+		initial = renderer->prefill;
+	renderer->patterns_count = 0;
+	if (mode != INIT && update->count >= 6 && renderer->group_codes)
+		renderer->patterns_count = index_groups(renderer);
+	uint64_t index_done = now_us();
+	for (; queued < initial && queued < update->count; queued++)
 		enqueue(renderer, queued, &update->phases[queued], mode == INIT, &render_us);
 
+	uint64_t preloaded = now_us(), first_irq = 0, last_irq = 0, max_gap = 0;
 	enum v4l2_buf_type stream = type;
-	if (retry_ioctl(fd, VIDIOC_STREAMON, &stream))
+	if (retry_ioctl(fd, VIDIOC_STREAMON, &stream)) {
+		int error = errno;
+		fprintf(stderr, "epd: STREAMON mode=%s queued=%u interval=%u us=%llu errno=%d\n",
+			modes[mode], queued, renderer->wbf.interval,
+			(unsigned long long)(now_us() - preloaded), error);
 		fail("could not start E Ink scanout");
+	}
+	uint64_t streaming = now_us();
+	for (; queued < renderer->buffers_count && queued < update->count; queued++)
+		enqueue(renderer, queued, &update->phases[queued], mode == INIT, &render_us);
 	for (unsigned int done = 0; done < update->count; done++) {
 		struct pollfd pollfd = { .fd = fd, .events = POLLOUT };
 		struct v4l2_buffer info = { .type = type, .memory = V4L2_MEMORY_MMAP };
@@ -518,9 +592,24 @@ static void refresh(struct renderer *renderer, enum mode mode)
 		    retry_ioctl(fd, VIDIOC_DQBUF, &info) || info.index >= renderer->buffers_count ||
 		    info.sequence != done || (info.flags & V4L2_BUF_FLAG_ERROR))
 			fail("did not complete every E Ink phase");
+		if (renderer->profile) {
+			uint64_t irq = (uint64_t)info.timestamp.tv_sec * 1000000 + info.timestamp.tv_usec;
+			if (done) {
+				uint64_t gap = irq - last_irq;
+				unsigned int repeats = update->phases[done].scans;
+				/* Neutral reference at the configured 84.5 scans/s. */
+				uint64_t expected = repeats * UINT64_C(2000000) / 169;
+				if (gap > expected && gap - expected > max_gap)
+					max_gap = gap - expected;
+			} else {
+				first_irq = irq;
+			}
+			last_irq = irq;
+		}
 		if (queued < update->count)
 			enqueue(renderer, info.index, &update->phases[queued++], mode == INIT, &render_us);
 	}
+	uint64_t finished = now_us();
 	if (retry_ioctl(fd, VIDIOC_STREAMOFF, &stream))
 		fail("could not stop E Ink scanout");
 	if (renderer->profile) {
@@ -528,7 +617,22 @@ static void refresh(struct renderer *renderer, enum mode mode)
 		fprintf(stderr, "epd: mode=%s scans=%u buffers=%u render_us=%llu v4l2_us=%llu scan_total_us=%llu\n",
 			modes[mode], scans, update->count, (unsigned long long)render_us,
 			(unsigned long long)(elapsed - render_us), (unsigned long long)elapsed);
+		fprintf(stderr, "epd: index_us=%llu patterns=%u preload_us=%llu streamon_us=%llu "
+			"first_irq_us=%llu last_irq_us=%llu max_irq_excess_us=%llu streamoff_us=%llu interval=%u\n",
+			(unsigned long long)(index_done - start), renderer->patterns_count,
+			(unsigned long long)(preloaded - index_done), (unsigned long long)(streaming - preloaded),
+			(unsigned long long)(first_irq - start), (unsigned long long)(last_irq - start),
+			(unsigned long long)max_gap, (unsigned long long)(now_us() - finished),
+			renderer->wbf.interval);
 	}
+}
+
+static unsigned int scan_count(const struct update *update)
+{
+	unsigned int scans = 0;
+	for (unsigned int i = 0; i < update->count; i++)
+		scans += update->phases[i].scans;
+	return scans;
 }
 
 static void invalidate(void)
@@ -604,15 +708,21 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 	}
 	if (mode != INIT && changed) {
 		cache_mode(renderer, mode);
-		if (fallback && !supports(renderer, mode, active)) {
-            /* Keep a legal waveform even if a factory WBF differs. */
-            enum mode next = mode == A2 ? DU : mode == DU4 ? GL16 :
-                             mode == GL16 ? GC16 : mode;
-            if (next != mode) {
-                mode = next;
-                cache_mode(renderer, mode);
-            }
-        }
+		if (fallback && mode == A2) {
+			cache_mode(renderer, DU);
+			if (!supports(renderer, A2, active) ||
+			    (renderer->auto_fast && supports(renderer, DU, active) &&
+			     scan_count(&renderer->cache[DU]) <= scan_count(&renderer->cache[A2])))
+				mode = DU;
+		}
+		if (fallback && mode == DU4 && !supports(renderer, mode, active)) {
+			mode = GL16;
+			cache_mode(renderer, mode);
+		}
+		if (fallback && mode == GL16 && !supports(renderer, mode, active)) {
+			mode = GC16;
+			cache_mode(renderer, mode);
+		}
 		if (!supports(renderer, mode, active))
 			fail("this mode cannot perform every requested transition; use partial or full");
 	}
@@ -715,6 +825,27 @@ int main(int argc, char **argv)
 	static struct renderer renderer;
 	renderer.fd = fd;
 	renderer.profile = getenv("PB626_EPD_PROFILE") != NULL;
+	const char *style = getenv("PB626_EPD_RENDER");
+	if (!style || !strcmp(style, "scalar"))
+		renderer.style = RENDER_SCALAR;
+	else if (!strcmp(style, "staged"))
+		renderer.style = RENDER_STAGED;
+	else if (!strcmp(style, "indexed")) {
+		renderer.style = RENDER_INDEXED;
+		renderer.group_codes = malloc(GATES * GROUPS);
+	} else {
+		fail("PB626_EPD_RENDER must be scalar, staged or indexed");
+	}
+	const char *prefill = getenv("PB626_EPD_PREFILL");
+	if (prefill) {
+		char *end;
+		unsigned long n = strtoul(prefill, &end, 10);
+		if (!n || n > QUEUE_SIZE || *end)
+			fail("PB626_EPD_PREFILL must be between 1 and 8");
+		renderer.prefill = n;
+	}
+	const char *fast = getenv("PB626_EPD_FAST_MODE");
+	renderer.auto_fast = fast && !strcmp(fast, "auto");
 	load_waveform(&renderer.wbf, argv[1]);
 	/* The stock WBF targets 85 scans/s. The A13 clock tree supplies
 	 * 22.5 MHz here, giving 84.5 scans/s with Megi's porch settings.

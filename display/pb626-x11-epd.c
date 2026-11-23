@@ -294,7 +294,7 @@ static const uint8_t blue_noise[16][16] = {
 	{ 236, 140,  29, 247,  16, 110,  51, 207,  28, 180,  18, 147,  71, 124, 162, 106 },
 };
 
-static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x, int y)
+static inline uint8_t quantize_reference(unsigned int value, unsigned int contrast, int x, int y)
 {
 	if (gray_profile == GRAY_UI)
 		return (value * WHITE + 127) / 255;
@@ -304,6 +304,37 @@ static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x,
 		return (value * WHITE * 256 + threshold * 255 + 127) / (255 * 256);
 	}
 	return paper_level(value, contrast, x, y);
+}
+
+/* Cache the exact reference mapping in screen phase order. Each position
+ * needs one byte lookup, and strong edges retain the nearest gray level.
+ */
+static uint8_t quant_table[16][16][256], nearest_level[256];
+static int quant_reference;
+
+static void setup_quantization(void)
+{
+	quant_reference = getenv("PB626_EPD_QUANT_REFERENCE") != NULL;
+	if (quant_reference)
+		return;
+	int period = gray_profile == GRAY_PHOTO ? 16 : 4;
+	for (int v = 0; v < 256; v++) {
+		nearest_level[v] = quantize_reference(v, 48, 0, 0);
+		if (gray_profile != GRAY_UI)
+			for (int y = 0; y < period; y++)
+				for (int x = 0; x < period; x++)
+					quant_table[y][x][v] = quantize_reference(v, 0, x, y);
+	}
+}
+
+static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x, int y)
+{
+	if (quant_reference)
+		return quantize_reference(value, contrast, x, y);
+	if (contrast >= 48 || gray_profile == GRAY_UI)
+		return nearest_level[value];
+	unsigned int mask = gray_profile == GRAY_PHOTO ? 15 : 3;
+	return quant_table[y & mask][x & mask][value];
 }
 
 static int shm_attach_error;
@@ -599,7 +630,7 @@ static int a2_eligible(const struct shared_frame *frame, const uint8_t *panel)
     return changes != 0;
 }
 
-enum fast_profile { FAST_DU, FAST_A2, FAST_DU4 };
+enum fast_profile { FAST_DU, FAST_A2, FAST_DU4, FAST_AUTO };
 
 /* Count completed fast transitions. This budget does not model reflectance. */
 static uint8_t fast_changes[PIXELS];
@@ -774,6 +805,7 @@ int main(int argc, char **argv)
 		}
 	}
 	setup_gray(selected, lightness, gamma);
+	setup_quantization();
     const char *fast = getenv("PB626_EPD_FAST_MODE");
     enum fast_profile fast_mode = FAST_DU;
     if (fast && strcmp(fast, "du")) {
@@ -781,6 +813,8 @@ int main(int argc, char **argv)
             fast_mode = FAST_A2;
         else if (!strcmp(fast, "du4"))
             fast_mode = FAST_DU4;
+        else if (!strcmp(fast, "auto"))
+            fast_mode = FAST_AUTO;
         else {
             fprintf(stderr, "pb626-x11-epd: fast mode must be du, a2, or du4\n");
             return EXIT_FAILURE;
@@ -842,7 +876,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f fast=%s\n",
                 shm.shmaddr ? "MIT-SHM" : "XGetImage", profiles[selected],
                 lightness ? "cie-lstar" : "srgb", gamma,
-                fast_mode == FAST_A2 ? "a2" : fast_mode == FAST_DU4 ? "du4" : "du");
+                fast_mode == FAST_A2 ? "a2" : fast_mode == FAST_DU4 ? "du4" :
+                fast_mode == FAST_AUTO ? "auto" : "du");
 	int offset = (width - WIDTH) / 2;
 	unsigned int failures = 0;
 	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
@@ -948,7 +983,7 @@ int main(int argc, char **argv)
 			changes = prepare(command, frame, previous, worker.frame);
 		}
 		/* A2 only when every changed pixel is an exact binary transition. */
-        if (changes && command == PREVIEW && fast_mode == FAST_A2 &&
+        if (changes && command == PREVIEW && (fast_mode == FAST_A2 || fast_mode == FAST_AUTO) &&
             a2_eligible(worker.frame, previous))
             command = PREVIEW_A2;
         uint64_t submit_start = now_us();
