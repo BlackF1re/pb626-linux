@@ -124,8 +124,9 @@ int main(void)
     assert(ff.pixels[p] == 10 && !a2_eligible(&ff, fp));
     acknowledge(PREVIEW_DU4, &ff, fd, fp);
     assert(fp[p] == 10 && fast_changes[p] == 1);
-    for (unsigned int i = 0; i <= WHITE; i++)
-        assert(preview_level4(i) <= WHITE && preview_level4(i) % 5 == 0);
+	for (unsigned int i = 0; i <= WHITE; i++) {
+		assert(preview_level4(i) <= WHITE && preview_level4(i) % 5 == 0);
+	}
 	puts("E Ink preview, settle, bounded local cleanup and sparse updates passed");
 	return 0;
 }
