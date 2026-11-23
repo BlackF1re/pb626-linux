@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -17,10 +21,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install shellcheck
+      - name: Ensure shellcheck is available
         run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends shellcheck
+          fi
+          shellcheck --version
       - name: Validate shell syntax
         run: |
           sh -n scripts/probe-device.sh
@@ -32,6 +39,8 @@ jobs:
           bash -n scripts/fel-boot.sh
           bash -n scripts/configure-megi-kernel.sh
           bash -n scripts/build-alpine-rootfs.sh
+          bash -n scripts/build-megi-desktop.sh
+          bash -n scripts/build-megi-variants.sh
           bash -n scripts/assemble-megi-ram.sh
           test -s board/megi/wifi-test.conf
           grep -Fqx '    ssid="ACCESS_POINT"' board/megi/wifi-test.conf

@@ -7,6 +7,11 @@ on:
       - '.github/workflows/uboot.yml'
       - 'boot/pb626-uboot-entry.S'
       - 'boot/pb626-emmc-init.c'
+  pull_request:
+    paths:
+      - '.github/workflows/uboot.yml'
+      - 'boot/pb626-uboot-entry.S'
+      - 'boot/pb626-emmc-init.c'
   workflow_dispatch:
     inputs:
       kernel_run_id:
@@ -33,12 +38,23 @@ jobs:
           run-id: ${{ inputs.kernel_run_id }}
           github-token: ${{ github.token }}
           path: kernel-bundle
-      - name: Build Megi U-Boot for the PocketBook
+      - name: Restore pinned U-Boot binary cache
+        id: uboot-cache
+        uses: actions/cache@v4
+        with:
+          path: uboot-cache
+          # Invalidate when source revision or bootloader build recipe changes.
+          key: pb626-uboot-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.UBOOT_REV }}-${{ hashFiles('.github/workflows/uboot.yml') }}
+      - name: Install packaging cross-tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-arm-linux-gnueabihf libc6-dev-armhf-cross bc bison flex libssl-dev \
-            python3-pyelftools python3-setuptools device-tree-compiler cpio
+            gcc-arm-linux-gnueabihf libc6-dev-armhf-cross device-tree-compiler cpio
+      - name: Compile pinned U-Boot only on cache miss
+        if: steps.uboot-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex libssl-dev python3-pyelftools python3-setuptools
           git init u-boot
           git -C u-boot fetch --depth=1 https://codeberg.org/megi/u-boot.git "$UBOOT_REV"
           git -C u-boot checkout --detach FETCH_HEAD
@@ -69,8 +85,22 @@ jobs:
           grep -Fx 'CONFIG_CMD_ITEST=y' u-boot/.config
           grep -Fx 'CONFIG_CMD_SLEEP=y' u-boot/.config
           make -C u-boot -j"$(nproc)"
-          mkdir dist
-          cp u-boot/u-boot-sunxi-with-spl.bin dist/
+          mkdir -p uboot-cache
+          # pb626-uboot-entry.S embeds u-boot/u-boot.bin via .incbin;
+          # caching only SPL silently breaks bImage assembly on warm runs.
+          test -s u-boot/u-boot.bin
+          cp u-boot/u-boot-sunxi-with-spl.bin u-boot/u-boot.bin uboot-cache/
+          (cd uboot-cache && sha256sum u-boot-sunxi-with-spl.bin u-boot.bin > SHA256SUMS)
+      - name: Assemble and verify PocketBook U-Boot payloads
+        run: |
+          (cd uboot-cache && sha256sum -c SHA256SUMS)
+          # Both outputs must exist after cache restoration, even when
+          # "Compile pinned U-Boot" was skipped.
+          test -s uboot-cache/u-boot-sunxi-with-spl.bin
+          test -s uboot-cache/u-boot.bin
+          mkdir -p u-boot dist
+          cp uboot-cache/u-boot.bin u-boot/u-boot.bin
+          cp uboot-cache/u-boot-sunxi-with-spl.bin dist/
           test "$(dd if=dist/u-boot-sunxi-with-spl.bin bs=1 skip=4 count=8 status=none)" = 'eGON.BT0'
           test "$(stat -c '%s' dist/u-boot-sunxi-with-spl.bin)" -le $((0x100000))
           touch factory-kernel.bin factory-dtb.bin factory-initrd.bin

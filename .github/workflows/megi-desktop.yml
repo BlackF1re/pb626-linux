@@ -19,6 +19,10 @@ on:
       - 'scripts/fel-boot.sh'
       - 'scripts/Start-PB626.ps1'
       - 'scripts/Start-PB626Desktop.ps1'
+  pull_request:
+    paths:
+      - '.github/workflows/megi-desktop.yml'
+      - 'scripts/build-megi-desktop.sh'
   workflow_run:
     workflows: [Megi mainline Linux 7.2 RAM Linux]
     branches: [main]
@@ -51,6 +55,10 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The workflow_run event executes on main; pin its source snapshot
+          # to the exact revision that produced the successful kernel bundle.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
       - name: Select verified FEL kernel run
         id: kernel
         env:
@@ -70,7 +78,21 @@ jobs:
             KERNEL_RUN=$(gh run list --workflow megi-fel.yml --branch main --status success \
               --json databaseId,event --jq 'map(select(.event == "push" or .event == "workflow_dispatch")) | .[0].databaseId // empty')
           fi
-          echo "run_id=${KERNEL_RUN:-45063328040}" >> "$GITHUB_OUTPUT"
+          if [ -z "$KERNEL_RUN" ]; then
+            echo "::error::No verified main-branch FEL bundle available. Run megi-fel first."
+            exit 1
+          fi
+          echo "run_id=$KERNEL_RUN" >> "$GITHUB_OUTPUT"
+      - name: Reuse verified Desktop userland
+        id: desktop-cache
+        if: steps.kernel.outputs.deferred != 'true' && inputs.desktop_run_id == ''
+        uses: actions/cache@v4
+        with:
+          # Only cache the completed base userland. The current bundle's
+          # kernel modules and E Ink worker are always installed afresh,
+          # and the X11 bridge is always recompiled.
+          path: desktop-cache
+          key: pb626-desktop-root-v1-${{ runner.os }}-${{ hashFiles('scripts/build-megi-desktop.sh', 'scripts/build-alpine-rootfs.sh', 'scripts/assemble-megi-ram.sh', 'scripts/inspect-live.sh', 'scripts/pb626-network.sh', 'scripts/configure-megi-kernel.sh', '.github/workflows/megi-fel.yml', 'boot/**', 'board/megi/**', 'patches/**', 'display/matchbox-keyboard-eink.patch', 'display/matchbox-panel-power-supply.patch') }}
       - uses: actions/download-artifact@v4
         if: steps.kernel.outputs.deferred != 'true'
         with:
@@ -96,9 +118,18 @@ jobs:
         run: |
           if [ -d previous-desktop ]; then
             bash scripts/build-megi-desktop.sh fel-bundle previous-desktop
+          elif [ -s desktop-cache/pb626-desktop-root.cpio.gz ]; then
+            bash scripts/build-megi-desktop.sh fel-bundle desktop-cache
           else
             bash scripts/build-megi-desktop.sh fel-bundle
           fi
+      - name: Prepare Desktop userland for future cache hits
+        if: steps.kernel.outputs.deferred != 'true' && inputs.desktop_run_id == '' && steps.desktop-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p desktop-cache
+          cp dist/pb626-desktop-root.cpio.gz desktop-cache/
+          (cd desktop-cache && sha256sum pb626-desktop-root.cpio.gz > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         if: steps.kernel.outputs.deferred != 'true'
         with:
