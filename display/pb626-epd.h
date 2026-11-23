@@ -19,7 +19,13 @@ static inline void tile_bounds(int tx, int ty, int *right, int *bottom)
 	*right = tx + 1 == TILE_COLS ? WIDTH : (tx + 1) * TILE;
 	*bottom = ty + 1 == TILE_ROWS ? HEIGHT : (ty + 1) * TILE;
 }
-enum command { PREVIEW = 'D', SETTLE = 'L', CLEAN = 'G', RESET = 'R' };
+enum command { PREVIEW = 'D', PREVIEW_A2 = 'A', PREVIEW_DU4 = '4',
+               SETTLE = 'L', CLEAN = 'G', RESET = 'R' };
+/* Stock DU4 targets only 0, 5, 10 and 15. */
+static inline uint8_t preview_level4(uint8_t target)
+{
+    return (uint8_t)(((unsigned int)target + 2) / 5 * 5);
+}
 
 static inline uint64_t now_us(void)
 {

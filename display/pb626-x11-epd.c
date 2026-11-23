@@ -294,7 +294,7 @@ static const uint8_t blue_noise[16][16] = {
 	{ 236, 140,  29, 247,  16, 110,  51, 207,  28, 180,  18, 147,  71, 124, 162, 106 },
 };
 
-static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x, int y)
+static inline uint8_t quantize_reference(unsigned int value, unsigned int contrast, int x, int y)
 {
 	if (gray_profile == GRAY_UI)
 		return (value * WHITE + 127) / 255;
@@ -304,6 +304,37 @@ static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x,
 		return (value * WHITE * 256 + threshold * 255 + 127) / (255 * 256);
 	}
 	return paper_level(value, contrast, x, y);
+}
+
+/* Cache the exact reference mapping in screen phase order. Each position
+ * needs one byte lookup, and strong edges retain the nearest gray level.
+ */
+static uint8_t quant_table[16][16][256], nearest_level[256];
+static int quant_reference;
+
+static void setup_quantization(void)
+{
+	quant_reference = getenv("PB626_EPD_QUANT_REFERENCE") != NULL;
+	if (quant_reference)
+		return;
+	int period = gray_profile == GRAY_PHOTO ? 16 : 4;
+	for (int v = 0; v < 256; v++) {
+		nearest_level[v] = quantize_reference(v, 48, 0, 0);
+		if (gray_profile != GRAY_UI)
+			for (int y = 0; y < period; y++)
+				for (int x = 0; x < period; x++)
+					quant_table[y][x][v] = quantize_reference(v, 0, x, y);
+	}
+}
+
+static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x, int y)
+{
+	if (quant_reference)
+		return quantize_reference(value, contrast, x, y);
+	if (contrast >= 48 || gray_profile == GRAY_UI)
+		return nearest_level[value];
+	unsigned int mask = gray_profile == GRAY_PHOTO ? 15 : 3;
+	return quant_table[y & mask][x & mask][value];
 }
 
 static int shm_attach_error;
@@ -570,6 +601,37 @@ static int submit(const struct worker *worker, uint8_t command)
 	return done == 1 && ack == command ? 0 : -1;
 }
 
+/* A2 has only exact 0->15 / 15->0 transitions at every stock temperature.
+ * Check the committed source levels; preview pixels outside selected tiles
+ * may hold stale values in the shared frame.
+ */
+static int a2_eligible(const struct shared_frame *frame, const uint8_t *panel)
+{
+    unsigned int changes = 0;
+    for (int ty = 0; ty < TILE_ROWS; ty++)
+        for (int tx = 0; tx < TILE_COLS; tx++) {
+            if (!frame->tiles[ty][tx])
+                continue;
+            int right, bottom;
+            tile_bounds(tx, ty, &right, &bottom);
+            for (int y = ty * TILE; y < bottom; y++)
+                for (int x = tx * TILE; x < right; x++) {
+                    size_t i = y * WIDTH + x;
+                    uint8_t sample = frame->pixels[i];
+                    if (sample == KEEP)
+                        continue;
+                    unsigned int old = panel[i], level = sample & WHITE;
+                    if ((sample & SCRUB) ||
+                        !((old == 0 && level == WHITE) || (old == WHITE && level == 0)))
+                        return 0;
+                    changes++;
+                }
+        }
+    return changes != 0;
+}
+
+enum fast_profile { FAST_DU, FAST_A2, FAST_DU4, FAST_AUTO };
+
 /* Count completed fast transitions. This budget does not model reflectance. */
 static uint8_t fast_changes[PIXELS];
 static uint16_t cleanup_pixels[TILE_ROWS][TILE_COLS];
@@ -647,8 +709,10 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 					int scrub = command == CLEAN && target == old && needs_scrub(panel, x, y);
 					uint8_t level = target;
 					differs |= target != old;
-					if (command == PREVIEW)
-						level = abs(target - old) >= 3 ? preview_level(target, old) : old;
+					if (command == PREVIEW || command == PREVIEW_A2)
+                        level = abs(target - old) >= 3 ? preview_level(target, old) : old;
+                    else if (command == PREVIEW_DU4)
+                        level = preview_level4(target);
 					if (scrub || (command != CLEAN && level != old)) {
 						frame->pixels[i] = level | (scrub ? SCRUB : 0);
 						frame->tiles[ty][tx] = 1;
@@ -694,8 +758,9 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 						if (fast_changes[i] == CLEAN_AFTER)
 							cleanup_pixels[ty][tx]--;
 						fast_changes[i] = 0;
-					} else if (command == PREVIEW && panel[i] != level &&
-						   fast_changes[i] < CLEAN_AFTER) {
+					} else if ((command == PREVIEW || command == PREVIEW_A2 ||
+                             command == PREVIEW_DU4) && panel[i] != level &&
+                             fast_changes[i] < CLEAN_AFTER) {
 						if (++fast_changes[i] == CLEAN_AFTER)
 							cleanup_pixels[ty][tx]++;
 					}
@@ -740,6 +805,21 @@ int main(int argc, char **argv)
 		}
 	}
 	setup_gray(selected, lightness, gamma);
+	setup_quantization();
+    const char *fast = getenv("PB626_EPD_FAST_MODE");
+    enum fast_profile fast_mode = FAST_DU;
+    if (fast && strcmp(fast, "du")) {
+        if (!strcmp(fast, "a2"))
+            fast_mode = FAST_A2;
+        else if (!strcmp(fast, "du4"))
+            fast_mode = FAST_DU4;
+        else if (!strcmp(fast, "auto"))
+            fast_mode = FAST_AUTO;
+        else {
+            fprintf(stderr, "pb626-x11-epd: fast mode must be du, a2, or du4\n");
+            return EXIT_FAILURE;
+        }
+    }
 	Display *display = XOpenDisplay(NULL);
 	if (!display) {
 		fprintf(stderr, "pb626-x11-epd: cannot connect to Xorg\n");
@@ -793,22 +873,27 @@ int main(int argc, char **argv)
 	XShmSegmentInfo shm = {0};
 	setup_shm(display, &shm);
 	if (profile)
-		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f\n",
-			shm.shmaddr ? "MIT-SHM" : "XGetImage", profiles[selected],
-			lightness ? "cie-lstar" : "srgb", gamma);
+		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f fast=%s\n",
+                shm.shmaddr ? "MIT-SHM" : "XGetImage", profiles[selected],
+                lightness ? "cie-lstar" : "srgb", gamma,
+                fast_mode == FAST_A2 ? "a2" : fast_mode == FAST_DU4 ? "du4" :
+                fast_mode == FAST_AUTO ? "auto" : "du");
 	int offset = (width - WIDTH) / 2;
 	unsigned int failures = 0;
 	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
 	unsigned int cleanup_count = 0;
 	uint64_t last_damage = 0, pending_since = 0, next_capture = 0, layout_until = 0;
+	uint64_t damage_seen = 0;
 
 	for (;;) {
 		XEvent event;
 		while (XPending(display)) {
 			XNextEvent(display, &event);
-			if (damage && event.type == damage_event + XDamageNotify)
+			if (damage && event.type == damage_event + XDamageNotify) {
+				if (profile && !damage_seen)
+					damage_seen = now_us();
 				dirty = 1;
-			else if (event.type == PropertyNotify && event.xproperty.atom == active)
+			} else if (event.type == PropertyNotify && event.xproperty.atom == active)
 				focus_changed = 1;
 			else if (event.type == KeyPress && event.xkey.keycode == toggle) {
 				keyboard_command(display, root, keyboard, KEYBOARD_TOGGLE);
@@ -838,7 +923,7 @@ int main(int argc, char **argv)
 			dirty = 1;
 
 		struct capture_stats stats = {0};
-		uint64_t capture_start = now;
+		uint64_t capture_start = now, damage_wait = 0, ack = 0;
 		int captured = 0;
 		if ((dirty || !damage) && now >= next_capture && now >= layout_until) {
 			struct rect areas[MAX_REGIONS];
@@ -860,6 +945,9 @@ int main(int argc, char **argv)
 				if (capture(display, root, offset, areas[i], frame, pointer, controls.vertical, &stats, &shm))
 					goto failed;
 			captured = count != 0;
+			if (damage_seen)
+				damage_wait = capture_start - damage_seen;
+			damage_seen = 0;
 			dirty = 0;
 			now = now_us();
 			next_capture = now + (damage ? 16000 : 250000);
@@ -885,19 +973,26 @@ int main(int argc, char **argv)
 		}
 
 		uint8_t command = captured && (!has_frame || controls.clean_requested) ? RESET :
-			automatic_command(now - last_damage, dirty || now < layout_until,
-					  captured, different, cleanup_count);
+            automatic_command(now - last_damage, dirty || now < layout_until,
+                              captured, different, cleanup_count);
+        if (command == PREVIEW && fast_mode == FAST_DU4)
+            command = PREVIEW_DU4;
 
 		uint64_t prepare_start = now_us();
 		unsigned int changes = command ? prepare(command, frame, previous, worker.frame) : 0;
 		/* Gray-only activity may have no useful DU transitions. Bound its
 		 * wait without interrupting motion that DU can still show.
 		 */
-		if (!changes && command == PREVIEW && now >= pending_since + MAX_PENDING_US) {
+		if (!changes && (command == PREVIEW || command == PREVIEW_DU4) &&
+            now >= pending_since + MAX_PENDING_US) {
 			command = SETTLE;
 			changes = prepare(command, frame, previous, worker.frame);
 		}
-		uint64_t submit_start = now_us();
+		/* A2 only when every changed pixel is an exact binary transition. */
+        if (changes && command == PREVIEW && (fast_mode == FAST_A2 || fast_mode == FAST_AUTO) &&
+            a2_eligible(worker.frame, previous))
+            command = PREVIEW_A2;
+        uint64_t submit_start = now_us();
 		if (changes) {
 			if (submit(&worker, command)) {
 				stop_worker(&worker);
@@ -910,6 +1005,8 @@ int main(int argc, char **argv)
 					return EXIT_FAILURE;
 				continue;
 			}
+			if (profile)
+				ack = now_us();
 			acknowledge(command, worker.frame, frame, previous);
 			if (!has_frame) {
 				FILE *ready = fopen(argv[2], "w");
@@ -926,12 +1023,14 @@ int main(int argc, char **argv)
 			pending_since = now_us();
 		}
 		if (profile && (captured || changes))
-			fprintf(stderr, "x11-epd: mode=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu ipc_update_us=%llu total_us=%llu\n",
+			fprintf(stderr, "x11-epd: mode=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu ipc_update_us=%llu total_us=%llu capture_mono_us=%llu damage_wait_us=%llu ack_mono_us=%llu\n",
 				command ? command : '-', stats.pixels, changes,
 				(unsigned long long)stats.read_us, (unsigned long long)stats.quant_us,
 				(unsigned long long)(submit_start - prepare_start),
 				(unsigned long long)(changes ? now_us() - submit_start : 0),
-				(unsigned long long)(now_us() - capture_start));
+				(unsigned long long)(now_us() - capture_start),
+				(unsigned long long)capture_start, (unsigned long long)damage_wait,
+				(unsigned long long)ack);
 		if (changes || command == SETTLE)
 			continue; /* Discard intermediate frames and consume accumulated damage. */
 

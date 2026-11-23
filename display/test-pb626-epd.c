@@ -56,6 +56,56 @@ static void test_sparse_scan(void)
 		       FRAME_BYTES - SUN5I_EINK_HDR_SIZE));
 }
 
+static void test_render_equivalence(void)
+{
+	static struct renderer renderer;
+	static uint32_t reference_words[FRAME_WORDS], candidate_words[FRAME_WORDS];
+	static uint8_t codes[GATES * GROUPS];
+	struct buffer reference = { .data = reference_words };
+	struct buffer candidate = { .data = candidate_words };
+	struct phase phase = { .scans = 4 };
+	renderer.group_codes = codes;
+	scan_template(renderer.neutral);
+	memcpy(reference_words, renderer.neutral, FRAME_BYTES);
+	memcpy(candidate_words, renderer.neutral, FRAME_BYTES);
+	for (unsigned int pass = 0; pass < 12; pass++) {
+		memset(renderer.rows, 0, sizeof(renderer.rows));
+		memset(renderer.transitions, 0, sizeof(renderer.transitions));
+		for (unsigned int y = 0; y < GATES; y++) {
+			if ((y + pass) % 3 == 0)
+				continue;
+			unsigned int first = (y + pass) % 17;
+			unsigned int end = GROUPS - y % 31;
+			renderer.rows[y] = (struct span_range){first, end};
+			for (unsigned int x = first; x < end; x++) {
+				uint16_t *p = renderer.transitions + y * SOURCES + 4 * x;
+				for (unsigned int i = 0; i < 4; i++)
+					p[i] = (x + y + i) % 5 == 0 ? 0 : (x + y + i) % 2 ? 256 : 1;
+			}
+		}
+		for (unsigned int i = 0; i < TRANSITIONS; i++)
+			phase.lut[i] = (i + pass) % 4;
+		bool reset = pass % 4 == 0;
+		renderer.style = RENDER_SCALAR;
+		renderer.patterns_count = 0;
+		render(&reference, &renderer, &phase, reset);
+		renderer.style = pass % 2 ? RENDER_INDEXED : RENDER_STAGED;
+		if (renderer.style == RENDER_INDEXED) {
+			renderer.patterns_count = index_groups(&renderer);
+			assert(renderer.patterns_count > 1);
+		}
+		render(&candidate, &renderer, &phase, reset);
+		assert(!memcmp(reference_words, candidate_words, FRAME_BYTES));
+	}
+	renderer.rows[0] = (struct span_range){0, GROUPS};
+	renderer.rows[1] = (struct span_range){0, GROUPS};
+	for (unsigned int x = 0; x < 2 * GROUPS; x++) {
+		renderer.transitions[4 * x] = x % 257;
+		renderer.transitions[4 * x + 1] = x / 257;
+	}
+	assert(index_groups(&renderer) == 0);
+}
+
 static void test_waveform_policy(void)
 {
 	static struct renderer renderer;
@@ -77,11 +127,36 @@ static void test_waveform_policy(void)
 	assert(renderer.planned.phases[2].lut[0x8f] == 1);
 }
 
+static void test_fast_mode_selection(void)
+{
+	static struct renderer renderer;
+	bool active[TRANSITIONS] = { [0xf0] = true };
+	renderer.auto_fast = true;
+	renderer.driven[A2][0xf0] = true;
+	renderer.driven[DU][0xf0] = true;
+	renderer.cache[A2].count = 10;
+	renderer.cache[DU].count = 15;
+	assert(select_a2_or_du(&renderer, active) == A2);
+	renderer.cache[DU].count = 10;
+	assert(select_a2_or_du(&renderer, active) == DU);
+	renderer.cache[DU].count = 9;
+	assert(select_a2_or_du(&renderer, active) == DU);
+	renderer.auto_fast = false;
+	assert(select_a2_or_du(&renderer, active) == A2);
+	renderer.driven[A2][0xf0] = false;
+	assert(select_a2_or_du(&renderer, active) == DU);
+}
+
 int main(void)
 {
 	test_quantization();
 	test_sparse_scan();
+	test_render_equivalence();
 	test_waveform_policy();
+	test_fast_mode_selection();
+    assert(PREVIEW_A2 != PREVIEW && PREVIEW_DU4 != PREVIEW);
+    assert(preview_level4(4) == 5 && preview_level4(8) == 10);
+    assert(preview_level4(14) == WHITE);
 	puts("E Ink quantization, transition eligibility and scan buffer reuse passed");
 	return 0;
 }

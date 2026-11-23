@@ -7,6 +7,7 @@
 
 static void test_gray(void)
 {
+	quant_reference = 1;
 	setup_gray(GRAY_BALANCED, 0, 1.0);
 	assert(gray_value(255, 0, 0) == 127);
 	assert(gray_value(0, 255, 0) == 220);
@@ -37,7 +38,18 @@ static void test_gray(void)
 	setup_gray(GRAY_LEGACY, 0, 1.0);
 	assert(gray_value(255, 0, 0) == 56);
 	assert(quantize(127, 0, 0, 0) == paper_level(127, 0, 0, 0));
-	puts("E Ink grayscale profiles, neutral tones and stable dithering passed");
+	unsetenv("PB626_EPD_QUANT_REFERENCE");
+	for (int profile = GRAY_BALANCED; profile <= GRAY_LEGACY; profile++) {
+		setup_gray(profile, 0, 1.0);
+		setup_quantization();
+		for (int y = 0; y < 16; y++)
+			for (int x = 0; x < 16; x++)
+				for (unsigned int v = 0; v < 256; v++) {
+					assert(quantize(v, 47, x, y) == quantize_reference(v, 47, x, y));
+					assert(quantize(v, 48, x, y) == quantize_reference(v, 48, x, y));
+				}
+	}
+	puts("E Ink grayscale profiles, exact lookup and stable dithering passed");
 }
 
 int main(void)
@@ -104,6 +116,29 @@ int main(void)
 
 	dirty_tiles[ty][tx] = 1; /* Damage that reverted before the next capture. */
 	assert(prepare(SETTLE, desired, panel, &frame) == 0 && !dirty_tiles[ty][tx]);
+    /* Fast-mode semantics: no fake gray->A2 conversion, exact DU4 levels. */
+    static struct shared_frame ff;
+    static uint8_t fd[PIXELS], fp[PIXELS];
+    memset(fd, WHITE, PIXELS);
+    memset(fp, WHITE, PIXELS);
+    memset(dirty_tiles, 0, sizeof(dirty_tiles));
+    const size_t p = 3 * WIDTH + 4;
+    fd[p] = 0; dirty_tiles[0][0] = 1;
+    assert(prepare(PREVIEW, fd, fp, &ff) == 1);
+    assert(a2_eligible(&ff, fp));
+    fp[p] = 7;
+    assert(!a2_eligible(&ff, fp));
+    fp[p] = 0; fd[p] = WHITE;
+    assert(prepare(PREVIEW, fd, fp, &ff) == 1);
+    assert(a2_eligible(&ff, fp));
+    fp[p] = WHITE; fd[p] = 9;
+    assert(prepare(PREVIEW_DU4, fd, fp, &ff) == 1);
+    assert(ff.pixels[p] == 10 && !a2_eligible(&ff, fp));
+    acknowledge(PREVIEW_DU4, &ff, fd, fp);
+    assert(fp[p] == 10 && fast_changes[p] == 1);
+	for (unsigned int i = 0; i <= WHITE; i++) {
+		assert(preview_level4(i) <= WHITE && preview_level4(i) % 5 == 0);
+	}
 	puts("E Ink preview, settle, bounded local cleanup and sparse updates passed");
 	return 0;
 }

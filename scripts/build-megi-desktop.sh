@@ -118,7 +118,7 @@ fi
 
 # Always rebuild the bridge, even when reusing a previous desktop rootfs.
 sudo install -m 755 /usr/bin/qemu-arm-static desktop-root/usr/bin/
-test "$(/usr/bin/qemu-arm-static desktop-root/usr/bin/pb626-epd --protocol)" = pb626-epd-shm-2
+test "$(/usr/bin/qemu-arm-static desktop-root/usr/bin/pb626-epd --protocol)" = pb626-epd-shm-3
 sudo install -m 644 display/{pb626-x11-epd.c,test-pb626-x11-epd.c,pb626-epd.h} desktop-root/tmp/
 sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
 sudo chroot desktop-root /usr/bin/qemu-arm-static /sbin/apk add --no-cache --virtual .pb626-bridge-build \
