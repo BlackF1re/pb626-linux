@@ -41,6 +41,9 @@ int main(void)
 	assert(automatic_command(CLEAN_QUIET_US - 1, 0, 0, 0, 1) == 0);
 	assert(automatic_command(CLEAN_QUIET_US, 1, 0, 0, 1) == 0);
 	assert(automatic_command(CLEAN_QUIET_US, 0, 0, 0, 1) == CLEAN);
+	assert(automatic_command(CLEAN_QUIET_US, 0, 0, 0, LARGE_CLEAN_PIXELS - 1) == CLEAN);
+	assert(automatic_command(CLEAN_QUIET_US, 0, 0, 0, LARGE_CLEAN_PIXELS) == 0);
+	assert(automatic_command(LARGE_CLEAN_QUIET_US, 0, 0, 0, LARGE_CLEAN_PIXELS) == CLEAN);
 	clean_halo = 0;
 	assert(prepare(CLEAN, desired, panel, &frame) == 1);
 	assert(frame.pixels[pixel] == (panel[pixel] | SCRUB));

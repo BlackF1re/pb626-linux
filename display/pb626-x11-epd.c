@@ -29,7 +29,8 @@
 
 enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 180000, QUIET_US = 300000,
        MAX_PENDING_US = 850000,
-       CLEAN_QUIET_US = 1200000, CLEAN_AFTER = 8, MAX_REGIONS = 8 };
+       CLEAN_QUIET_US = 1200000, LARGE_CLEAN_QUIET_US = 5000000,
+       LARGE_CLEAN_PIXELS = PIXELS / 16, CLEAN_AFTER = 8, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 
 struct controls {
@@ -521,13 +522,18 @@ static int needs_scrub(const uint8_t *panel, int x, int y)
 	return 0;
 }
 
+static uint64_t cleanup_delay(unsigned int cleanup_count)
+{
+	return cleanup_count >= LARGE_CLEAN_PIXELS ? LARGE_CLEAN_QUIET_US : CLEAN_QUIET_US;
+}
+
 static uint8_t automatic_command(uint64_t idle_us, int capture_pending, int captured,
-				 int different, int needs_cleanup)
+				 int different, unsigned int cleanup_count)
 {
 	if (!capture_pending) {
 		if (different && idle_us >= QUIET_US)
 			return SETTLE;
-		if (!different && needs_cleanup && idle_us >= CLEAN_QUIET_US)
+		if (!different && cleanup_count && idle_us >= cleanup_delay(cleanup_count))
 			return CLEAN;
 	}
 	return captured && different ? PREVIEW : 0;
@@ -677,7 +683,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "x11-epd: capture=%s\n", shm.shmaddr ? "MIT-SHM" : "XGetImage");
 	int offset = (width - WIDTH) / 2;
 	unsigned int failures = 0;
-	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0, needs_cleanup = 0;
+	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
+	unsigned int cleanup_count = 0;
 	uint64_t last_damage = 0, pending_since = 0, next_capture = 0, layout_until = 0;
 
 	for (;;) {
@@ -746,11 +753,11 @@ int main(int argc, char **argv)
 		if (!has_frame && !captured)
 			goto wait_input;
 		int different = 0;
-		needs_cleanup = 0;
+		cleanup_count = 0;
 		for (int y = 0; y < TILE_ROWS; y++)
 			for (int x = 0; x < TILE_COLS; x++) {
 				different |= dirty_tiles[y][x];
-				needs_cleanup |= cleanup_pixels[y][x] != 0;
+				cleanup_count += cleanup_pixels[y][x];
 			}
 		if (stats.changed)
 			last_damage = now;
@@ -764,7 +771,7 @@ int main(int argc, char **argv)
 
 		uint8_t command = captured && (!has_frame || controls.clean_requested) ? RESET :
 			automatic_command(now - last_damage, dirty || now < layout_until,
-					  captured, different, needs_cleanup);
+					  captured, different, cleanup_count);
 
 		uint64_t prepare_start = now_us();
 		unsigned int changes = command ? prepare(command, frame, previous, worker.frame) : 0;
@@ -818,8 +825,8 @@ wait_input:
 		uint64_t deadline = UINT64_MAX;
 		if (dirty || !damage)
 			deadline = next_capture > layout_until ? next_capture : layout_until;
-		if ((pending || needs_cleanup) && has_frame && !dirty) {
-			uint64_t settle = last_damage + (pending ? QUIET_US : CLEAN_QUIET_US);
+		if ((pending || cleanup_count) && has_frame && !dirty) {
+			uint64_t settle = last_damage + (pending ? QUIET_US : cleanup_delay(cleanup_count));
 			if (settle < layout_until)
 				settle = layout_until;
 			if (settle < deadline)
