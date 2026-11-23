@@ -73,30 +73,31 @@ are unchanged.
 The stock waveform is *never edited*. Neither the A13 scanout timing nor
 the TPS65185 power configuration is changed.
 
-## Stage 3b — lossless 8-bit DEBE scanout
+## Stage 3b — IDX8 experiment: rejected after pin-level regression test
 
-The pinned kernel already has **both** `SUN5I_EINK_FMT_PIN32` and
-`SUN5I_EINK_FMT_IDX8` in the real hardware scanout driver. The factory
-waveform encodes only three source voltage states (0, 1, 2), so four source
-pixels have `3^4=81` possible combinations per scan clock, not 256.
-There are two gate/control baselines and a small number of fixed control
-clocks; the entire set maps to **173 unique pin words**, fitting the
-hardware 256-entry palette exactly.
+The experimental 8-bit DEBE palette did not pass the full PIN32
+equivalence test in workflow run 45205079484. The first 85 dot clocks
+of a data row assert `G_CLK`, which the prototype omitted. The output
+also differs by first-gate vs subsequent-gate `S_OE`. Thus the pin-level
+signal has **four** independent control baselines (gate0/other ×
+G_CLK on/off), not the two the prototype assumed.
 
-Added opt-in `PB626_EPD_SCANOUT=idx8` transport, keeping `pin32`
-default. The original 32-bit template is used to construct the palette
-and the indexed scan template. The renderer then produces byte indices
-to the *exact same physical pin states*, with 64-byte identical frame
-headers and unchanged phases, scan counts, voltage, VCOM and timestamps.
-Kernel V4L2 DMA buffers are `64 + 304×767 = 233232` bytes each,
-versus `64 + 4×304×767 = 932736` bytes for PIN32. At queue size eight,
-the potential kernel DMA buffer saving alone is about 5.3 MiB. CPU cost
-and on-device optical validity still require testing.
+For unrestricted source combinations, each baseline may require
+`3^4=81` four-source states, i.e. up to **324 combinations**, already
+exceeding the DEBE's 256-entry static palette, before fixed control
+clocks. This is a capacity bound on an unrestricted static encoding,
+not a proof about the observed unique combinations of any one frame.
 
-A complete-frames test compares every decoded palette pin word to the
-existing PIN32 renderer for sparse, reset, and stale-region cases.
-A dynamic palette cannot be changed during streaming, so it is created
-once before the first V4L2 STREAMON.
+Consequently `PB626_EPD_SCANOUT=idx8` is **not deployed**: it must
+not silently skip control signals or be enabled for the owner's real
+panel. The working `SUN5I_EINK_FMT_PIN32` scanout is retained;
+`PB626_EPD_SCANOUT=pin32` may be specified explicitly. Attempts to
+select any other value fail safely.
+
+Any future indexed design would require a *proven* restricted palette
+per waveform/update, switching to PIN32 where necessary, and complete
+pin-level equality tests across all scan clocks, modes and temperatures.
+Such work needs its own experiment; no RAM or speed gain is claimed.
 
 ## Stage 4 — verification and future work
 
