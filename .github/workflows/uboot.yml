@@ -44,7 +44,7 @@ jobs:
         with:
           path: uboot-cache
           # Invalidate when source revision or bootloader build recipe changes.
-          key: pb626-uboot-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.UBOOT_REV }}-${{ hashFiles('.github/workflows/uboot.yml') }}
+          key: pb626-uboot-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.UBOOT_REV }}-${{ hashFiles('.github/workflows/uboot.yml') }}
       - name: Install packaging cross-tools
         run: |
           sudo apt-get update
@@ -86,12 +86,20 @@ jobs:
           grep -Fx 'CONFIG_CMD_SLEEP=y' u-boot/.config
           make -C u-boot -j"$(nproc)"
           mkdir -p uboot-cache
-          cp u-boot/u-boot-sunxi-with-spl.bin uboot-cache/
-          (cd uboot-cache && sha256sum u-boot-sunxi-with-spl.bin >SHA256SUMS)
+          # pb626-uboot-entry.S embeds u-boot/u-boot.bin via .incbin;
+          # caching only SPL silently breaks bImage assembly on warm runs.
+          test -s u-boot/u-boot.bin
+          cp u-boot/u-boot-sunxi-with-spl.bin u-boot/u-boot.bin uboot-cache/
+          (cd uboot-cache && sha256sum u-boot-sunxi-with-spl.bin u-boot.bin > SHA256SUMS)
       - name: Assemble and verify PocketBook U-Boot payloads
         run: |
           (cd uboot-cache && sha256sum -c SHA256SUMS)
-          mkdir dist
+          # Both outputs must exist after cache restoration, even when
+          # "Compile pinned U-Boot" was skipped.
+          test -s uboot-cache/u-boot-sunxi-with-spl.bin
+          test -s uboot-cache/u-boot.bin
+          mkdir -p u-boot dist
+          cp uboot-cache/u-boot.bin u-boot/u-boot.bin
           cp uboot-cache/u-boot-sunxi-with-spl.bin dist/
           test "$(dd if=dist/u-boot-sunxi-with-spl.bin bs=1 skip=4 count=8 status=none)" = 'eGON.BT0'
           test "$(stat -c '%s' dist/u-boot-sunxi-with-spl.bin)" -le $((0x100000))
