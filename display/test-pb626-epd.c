@@ -129,6 +129,10 @@ static void test_waveform_policy(void)
 
 static void test_fast_mode_selection(void)
 {
+	assert(auto_fast_enabled(NULL));
+	assert(auto_fast_enabled("auto"));
+	assert(!auto_fast_enabled("du"));
+	assert(!auto_fast_enabled("a2"));
 	static struct renderer renderer;
 	bool active[TRANSITIONS] = { [0xf0] = true };
 	renderer.auto_fast = true;

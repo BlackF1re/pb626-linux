@@ -22,6 +22,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/megi-desktop.yml'
+      - 'display/pb626-x11-epd.c'
+      - 'display/test-pb626-x11-epd.c'
+      - 'display/pb626-epd.h'
       - 'scripts/build-megi-desktop.sh'
   workflow_run:
     workflows: [Megi mainline Linux 7.2 RAM Linux]

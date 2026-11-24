@@ -5,6 +5,48 @@
 
 #include <assert.h>
 
+static void test_async_protocol(void)
+{
+	int sockets[2];
+	assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+	struct worker worker = { .socket = sockets[0] };
+	uint8_t command;
+	assert(submit_async(&worker, PREVIEW) == 0);
+	assert(read(sockets[1], &command, 1) == 1 && command == PREVIEW);
+	assert(write(sockets[1], &command, 1) == 1);
+	assert(complete_async(&worker, PREVIEW) == 0);
+	assert(submit_async(&worker, SETTLE) == 0);
+	assert(read(sockets[1], &command, 1) == 1 && command == SETTLE);
+	command = PREVIEW;
+	assert(write(sockets[1], &command, 1) == 1);
+	assert(complete_async(&worker, SETTLE) == -1);
+	close(sockets[0]);
+	close(sockets[1]);
+}
+
+static void test_async_state(void)
+{
+	static struct shared_frame work;
+	static uint8_t desired[PIXELS], panel[PIXELS];
+	memset(panel, WHITE, sizeof(panel));
+	memset(desired, WHITE, sizeof(desired));
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	const size_t pos = 35 * WIDTH + 35;
+	const int tx = 35 / TILE, ty = 35 / TILE;
+	desired[pos] = 0;
+	assert(prepare(RESET, desired, panel, &work) == PIXELS);
+	desired[pos] = WHITE; /* A later XDamage changes the desired screen. */
+	acknowledge(RESET, &work, desired, panel);
+	assert(panel[pos] == 0 && dirty_tiles[ty][tx] == 1);
+
+	/* Preserve the in-flight preview and notice the newer target on ACK. */
+	desired[pos] = WHITE;
+	assert(prepare(PREVIEW, desired, panel, &work) == 1);
+	desired[pos] = 0;
+	acknowledge(PREVIEW, &work, desired, panel);
+	assert(panel[pos] == WHITE && dirty_tiles[ty][tx] == 1);
+}
+
 static void test_gray(void)
 {
 	quant_reference = 1;
@@ -54,6 +96,8 @@ static void test_gray(void)
 
 int main(void)
 {
+	test_async_protocol();
+	test_async_state();
 	test_gray();
 	static struct shared_frame frame;
 	static uint8_t desired[PIXELS], panel[PIXELS];
