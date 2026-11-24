@@ -49,13 +49,19 @@ _start:
     bl copy_words
     dsb sy
     ldr r0, =0x46000000
-    ldr r1, =0x46000000 + (kernel_end-kernel_start)
+    ldr r1, =kernel_end
+    ldr r12, =kernel_start
+    sub r1, r1, r12
+    add r1, r0, r1
     bl hash_words
     ldr r1, =KERNEL_HASH
     cmp r0, r1
     bne bad_copy
     ldr r0, =0x47000000
-    ldr r1, =0x47000000 + (dtb_end-dtb_start)
+    ldr r1, =dtb_end
+    ldr r12, =dtb_start
+    sub r1, r1, r12
+    add r1, r0, r1
     bl hash_words
     ldr r1, =DTB_HASH
     cmp r0, r1
