@@ -45,6 +45,11 @@ on:
       - 'scripts/Install-PB626.ps1'
       - 'scripts/fel-boot.sh'
   workflow_dispatch:
+    inputs:
+      rebuild:
+        description: Force full kernel and Desktop build instead of reusing compatible artifacts
+        type: boolean
+        default: false
 
 concurrency:
   group: megi-fel-${{ github.ref }}
@@ -52,9 +57,105 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  plan:
+    name: Check syntax and choose reusable artifacts
+    runs-on: ubuntu-24.04
+    outputs:
+      reuse_run: ${{ steps.reuse.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check scripts before starting any expensive job
+        run: |
+          set -euo pipefail
+          bash -n scripts/build-native-install.sh
+          bash -n scripts/assemble-megi-ram.sh
+          bash -n scripts/build-megi-variants.sh
+          bash -n scripts/build-megi-desktop.sh
+          bash -n scripts/configure-megi-kernel.sh
+          bash -n scripts/fel-boot.sh
+          for f in boot/init-megi boot/pb626-native-setup boot/pb626-native-desktop boot/pb626-native-console scripts/install-pb626-emmc.sh; do
+            sh -n "$f"
+          done
+      - name: Ensure YAML parser is available
+        run: python3 -c 'import yaml' || (sudo apt-get update && sudo apt-get install -y python3-yaml)
+      - name: Find compatible RAM and Desktop artifacts
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE_REBUILD: ${{ inputs.rebuild || false }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          echo 'run_id=' >> "$GITHUB_OUTPUT"
+          if [[ "$FORCE_REBUILD" == true || "$BRANCH" != native-boot ]]; then
+            echo 'Full build requested or not on native-boot.'
+            exit 0
+          fi
+          # A failed installer job can still have two fully uploaded inputs.
+          # Reuse only an ancestor on this branch, with all upstream source
+          # files identical. Ignore installer-only scripts and documentation.
+          # The original failed run also predates this job-splitting change.
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=native-boot&per_page=50" --jq '.workflow_runs[] | select(.path == ".github/workflows/megi-fel.yml" and .status == "completed") | [.id,.head_sha] | @tsv')
+          while IFS=$'\t' read -r id sha; do
+            [[ "$id" =~ ^[0-9]+$ && "$sha" =~ ^[0-9a-f]{40}$ ]] || continue
+            git merge-base --is-ancestor "$sha" HEAD || continue
+            if ! git diff --quiet "$sha" HEAD -- . \
+                ':!scripts/build-native-install.sh' \
+                ':!scripts/install-pb626-emmc.sh' \
+                ':!scripts/Install-PB626.ps1' \
+                ':!boot/pb626-native-entry.S' \
+                ':!boot/pb626-native-setup' \
+                ':!boot/pb626-native-desktop' \
+                ':!boot/pb626-native-console' \
+                ':!boot/pb626-native.inittab' \
+                ':!README.md' ':!docs/**' \
+                ':!.github/workflows/ci.yml' \
+                ':!.github/workflows/megi-fel.yml'; then
+              continue
+            fi
+            # Do not reuse across a changed upstream build recipe. Compare
+            # the actual recipe from the first Alpine job up to the native
+            # packaging step, ignoring only the new job dependency guards.
+            git show "$sha:.github/workflows/megi-fel.yml" > /tmp/source-workflow.yml
+            if ! python3 - /tmp/source-workflow.yml .github/workflows/megi-fel.yml <<'PY'
+          import sys, yaml
+          def recipe(path):
+              with open(path) as f:
+                  jobs=yaml.safe_load(f)['jobs']
+              result={}
+              for key in ('alpine-base','kernel','bundle','desktop-native'):
+                  job=jobs[key].copy()
+                  for attr in ('name','needs','if'):
+                      job.pop(attr,None)
+                  if key=='desktop-native':
+                      job['steps']=[s for s in job['steps'] if s.get('name') not in (
+                          'Build and verify the complete native eMMC installer',
+                          'Package optional disk applications') and s.get('with',{}).get('name') not in (
+                          'pb626-native-emmc-installer','pb626-desktop-extras')]
+                  result[key]=job
+              return result
+          sys.exit(0 if recipe(sys.argv[1])==recipe(sys.argv[2]) else 1)
+          PY
+            then
+              continue
+            fi
+            artifacts=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts?per_page=100")
+            if jq -e '([.artifacts[] | select(.expired==false and .name=="pb626-mainline-7.2-ram-bundle")] | length)==1 and ([.artifacts[] | select(.expired==false and .name=="pb626-megi-eink-desktop")] | length)==1' <<<"$artifacts" >/dev/null; then
+              echo "run_id=$id" >> "$GITHUB_OUTPUT"
+              echo "Reusing immutable RAM/Desktop artifacts from run $id ($sha)"
+              exit 0
+            fi
+          done <<< "$runs"
+          echo 'No compatible unexpired artifact pair; normal build required.'
+
   alpine-base:
+    needs: [plan]
+    if: needs.plan.outputs.reuse_run == ''
     name: Alpine ARMv7 base (independent cache)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -89,6 +190,8 @@ jobs:
           retention-days: 1
 
   kernel:
+    needs: [plan]
+    if: needs.plan.outputs.reuse_run == ''
     name: Megi kernel + DTBs (prebuilt cache)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -257,7 +360,8 @@ jobs:
   bundle:
     name: Final RAM bundle (no kernel rebuild)
     runs-on: ubuntu-24.04
-    needs: [kernel, alpine-base]
+    needs: [plan, kernel, alpine-base]
+    if: needs.plan.outputs.reuse_run == ''
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -303,9 +407,10 @@ jobs:
           retention-days: 14
 
   desktop-native:
-    name: Full Desktop and verified native installer
+    name: Full Desktop (independent reusable artifact)
     runs-on: ubuntu-24.04
-    needs: [bundle]
+    needs: [plan, bundle]
+    if: needs.plan.outputs.reuse_run == ''
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -345,6 +450,51 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
+      - name: Package optional disk applications
+        run: tar -czf pb626-desktop-extras.tar.gz -C display/extras .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-desktop-extras
+          path: pb626-desktop-extras.tar.gz
+          if-no-files-found: error
+
+  native-installer:
+    name: Package native eMMC installer (no kernel or Desktop compilation)
+    runs-on: ubuntu-24.04
+    needs: [plan, bundle, desktop-native]
+    if: always() && !cancelled() && needs.plan.result == 'success' && (needs.plan.outputs.reuse_run != '' || (needs.bundle.result == 'success' && needs.desktop-native.result == 'success'))
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-mainline-7.2-ram-bundle
+          run-id: ${{ needs.plan.outputs.reuse_run || github.run_id }}
+          github-token: ${{ github.token }}
+          path: fel-bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-megi-eink-desktop
+          run-id: ${{ needs.plan.outputs.reuse_run || github.run_id }}
+          github-token: ${{ github.token }}
+          path: desktop-bundle
+      - name: Install only packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cpio device-tree-compiler qemu-user-static binutils-arm-linux-gnueabihf
+      - name: Verify and unpack the already compiled Desktop
+        run: |
+          set -euo pipefail
+          (cd fel-bundle && sha256sum -c SHA256SUMS)
+          (cd desktop-bundle && sha256sum -c SHA256SUMS)
+          cmp fel-bundle/pb626-megi-zImage desktop-bundle/pb626-megi-zImage
+          cmp fel-bundle/KERNELRELEASE desktop-bundle/KERNELRELEASE
+          cmp fel-bundle/pb626-elan-display.dtb desktop-bundle/pb626-elan-display.dtb
+          cmp fel-bundle/pb626-megi-initramfs.cpio.gz desktop-bundle/pb626-megi-initramfs.cpio.gz
+          mkdir desktop-root
+          gzip -cd desktop-bundle/pb626-desktop-root.cpio.gz |
+            (cd desktop-root && sudo cpio -id --quiet --no-absolute-filenames)
       - name: Build and verify the complete native eMMC installer
         run: bash scripts/build-native-install.sh fel-bundle desktop-root native-dist
       - uses: actions/upload-artifact@v4
@@ -353,9 +503,11 @@ jobs:
           path: native-dist/
           if-no-files-found: error
           retention-days: 14
-      - name: Package optional disk applications
+      - name: Package optional disk applications on reuse
+        if: needs.plan.outputs.reuse_run != ''
         run: tar -czf pb626-desktop-extras.tar.gz -C display/extras .
       - uses: actions/upload-artifact@v4
+        if: needs.plan.outputs.reuse_run != ''
         with:
           name: pb626-desktop-extras
           path: pb626-desktop-extras.tar.gz
