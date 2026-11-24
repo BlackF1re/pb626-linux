@@ -115,6 +115,12 @@ mount -t vfat -o ro "$boot" "$mnt"
 cmp "$kit/pb626.bin" "$mnt/linux/pb626.bin"
 grep -qiF 'img_name = c:\linux\pb626.bin' "$mnt/linux/linux.ini"
 printf '%s  %s\n' "$stock_ini" "$mnt/linux/linux.ini.factory" | sha256sum -c -
-cleanup
+umount "$mnt"
+blockdev --setro "$root"
+blockdev --setro "$boot"
+blockdev --setro "$disk"
+for node in "$root" "$boot" "$disk"; do
+    [ "$(blockdev --getro "$node")" = 1 ] || fail 'Could not restore read-only protection'
+done
 trap - EXIT
 echo 'PB626 INSTALL COMPLETE'

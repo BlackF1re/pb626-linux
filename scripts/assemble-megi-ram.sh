@@ -60,7 +60,7 @@ cp kernel-stage/KERNELRELEASE kernel-stage/KERNEL-SOURCE.txt dist/
 cp kernel-stage/pb626-*.dtb dist/
 
 # Reserve the appended-DTB probe word only in the FEL zImage.
-printf '\\0\\0\\0\\0' >> dist/pb626-megi-zImage
+printf '\0\0\0\0' >> dist/pb626-megi-zImage
 cp kernel-stage/IMAGE_SIZE dist/
 initrd_start=$((0x45000000))
 for dtb in dist/pb626-*.dtb; do

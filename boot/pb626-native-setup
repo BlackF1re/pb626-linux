@@ -17,8 +17,9 @@ for bl in /sys/class/backlight/*; do
     [ ! -w "$bl/brightness" ] || echo 0 >"$bl/brightness"
     [ ! -w "$bl/bl_power" ] || echo 4 >"$bl/bl_power"
 done
+# Load independently so a slow optional USB/Wi-Fi probe cannot block PID 1.
 for module in rtl8xxxu elants_i2c sun5i_eink; do
-    modprobe "$module" || echo "PB626: modprobe $module failed" >/dev/kmsg
+    (modprobe "$module" || echo "PB626: modprobe $module failed" >/dev/kmsg) &
 done
 # Do not load experimental Lima, and do not require USB or Wi-Fi for Desktop.
 for led in /sys/class/leds/*; do

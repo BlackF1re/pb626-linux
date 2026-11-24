@@ -135,10 +135,39 @@ sudo tar --format=gnu --numeric-owner \
         -o -path './run' -o -path './tmp' \) -prune -o -type f -print0 |
         sort -z | sudo xargs -0 -r sha256sum
 ) >"$kit/ROOT-SHA256SUMS"
-# ARM BusyBox must actually read the produced archive.
+# ARM BusyBox must actually read and unpack the produced archive.
 sudo chroot "$installer" /usr/bin/qemu-arm-static /bin/busybox tar -tzf /opt/pb626-install/rootfs.tar.gz >"$work/root-list"
 grep -Eq '^(\./)?sbin/pb626-native-setup$' "$work/root-list"
-grep -Eq '^(\./)?usr/bin/Xorg$' "$work/root-list"
+grep -Eq '^(\./)?usr/bin/Xorg
+sudo install -m 755 boot/init-megi "$installer/init"
+sudo install -m 755 scripts/install-pb626-emmc.sh "$installer/usr/sbin/install-pb626-emmc"
+sudo mknod -m 666 "$installer/dev/null" c 1 3
+sudo cp "$out/pb626.bin" "$bundle/KERNELRELEASE" "$kit/"
+(cd "$kit" && sha256sum pb626.bin rootfs.tar.gz ROOT-SHA256SUMS KERNELRELEASE >SHA256SUMS)
+# Keep simultaneous compressed+expanded initramfs within the 256 MiB budget.
+test "$(sudo du -sb "$installer" | cut -f1)" -lt $((64*1024*1024))
+(cd "$installer" && sudo find . -print0 | sudo cpio --null --owner=0:0 -o -H newc --quiet) |
+    gzip -1 > "$out/pb626-emmc-installer.cpio.gz"
+test "$(stat -c %s "$out/pb626-emmc-installer.cpio.gz")" -lt $((64*1024*1024))
+cp "$bundle/pb626-elan-emmc-backup.dtb" "$out/pb626-elan-emmc-install.dtb"
+install_dtb="$out/pb626-elan-emmc-install.dtb"
+fdtput -t x "$install_dtb" /chosen pb626,emmc-install
+fdtput -t x "$install_dtb" /chosen linux,initrd-start 45000000
+end=$((0x45000000 + $(stat -c %s "$out/pb626-emmc-installer.cpio.gz")))
+(( end < 0x50000000 ))
+fdtput -t x "$install_dtb" /chosen linux,initrd-end "$(printf '%x' "$end")"
+cp "$bundle/pb626-megi-zImage" "$bundle/KERNELRELEASE" "$out/"
+cp scripts/{Start-PB626.ps1,Install-PB626.ps1,fel-boot.sh} "$out/"
+cp "$dtb" "$out/pb626-elan-emmc-native.dtb"
+(cd "$out" && sha256sum pb626* KERNELRELEASE ENTRY-MAP.txt *.ps1 fel-boot.sh >SHA256SUMS)
+echo 'Native installer artifact verified (physical cold boot remains untested).'
+ "$work/root-list"
+sudo mkdir "$installer/test-root"
+sudo chroot "$installer" /usr/bin/qemu-arm-static /bin/busybox \
+    tar -xzpf /opt/pb626-install/rootfs.tar.gz -C /test-root
+(cd "$installer/test-root" && sudo sha256sum -c "$kit/ROOT-SHA256SUMS" >"$work/root-check")
+test -L "$installer/test-root/sbin/init"
+sudo rm -rf "$installer/test-root"
 sudo rm "$installer/usr/bin/qemu-arm-static"
 sudo install -m 755 boot/init-megi "$installer/init"
 sudo install -m 755 scripts/install-pb626-emmc.sh "$installer/usr/sbin/install-pb626-emmc"

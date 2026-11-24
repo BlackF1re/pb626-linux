@@ -17,6 +17,11 @@ foreach ($item in @(
 )) {
     $f=Get-Item -LiteralPath (Join-Path $backup $item.Name)
     if ($f.Length -ne $item.Length) { throw "Invalid factory backup size: $($item.Name)" }
+    if ($item.Name -ne 'pb626-emmc-user.img') {
+        if ((Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne 'bb9f8df61474d25e71fa00722318cd387396ca1736605e1248821cc0de3d3af8') {
+            throw "Unexpected hardware boot region backup: $($item.Name)"
+        }
+    }
 }
 $info=Get-Content -Raw -LiteralPath (Join-Path $backup 'emmc-info.txt')
 if ($info -notmatch '(?i)\bCID\s+([0-9a-f]{32})\b') { throw 'Missing expected CID in emmc-info.txt' }
@@ -29,7 +34,8 @@ try {
         foreach ($region in @(
             @{Offset=0x2000; Count=0x5400; SHA='245b81edb1f1ffa51738f33548f793500f2fab9b00c150df9f1ee78b81667824'},
             @{Offset=0x012a6000; Count=0x38000; SHA='3698c3aa4e809898bdbebd172a66b9214872235d8dc6680363335cdf29c30227'},
-            @{Offset=0x012e6000; Count=0x38000; SHA='3698c3aa4e809898bdbebd172a66b9214872235d8dc6680363335cdf29c30227'}
+            @{Offset=0x012e6000; Count=0x38000; SHA='3698c3aa4e809898bdbebd172a66b9214872235d8dc6680363335cdf29c30227'},
+            @{Offset=0x02400000; Count=0x02000000; SHA='237dd3c9930c9257a40652d7b4d5427d804748a865653f821551400fa075a21e'}
         )) {
             $null=$fs.Seek($region.Offset,[IO.SeekOrigin]::Begin)
             $buf=New-Object byte[] $region.Count
