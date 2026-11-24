@@ -1,0 +1,11 @@
+# Archived development notes
+
+The original reports are retained in Git at [9e08b94](https://github.com/BlackF1re/pb626-linux/tree/9e08b94f38ad97334a74d27921b7300baabe8bf5/docs). This condensed index replaces obsolete assertions that hardware was untested or that only FEL boot is the project goal.
+
+- Initial FEL experiments: Linux 5.9, removable SD I/O stalls, missing DTB memory/initrd fixups, USB VBUS and frontlight bring-up. Superseded by pinned Megi 7.2 + Alpine 3.24.4. The locally patched sunxi-fel, SPL and 52-byte entry remain prerequisites for Windows recovery/installation. Never run SPL twice per power cycle.
+- Hardware: A13, 256 MiB DDR3, Samsung 8WPD3R eMMC, ELAN EKTF2227 on I2C2, AXP209, TPS65185, ED060XD4, PWM frontlight. USB ACM and desktop, ELAN touch, black/white and grayscale updates, frontlight levels have been observed in the RAM bring-up. Suspend/power and repeatable autonomous cold boot require validation. The exact stock hardware profile and old root-access investigation remain in the linked Git history.
+- Storage: factory BT0/BT1 in User Area; hardware boot0/boot1 empty. Full user-area and both hardware-region backups are required. The old p8 installer and custom U-Boot variants are retired. Prior FEL direct-root test mounted ext4 p1 rw and wrote/read a test file. Previous native attempts did not reach confirmed Linux PID 1. [PR #4](https://github.com/BlackF1re/pb626-linux/pull/4) records those experiments.
+- CI: PR #6 established cache reuse, parallel kernel/Alpine preparation, and verified Desktop and boot artifacts. Native architecture combines RAM bundle and Desktop/native packaging in one same-run dependency graph; obsolete separate U-Boot and Desktop workflows removed from this branch. Restore and bootstrap utilities remain.
+- E-Ink optimization and the observed Lima-related stall remain separate current reports; GPU experiment is not integrated into native startup.
+
+Original documents: FEL-LAB-STATUS, MEGI-BOOT-AND-HARDWARE, MEGI-FEL-HANDOFF, MEGI-HARDWARE, HARDWARE-VALIDATION, HARDWARE-PROFILE, RAM-LINUX-DESIGN, ROOT-ACCESS, USERLAND, GITHUB-ACTIONS-AUDIT. See the pinned tree above for their full text, including caveats and source references.

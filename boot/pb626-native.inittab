@@ -1,0 +1,7 @@
+# BusyBox init; direct eMMC root, no RAM root or host needed.
+::sysinit:/sbin/pb626-native-setup
+::respawn:/sbin/pb626-native-desktop
+::respawn:/sbin/pb626-native-console
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/sync
+::shutdown:/bin/umount -a -r

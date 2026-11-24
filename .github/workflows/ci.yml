@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, native-boot]
   pull_request:
   workflow_dispatch:
 
@@ -42,6 +42,17 @@ jobs:
           bash -n scripts/build-megi-desktop.sh
           bash -n scripts/build-megi-variants.sh
           bash -n scripts/assemble-megi-ram.sh
+          bash -n scripts/build-native-install.sh
+          sh -n scripts/install-pb626-emmc.sh
+          sh -n boot/pb626-native-setup
+          sh -n boot/pb626-native-desktop
+          sh -n boot/pb626-native-console
+          pwsh -NoProfile -Command '
+            $tokens = $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              "$PWD/scripts/Install-PB626.ps1", [ref]$tokens, [ref]$errors)
+            if ($errors) { $errors; exit 1 }
+          '
           test -s board/megi/wifi-test.conf
           grep -Fqx '    ssid="ACCESS_POINT"' board/megi/wifi-test.conf
           grep -Fqx '    psk="PASSWORD"' board/megi/wifi-test.conf

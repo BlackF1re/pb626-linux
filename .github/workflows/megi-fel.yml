@@ -1,15 +1,13 @@
-name: Megi mainline Linux 7.2 RAM Linux
+name: PB626 Linux RAM and native eMMC
 
 on:
   push:
-    branches: [main]
+    branches: [main, native-boot]
     paths:
       - '.github/workflows/megi-fel.yml'
       - 'board/megi/**'
       - 'boot/**'
-      - 'display/pb626-epd.c'
-      - 'display/pb626-epd.h'
-      - 'display/test-pb626-epd.c'
+      - 'display/**'
       - 'scripts/build-megi-variants.sh'
       - 'scripts/configure-megi-kernel.sh'
       - 'patches/**'
@@ -18,14 +16,19 @@ on:
       - 'scripts/probe-device.sh'
       - 'scripts/inspect-live.sh'
       - 'scripts/install-pb626-emmc.sh'
+      - 'scripts/build-native-install.sh'
+      - 'scripts/build-megi-desktop.sh'
+      - 'scripts/pb626-network.sh'
+      - 'scripts/Start-PB626.ps1'
+      - 'scripts/Start-PB626Desktop.ps1'
+      - 'scripts/Install-PB626.ps1'
+      - 'scripts/fel-boot.sh'
   pull_request:
     paths:
       - '.github/workflows/megi-fel.yml'
       - 'board/megi/**'
       - 'boot/**'
-      - 'display/pb626-epd.c'
-      - 'display/pb626-epd.h'
-      - 'display/test-pb626-epd.c'
+      - 'display/**'
       - 'scripts/build-megi-variants.sh'
       - 'scripts/configure-megi-kernel.sh'
       - 'patches/**'
@@ -34,6 +37,13 @@ on:
       - 'scripts/probe-device.sh'
       - 'scripts/inspect-live.sh'
       - 'scripts/install-pb626-emmc.sh'
+      - 'scripts/build-native-install.sh'
+      - 'scripts/build-megi-desktop.sh'
+      - 'scripts/pb626-network.sh'
+      - 'scripts/Start-PB626.ps1'
+      - 'scripts/Start-PB626Desktop.ps1'
+      - 'scripts/Install-PB626.ps1'
+      - 'scripts/fel-boot.sh'
   workflow_dispatch:
 
 concurrency:
@@ -120,7 +130,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kernel-cache
-          key: pb626-megi-kernel-v3-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch') }}
+          key: pb626-megi-kernel-v4-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch') }}
       - name: Fetch pinned Megi 7.2 source and verify A13 drivers
         run: |
           set -euo pipefail
@@ -171,6 +181,7 @@ jobs:
           make -C linux -j"$(nproc)" KCFLAGS=-Wno-error zImage modules
           mkdir -p kernel-cache module-root
           cp linux/arch/arm/boot/zImage kernel-cache/pb626-megi-zImage
+          stat -c %s linux/arch/arm/boot/Image > kernel-cache/IMAGE_SIZE
           cp linux/.config kernel-cache/pb626-megi.config
           release=$(sed -n 's/^#define UTS_RELEASE "\(.*\)"/\1/p' linux/include/generated/utsrelease.h)
           test -n "$release"
@@ -189,6 +200,8 @@ jobs:
           set -euo pipefail
           test -s kernel-cache/pb626-megi-zImage
           test -s kernel-cache/pb626-megi.config
+          test -s kernel-cache/IMAGE_SIZE
+          grep -qx 'CONFIG_AUTO_ZRELADDR=y' kernel-cache/pb626-megi.config
           test -s kernel-cache/kernel-modules.tar.gz
           test -s kernel-cache/KERNELRELEASE
           test -s kernel-cache/KERNEL-SOURCE.txt
@@ -288,3 +301,62 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
+
+  desktop-native:
+    name: Full Desktop and verified native installer
+    runs-on: ubuntu-24.04
+    needs: [bundle]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-mainline-7.2-ram-bundle
+          path: fel-bundle
+      - name: Restore Desktop userspace cache
+        id: desktop-cache
+        uses: actions/cache@v4
+        with:
+          path: desktop-cache
+          key: pb626-native-desktop-v1-${{ runner.os }}-${{ hashFiles('scripts/build-megi-desktop.sh', 'scripts/build-alpine-rootfs.sh', 'scripts/assemble-megi-ram.sh', 'scripts/configure-megi-kernel.sh', 'scripts/probe-device.sh', 'scripts/inspect-live.sh', 'scripts/pb626-network.sh', 'boot/**', 'board/megi/**', 'patches/**', 'display/**') }}
+      - name: Install ARM and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cpio device-tree-compiler ncurses-bin qemu-user-static \
+            gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
+      - name: Build matching Alpine Xorg and Matchbox
+        run: |
+          set -euo pipefail
+          if [ -s desktop-cache/pb626-desktop-root.cpio.gz ]; then
+            bash scripts/build-megi-desktop.sh fel-bundle desktop-cache
+          else
+            bash scripts/build-megi-desktop.sh fel-bundle
+          fi
+      - name: Save reusable RAM Desktop before native conversion
+        if: steps.desktop-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p desktop-cache
+          cp dist/pb626-desktop-root.cpio.gz desktop-cache/
+          (cd desktop-cache && sha256sum pb626-desktop-root.cpio.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-megi-eink-desktop
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Build and verify the complete native eMMC installer
+        run: bash scripts/build-native-install.sh fel-bundle desktop-root native-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-native-emmc-installer
+          path: native-dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Package optional disk applications
+        run: tar -czf pb626-desktop-extras.tar.gz -C display/extras .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-desktop-extras
+          path: pb626-desktop-extras.tar.gz
+          if-no-files-found: error

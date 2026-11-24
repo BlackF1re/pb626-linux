@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/userland.yml
-      - docs/USERLAND.md
+      - docs/archive/README.md
   pull_request:
     paths:
       - '.github/workflows/userland.yml'

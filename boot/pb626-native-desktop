@@ -1,0 +1,30 @@
+#!/bin/sh
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin HOME=/root TERM=linux
+wave=/lib/firmware/pb626/default.wbf
+# BusyBox init respawns this process. Back off on failure to avoid a CPU loop.
+if [ ! -s "$wave" ]; then
+    echo "PB626: missing factory waveform" >/dev/kmsg
+    sleep 15
+    exit 1
+fi
+for n in $(seq 1 30); do
+    [ -c /dev/video0 ] && break
+    sleep 1
+done
+if [ ! -c /dev/video0 ]; then
+    echo "PB626: no E Ink video device" >/dev/kmsg
+    sleep 10
+    exit 1
+fi
+# Previous Xorg exits normally through the desktop wrapper's trap.
+# Recover a stale runtime directory only if no X server survives.
+if [ -d /run/pb626-desktop ]; then
+    if pidof Xorg >/dev/null; then sleep 10; exit 1; fi
+    rm -rf /run/pb626-desktop
+fi
+# Preserve the known-good E Ink defaults. No experimental GPU setup.
+cd /root || exit 1
+/usr/bin/pb626-desktop "$wave" >/run/pb626-desktop.log 2>&1
+rc=$?
+sleep 5
+exit "$rc"
