@@ -973,7 +973,7 @@ int main(int argc, char **argv)
 			dirty = 1;
 
 		struct capture_stats stats = {0};
-		uint64_t capture_start = now, damage_wait = 0, ack = 0;
+		uint64_t capture_start = now, damage_wait = 0;
 		int captured = 0;
 		if ((dirty || !damage) && now >= next_capture && now >= layout_until) {
 			struct rect areas[MAX_REGIONS];
