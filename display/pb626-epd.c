@@ -487,7 +487,9 @@ static void render(struct buffer *buffer, const struct renderer *renderer,
 			}
 			const uint16_t *pixels = renderer->transitions + y * SOURCES + 4 * row.first;
 			uint32_t staged[GROUPS];
-			uint32_t *dest = renderer->style == RENDER_SCALAR ? out : staged;
+			/* Fall back directly to the scalar path when a complex
+			 * transition set exceeds the bounded group dictionary. */
+			uint32_t *dest = renderer->style == RENDER_STAGED || indexed ? staged : out;
 			if (reset) {
 				for (unsigned int x = row.first; x < row.end; x++)
 					dest[x] = neutral[x] | uniform;
@@ -839,16 +841,19 @@ int main(int argc, char **argv)
 	renderer.fd = fd;
 	renderer.profile = getenv("PB626_EPD_PROFILE") != NULL;
 	const char *style = getenv("PB626_EPD_RENDER");
-	if (!style || !strcmp(style, "scalar"))
+	/* A compact dictionary is lossless: it only reuses identical groups of
+	 * four physical transitions and still emits the original PIN32 bits. */
+	if (!style || !strcmp(style, "auto") || !strcmp(style, "indexed")) {
+		renderer.style = RENDER_INDEXED;
+		renderer.group_codes = malloc(GATES * GROUPS);
+		if (!renderer.group_codes)
+			fail("could not allocate lossless scanout group dictionary");
+	} else if (!strcmp(style, "scalar"))
 		renderer.style = RENDER_SCALAR;
 	else if (!strcmp(style, "staged"))
 		renderer.style = RENDER_STAGED;
-	else if (!strcmp(style, "indexed")) {
-		renderer.style = RENDER_INDEXED;
-		renderer.group_codes = malloc(GATES * GROUPS);
-	} else {
-		fail("PB626_EPD_RENDER must be scalar, staged or indexed");
-	}
+	else
+		fail("PB626_EPD_RENDER must be auto, scalar, staged or indexed");
 	const char *prefill = getenv("PB626_EPD_PREFILL");
 	if (prefill) {
 		char *end;

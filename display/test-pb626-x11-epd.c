@@ -5,6 +5,47 @@
 
 #include <assert.h>
 
+static int covers(struct rect a, struct rect b)
+{
+	return a.left <= b.left && a.top <= b.top &&
+	       a.right >= b.right && a.bottom >= b.bottom;
+}
+
+static void test_damage_merge(void)
+{
+	struct rect areas[MAX_REGIONS] = {{0}};
+	struct rect inputs[MAX_REGIONS + 1];
+	int used = 0;
+	for (int i = 0; i < MAX_REGIONS + 1; i++) {
+		inputs[i] = (struct rect){
+			.left = (i < 5 ? i : i - 5) * TILE,
+			.top = i < 5 ? 0 : HEIGHT - TILE,
+			.right = (i < 5 ? i : i - 5) * TILE + TILE,
+			.bottom = i < 5 ? TILE : HEIGHT
+		};
+		add_damage_rect(areas, &used, inputs[i]);
+	}
+	assert(used == MAX_REGIONS);
+	for (int j = 0; j < MAX_REGIONS + 1; j++) {
+		int found = 0;
+		for (int i = 0; i < used; i++)
+			found |= covers(areas[i], inputs[j]);
+		assert(found);
+	}
+	int sum = 0;
+	for (int i = 0; i < used; i++)
+		sum += rect_area(areas[i]);
+	assert(sum < WIDTH * HEIGHT / 4);
+	/* A moving pointer remains a small extra region even when full. */
+	struct rect pointer = {WIDTH - TILE, HEIGHT / 2, WIDTH, HEIGHT / 2 + TILE};
+	add_damage_rect(areas, &used, pointer);
+	assert(used == MAX_REGIONS);
+	int found = 0;
+	for (int i = 0; i < used; i++)
+		found |= covers(areas[i], pointer);
+	assert(found);
+}
+
 static void test_async_protocol(void)
 {
 	int sockets[2];
@@ -96,6 +137,7 @@ static void test_gray(void)
 
 int main(void)
 {
+	test_damage_merge();
 	test_async_protocol();
 	test_async_state();
 	test_gray();
