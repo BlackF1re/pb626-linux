@@ -17,6 +17,7 @@ on:
       - 'scripts/inspect-live.sh'
       - 'scripts/install-pb626-emmc.sh'
       - 'scripts/build-native-install.sh'
+      - 'scripts/pb626-fat-contiguous.c'
       - 'scripts/build-megi-desktop.sh'
       - 'scripts/pb626-network.sh'
       - 'scripts/Start-PB626.ps1'
@@ -38,6 +39,7 @@ on:
       - 'scripts/inspect-live.sh'
       - 'scripts/install-pb626-emmc.sh'
       - 'scripts/build-native-install.sh'
+      - 'scripts/pb626-fat-contiguous.c'
       - 'scripts/build-megi-desktop.sh'
       - 'scripts/pb626-network.sh'
       - 'scripts/Start-PB626.ps1'
@@ -106,6 +108,7 @@ jobs:
             git merge-base --is-ancestor "$sha" HEAD || continue
             if ! git diff --quiet "$sha" HEAD -- . \
                 ':!scripts/build-native-install.sh' \
+                ':!scripts/pb626-fat-contiguous.c' \
                 ':!scripts/install-pb626-emmc.sh' \
                 ':!scripts/Install-PB626.ps1' \
                 ':!boot/pb626-native-entry.S' \
@@ -482,7 +485,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cpio device-tree-compiler qemu-user-static binutils-arm-linux-gnueabihf
+            cpio device-tree-compiler qemu-user-static binutils-arm-linux-gnueabihf \
+            gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
       - name: Verify and unpack the already compiled Desktop
         run: |
           set -euo pipefail

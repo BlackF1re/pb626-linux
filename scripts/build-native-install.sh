@@ -169,6 +169,9 @@ sudo rm -rf "$installer/test-root"
 sudo rm "$installer/usr/bin/qemu-arm-static"
 sudo install -m 755 boot/init-megi "$installer/init"
 sudo install -m 755 scripts/install-pb626-emmc.sh "$installer/usr/sbin/install-pb626-emmc"
+arm-linux-gnueabihf-gcc -O2 -Wall -Wextra -Werror -static -s \
+    scripts/pb626-fat-contiguous.c -o "$work/pb626-fat-contiguous"
+sudo install -m 755 "$work/pb626-fat-contiguous" "$installer/usr/sbin/"
 sudo cp "$out/pb626.bin" "$bundle/KERNELRELEASE" "$kit/"
 (cd "$kit" && sha256sum pb626.bin rootfs.tar.gz ROOT-SHA256SUMS KERNELRELEASE >SHA256SUMS)
 # Keep simultaneous compressed+expanded initramfs within the 256 MiB budget.

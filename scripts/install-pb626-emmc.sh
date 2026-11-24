@@ -123,6 +123,8 @@ if [ "$mode" = --update-boot ]; then
     [ -f "$target/pb626.bin" ] || fail 'Expected previous payload is missing'
     printf '%s  %s\n' b92a63705ed9224c00fc6a95b5f269cdd5662b1787dd1d805e86075367f824aa "$target/pb626.bin" | sha256sum -c -
     [ ! -e "$target/pb626v2.bin" ] || fail 'Already staged diagnostic payload; inspect first'
+    printf '%s  %s\n' aaf956d873cadf1df0843d4bd54de798bbfe333d0936ce07c7bb3cdcf5ea4115 "$target/linux.ini" | sha256sum -c -
+    [ ! -e "$target/linux.ini.v1" ] || fail 'Previous update backup already exists'
     cp "$target/linux.ini" "$target/linux.ini.v1"
     name=pb626v2.bin
 else
