@@ -23,6 +23,21 @@ test -d "$desktop/lib/modules/$release"
 cp "$bundle/pb626-megi-zImage" "$work/payload/kernel.bin"
 cp "$bundle/pb626-elan-emmc-native.dtb" "$work/payload/board.dtb"
 dtb="$work/payload/board.dtb"
+python3 - "$work/payload" <<'PY'
+import pathlib, struct, sys
+p=pathlib.Path(sys.argv[1])
+def checksum(data):
+    data += b'\0' * (-len(data) % 4)
+    h=2166136261
+    for (w,) in struct.iter_unpack('<I',data):
+        h=((h^w)*16777619)&0xffffffff
+    return h
+k=(p/'kernel.bin').read_bytes()
+d=(p/'board.dtb').read_bytes()
+assert k[:4]==bytes.fromhex('0000a0e1'), 'Unexpected first zImage instruction'
+(p/'payload-check.inc').write_text(
+    f'.equ KERNEL_HASH, 0x{checksum(k):08x}\n.equ DTB_HASH, 0x{checksum(d):08x}\n')
+PY
 test "$(fdtget -t x "$dtb" /memory@40000000 reg)" = '40000000 10000000'
 test "$(fdtget -t s "$dtb" /soc/mmc@1c11000 status)" = okay
 test "$(fdtget -t s "$dtb" /soc/mmc@1c0f000 status)" = disabled
@@ -61,6 +76,8 @@ for name,data in [('kernel',kernel),('dtb',dtb)]:
     assert payload[lo:lo+len(data)]==data
     assert 0<=hi-lo-len(data)<4
 assert syms['kernel_end']<=syms['dtb_start']
+assert 0 < syms['kernel_probe_end']-syms['kernel_probe'] <= 0x1000
+assert 0x46000000 + 8 + ((0xfffbfe - 0x1000000) << 2) == 0x45fff000
 assert 0x46000000+len(kernel)<0x47000000
 assert 0x47000000+len(dtb)<0x47ff0000
 assert base+len(payload)<0x42400000

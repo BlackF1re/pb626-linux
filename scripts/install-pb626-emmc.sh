@@ -13,7 +13,9 @@ mnt=/run/pb626-install
 kit=/opt/pb626-install
 chosen=/sys/firmware/devicetree/base/chosen
 stock_ini=e625a04b8c6c2057f8a94ae3cff3fbd927896353cc4b3c5dd4e41a5a45d48443
-[ "$#" = 2 ] && [ "$1" = --erase-p1 ] || fail 'usage: install-pb626-emmc --erase-p1 EXPECTED_CID'
+[ "$#" = 2 ] || fail 'usage: install-pb626-emmc --erase-p1|--update-boot EXPECTED_CID'
+mode=$1
+case "$mode" in --erase-p1|--update-boot) ;; *) fail 'Invalid mode';; esac
 [ -f "$chosen/pb626,emmc-install" ] && [ -f "$chosen/pb626,emmc-backup" ] || fail 'Not the dedicated FEL installer'
 [ -r "$sys/device/cid" ] && [ "$(cat "$sys/device/cid")" = "$2" ] || fail 'CID mismatch'
 [ "$(cat "$sys/device/type")" = MMC ] && [ "$(cat "$sys/device/name")" = 8WPD3R ] &&
@@ -63,6 +65,25 @@ available=$(df -k "$mnt" | awk 'NR==2 {print $4}')
 needed=$(( ($(stat -c %s pb626.bin) + 1023) / 1024 + 64 ))
 [ "$available" -ge "$needed" ] || fail 'Insufficient free space on p2'
 umount "$mnt"
+if [ "$mode" = --update-boot ]; then
+    echo 'PB626 UPDATE: verify already installed p1 without writing it'
+    e2fsck -fn "$root"
+    mount -t ext4 -o ro,noload "$root" "$mnt"
+    [ "$(cat "$mnt/etc/pb626-image-id")" = pb626-native-alpine-v1 ] ||
+        fail 'Existing native root identity mismatch'
+    [ -x "$mnt/sbin/pb626-native-setup" ] &&
+    [ -x "$mnt/usr/bin/Xorg" ] &&
+    [ -d "$mnt/lib/modules/$(uname -r)" ] ||
+        fail 'Existing root missing required files or matching modules'
+    if ! (cd "$mnt" && sha256sum -c "$kit/ROOT-SHA256SUMS") >/run/pb626-root-verify.log 2>&1; then
+        tail -n 30 /run/pb626-root-verify.log >&2
+        fail 'Existing root differs from verified installer root; do not reformat'
+    fi
+    cmp /run/pb626-factory.wbf "$mnt/lib/firmware/pb626/default.wbf"
+    umount "$mnt"
+    blockdev --setrw "$disk"
+    echo 'PB626 UPDATE: p1 verified; no filesystem changes'
+else
 echo 'PB626 INSTALL: formatting user p1 (all former user files are erased)'
 blockdev --setrw "$disk"
 blockdev --setrw "$root"
@@ -86,6 +107,7 @@ cmp /run/pb626-factory.wbf "$mnt/lib/firmware/pb626/default.wbf"
 sync
 umount "$mnt"
 e2fsck -fn "$root"
+fi
 blockdev --setro "$root"
 echo 'PB626 INSTALL: staging verified payload on p2'
 blockdev --setrw "$boot"
@@ -95,25 +117,46 @@ if [ ! -e "$target/linux.ini.factory" ]; then
     cp "$target/linux.ini" "$target/linux.ini.factory"
 fi
 printf '%s  %s\n' "$stock_ini" "$target/linux.ini.factory" | sha256sum -c -
+# In boot-only mode keep the previous payload under its original name.
+# Stage the new short-name file before activating it; preserve the rollback INI.
+if [ "$mode" = --update-boot ]; then
+    [ -f "$target/pb626.bin" ] || fail 'Expected previous payload is missing'
+    printf '%s  %s\n' b92a63705ed9224c00fc6a95b5f269cdd5662b1787dd1d805e86075367f824aa "$target/pb626.bin" | sha256sum -c -
+    [ ! -e "$target/pb626v2.bin" ] || fail 'Already staged diagnostic payload; inspect first'
+    cp "$target/linux.ini" "$target/linux.ini.v1"
+    name=pb626v2.bin
+else
+    name=pb626.bin
+fi
 # Preserve CRLF and all other factory settings; replace only the filename
 # and disable the old logo. The explicit DTB supplies the Linux bootargs.
-sed 's|c:\\linux\\bImage|c:\\linux\\pb626.bin|;s/^logo_show = 1/logo_show = 0/' \
+sed "s|bImage|$name|;s/^logo_show = 1/logo_show = 0/" \
     "$target/linux.ini.factory" >"$target/linux.new"
-grep -qiF 'img_name = c:\linux\pb626.bin' "$target/linux.new"
+grep -qiF "img_name = c:\\linux\\$name" "$target/linux.new"
 grep -qiF 'img_base = 0x40008000' "$target/linux.new"
 grep -qiF 'img_size = 0x800000' "$target/linux.new"
 cp "$kit/pb626.bin" "$target/pb626.new"
 cmp "$kit/pb626.bin" "$target/pb626.new"
 sync
-mv -f "$target/pb626.new" "$target/pb626.bin"
+mv -f "$target/pb626.new" "$target/$name"
 sync
+# Verify FAT chain directly before activating. On the observed p2 the
+# free tail is large enough for a contiguous second image. Fail closed if
+# allocation was fragmented; old INI and old payload remain active.
+if [ "$mode" = --update-boot ]; then
+    sync
+    umount "$mnt"
+    /usr/sbin/pb626-fat-contiguous "$boot" PB626V2 BIN
+    mount -t vfat "$boot" "$mnt"
+    cmp "$kit/pb626.bin" "$target/$name"
+fi
 # Activate ONLY after root, filesystem check and boot payload verified.
 mv -f "$target/linux.new" "$target/linux.ini"
 sync
 umount "$mnt"
 mount -t vfat -o ro "$boot" "$mnt"
-cmp "$kit/pb626.bin" "$mnt/linux/pb626.bin"
-grep -qiF 'img_name = c:\linux\pb626.bin' "$mnt/linux/linux.ini"
+cmp "$kit/pb626.bin" "$mnt/linux/$name"
+grep -qiF "img_name = c:\\linux\\$name" "$mnt/linux/linux.ini"
 printf '%s  %s\n' "$stock_ini" "$mnt/linux/linux.ini.factory" | sha256sum -c -
 umount "$mnt"
 blockdev --setro "$root"

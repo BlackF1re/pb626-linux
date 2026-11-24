@@ -4,10 +4,12 @@ param(
     [Parameter(Mandatory=$true)][string]$BundleDir,
     [Parameter(Mandatory=$true)][string]$FactoryBackupDir,
     [string]$Distro='XperiaDev',
-    [switch]$EraseP1
+    [switch]$EraseP1,
+    [switch]$UpdateBootOnly
 )
 $ErrorActionPreference='Stop'
-if (-not $EraseP1) { throw 'Pass -EraseP1 only after backing up all user files. p1 will be reformatted.' }
+if ($EraseP1.IsPresent -eq $UpdateBootOnly.IsPresent) { throw 'Choose exactly one: -EraseP1 or -UpdateBootOnly' }
+$mode = if ($UpdateBootOnly) { '--update-boot' } else { '--erase-p1' }
 $bundle=(Resolve-Path -LiteralPath $BundleDir).Path
 $backup=(Resolve-Path -LiteralPath $FactoryBackupDir).Path
 foreach ($item in @(
@@ -57,7 +59,9 @@ foreach ($line in Get-Content -LiteralPath (Join-Path $bundle 'SHA256SUMS')) {
         throw "Artifact checksum mismatch: $name"
     }
 }
-Write-Host 'p1 will be erased; the supplied backup and target CID will be checked. Disconnect other PocketBooks.'
+if ($UpdateBootOnly) { Write-Host 'Boot-only update; p1 will be verified read-only.' }
+else { Write-Host 'p1 will be erased; backups and target CID will be checked.' }
+Write-Host 'Disconnect other PocketBooks.'
 & (Join-Path $PSScriptRoot 'Start-PB626.ps1') -BundleDir $bundle -Variant elan-emmc-install -Profile diagnostic -Distro $Distro
 # Wait for the dedicated installer USB console. Do not send anything if ambiguous.
 $deadline=[DateTime]::UtcNow.AddMinutes(3)
@@ -86,7 +90,7 @@ try {
     Start-Sleep -Seconds 2
     # The shell prints a unique marker only AFTER the command has exited.
     $tag='PB626_DONE_'+[Guid]::NewGuid().ToString('N')
-    $command="install-pb626-emmc --erase-p1 $cid; printf '\n$tag=%s\n' "+'$?'
+    $command="install-pb626-emmc $mode $cid; printf '\n$tag=%s\n' "+'$?'
     $serial.Write($command+$nl)
     $deadline=[DateTime]::UtcNow.AddMinutes(45)
     $complete=$false
