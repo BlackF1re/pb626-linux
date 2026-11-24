@@ -633,6 +633,11 @@ static void refresh(struct renderer *renderer, enum mode mode)
 	}
 }
 
+static bool auto_fast_enabled(const char *setting)
+{
+	return !setting || !strcmp(setting, "auto");
+}
+
 static enum mode select_a2_or_du(const struct renderer *renderer,
 				const bool *active)
 {
@@ -853,7 +858,8 @@ int main(int argc, char **argv)
 		renderer.prefill = n;
 	}
 	const char *fast = getenv("PB626_EPD_FAST_MODE");
-	renderer.auto_fast = fast && !strcmp(fast, "auto");
+	/* By default choose the faster supported factory A2 or DU sequence. */
+	renderer.auto_fast = auto_fast_enabled(fast);
 	load_waveform(&renderer.wbf, argv[1]);
 	/* The stock WBF targets 85 scans/s. The A13 clock tree supplies
 	 * 22.5 MHz here, giving 84.5 scans/s with Megi's porch settings.
