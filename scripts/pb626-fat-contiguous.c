@@ -64,6 +64,7 @@ int main(int argc,char **argv) {
     unsigned char *e=find(root,sizeof root,"LINUX      ",1);
     if(!e) fail("linux directory missing");
     unsigned cl=le16(e+26), visits=0;
+    e=NULL;
     while(valid(cl) && visits++<16347) {
         read_at(cluster,sizeof cluster,(off_t)(145+(cl-2)*4)*512);
         e=find(cluster,sizeof cluster,name,0);

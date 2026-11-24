@@ -125,6 +125,8 @@ copy_elf "$desktop/lib/ld-musl-armhf.so.1" lib/ld-musl-armhf.so.1
 copy_elf "$desktop/bin/busybox" bin/busybox
 copy_elf "$desktop/sbin/mke2fs" sbin/mke2fs
 copy_elf "$desktop/sbin/e2fsck" sbin/e2fsck
+copy_elf "$desktop/usr/sbin/i2cget" usr/sbin/i2cget
+copy_elf "$desktop/usr/sbin/i2cset" usr/sbin/i2cset
 sudo cp "$desktop/etc/"{passwd,group,mke2fs.conf} "$installer/etc/"
 # Supply devices before running the ARM e2fsprogs smoke tests.
 sudo mknod -m 666 "$installer/dev/null" c 1 3
@@ -172,6 +174,37 @@ sudo install -m 755 scripts/install-pb626-emmc.sh "$installer/usr/sbin/install-p
 arm-linux-gnueabihf-gcc -O2 -Wall -Wextra -Werror -static -s \
     scripts/pb626-fat-contiguous.c -o "$work/pb626-fat-contiguous"
 sudo install -m 755 "$work/pb626-fat-contiguous" "$installer/usr/sbin/"
+# Test the exact ARM checker against synthetic contiguous and fragmented
+# FAT16 images. All writes are to runner-local temporary files.
+python3 - "$work" <<'PY'
+import pathlib, struct, sys
+p=pathlib.Path(sys.argv[1])
+boot=bytearray(512)
+struct.pack_into('<HBHBHH',boot,11,512,4,1,2,256,0)
+struct.pack_into('<H',boot,22,64)
+struct.pack_into('<I',boot,32,65536)
+boot[510:]=b'\x55\xaa'
+def entry(name,attr,cluster,size=0):
+    b=bytearray(32); b[:11]=name; b[11]=attr
+    struct.pack_into('<HI',b,26,cluster,size)
+    return b
+for good in (True,False):
+    fat=bytearray(32768)
+    for n,v in [(0,0xfff8),(1,0xffff),(2,0xffff),
+                (3,4 if good else 5),(4 if good else 5,0xffff)]:
+        struct.pack_into('<H',fat,2*n,v)
+    with (p/('contiguous.img' if good else 'fragmented.img')).open('wb') as f:
+        f.truncate(32*1024*1024); f.write(boot); f.write(fat); f.write(fat)
+        f.write(entry(b'LINUX      ',0x10,2))
+        f.seek(145*512); f.write(entry(b'PB626V2 BIN',0x20,3,4096))
+PY
+# QEMU is installed on the host; its temporary copy in the installer
+# was removed above to keep the ARM initramfs small.
+qemu-arm-static "$work/pb626-fat-contiguous" "$work/contiguous.img" PB626V2 BIN
+if qemu-arm-static "$work/pb626-fat-contiguous" "$work/fragmented.img" PB626V2 BIN; then
+    echo 'Fragmented FAT chain unexpectedly accepted' >&2
+    exit 1
+fi
 sudo cp "$out/pb626.bin" "$bundle/KERNELRELEASE" "$kit/"
 (cd "$kit" && sha256sum pb626.bin rootfs.tar.gz ROOT-SHA256SUMS KERNELRELEASE >SHA256SUMS)
 # Keep simultaneous compressed+expanded initramfs within the 256 MiB budget.

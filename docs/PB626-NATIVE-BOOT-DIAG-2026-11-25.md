@@ -41,8 +41,8 @@ After the update, use the working USB installer shell before power off:
 set marker 0x80 in AXP209 data buffer using the previously tested
 i2cset -y -f 0 0x34 0x0e 0x80, then verify i2cget. On failed cold boot,
 enter FEL manually and read the same register using the known working
-RAM rescue; do not set it again before reading it. If the minimal
-installer lacks i2c-tools, use the known full RAM rescue. Confirm bus
+RAM rescue; do not set it again before reading it. The updated installer includes i2cget and i2cset; the known full RAM rescue
+can also read the marker after the failure. Confirm bus
 identity and register before using the old commands. No other PMIC
 registers should be changed. 0x85 proves entry, not decompression or PID 1.
 If 0x85 is reached but Linux remains silent, test the exact same zImage,
