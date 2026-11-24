@@ -55,8 +55,9 @@ used to drive a transition absent from the *current temperature table*.
 
 Opt-in fast-mode policy (`PB626_EPD_FAST_MODE` in the X11 bridge):
 
-- `du` (default): existing behavior, preserves prior performance and
-  quality.
+- `auto` (default): chooses factory A2 for eligible binary transitions,
+  falling back to DU when required.
+- `du`: forces the ordinary fast monochrome waveform.
 - `a2`: select the factory A2 waveform only when **every** non-KEEP
   pixel is exactly 0→15 or 15→0. Check against the committed physical
   history (not just desired UI RGB); otherwise send the same frame using
@@ -112,8 +113,18 @@ CI/host assertions:
    typing, grayscale, photo, ghosting, visible flash, total latency,
    PSS/CPU/OOM. Report A/B evidence, not inferred gains.
 
-Pending opportunities **not claimed as complete**: async X11 capture
-during hardware scan; target-quality GL16/GC16 auto-calibration;
+The X11 bridge now handles worker acknowledgements asynchronously. It may
+prefetch XDamage into a separate desired image during scanout (throttled to
+80 ms), while its submitted shared buffer remains immutable until ACK.
+Physical state is committed only after successful STREAMOFF. A bounded
+least-area region combiner avoids replacing nine scattered tiles with a
+full-screen damage bounding box. The worker defaults to a lossless 4-source
+group dictionary for multi-phase updates, with direct PIN32 scalar fallback
+when the dictionary is insufficient. No image-quality or speed gains are
+claimed without on-device measurement.
+
+Pending opportunities **not claimed as complete**: target-quality GL16/GC16
+auto-calibration;
 optical characterization of vendor HQ/shadow filters; NEON CPU hot path
 if profiling justifies; a complete kernel-level EPDC equivalent.
 These require actual profiling/photography, and would be irresponsible

@@ -96,6 +96,12 @@ static void test_render_equivalence(void)
 		}
 		render(&candidate, &renderer, &phase, reset);
 		assert(!memcmp(reference_words, candidate_words, FRAME_BYTES));
+		/* Full-dictionary overflow must fall back to scalar PIN32.
+		 * This regression check deliberately has no active dictionary. */
+		renderer.style = RENDER_INDEXED;
+		renderer.patterns_count = 0;
+		render(&candidate, &renderer, &phase, reset);
+		assert(!memcmp(reference_words, candidate_words, FRAME_BYTES));
 	}
 	renderer.rows[0] = (struct span_range){0, GROUPS};
 	renderer.rows[1] = (struct span_range){0, GROUPS};

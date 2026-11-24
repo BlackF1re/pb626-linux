@@ -29,7 +29,7 @@
 #include "pb626-epd.h"
 
 enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 60000, QUIET_US = 450000,
-       MAX_PENDING_US = 450000,
+       MAX_PENDING_US = 450000, INFLIGHT_CAPTURE_US = 80000,
        CLEAN_QUIET_US = 1200000, LARGE_CLEAN_QUIET_US = 5000000,
        LARGE_CLEAN_PIXELS = PIXELS / 16, CLEAN_AFTER = 8, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
@@ -188,6 +188,54 @@ static struct rect united(struct rect a, struct rect b)
 		a.left < b.left ? a.left : b.left, a.top < b.top ? a.top : b.top,
 		a.right > b.right ? a.right : b.right, a.bottom > b.bottom ? a.bottom : b.bottom,
 	};
+}
+
+static int rect_area(struct rect r)
+{
+	return (r.right - r.left) * (r.bottom - r.top);
+}
+
+/* Preserve disjoint damage instead of expanding nine small regions into one
+ * full-screen bounding box. With MAX_REGIONS=8, evaluate at most 36 pairs
+ * for each extra tile run; the XGetImage cost dominates this bookkeeping.
+ * Every merged rectangle still contains all original changed pixels. */
+static void add_damage_rect(struct rect areas[MAX_REGIONS], int *used, struct rect next)
+{
+	for (int i = 0; i < *used; i++) {
+		struct rect current = areas[i];
+		if (current.left <= next.left && current.top <= next.top &&
+		    current.right >= next.right && current.bottom >= next.bottom)
+			return;
+		if (current.left == next.left && current.right == next.right &&
+		    current.bottom == next.top) {
+			areas[i].bottom = next.bottom;
+			return;
+		}
+	}
+	if (*used < MAX_REGIONS) {
+		areas[(*used)++] = next;
+		return;
+	}
+
+	int best_i = 0, best_j = MAX_REGIONS, best_cost = INT32_MAX;
+	for (int i = 0; i <= MAX_REGIONS; i++)
+		for (int j = i + 1; j <= MAX_REGIONS; j++) {
+			struct rect a = i == MAX_REGIONS ? next : areas[i];
+			struct rect b = j == MAX_REGIONS ? next : areas[j];
+			int cost = rect_area(united(a, b)) - rect_area(a) - rect_area(b);
+			if (cost < best_cost) {
+				best_cost = cost;
+				best_i = i;
+				best_j = j;
+			}
+		}
+	/* best_i cannot be the new rectangle: it has no j > MAX_REGIONS. */
+	if (best_j == MAX_REGIONS)
+		areas[best_i] = united(areas[best_i], next);
+	else {
+		areas[best_i] = united(areas[best_i], areas[best_j]);
+		areas[best_j] = next;
+	}
 }
 
 static struct rect pointer_rect(Display *display, Window root, int offset)
@@ -495,7 +543,6 @@ static int damage_regions(Display *display, Damage damage, XserverRegion region,
 		XFree(rectangles);
 
 	int used = 0;
-	struct rect bounds = {0};
 	for (int y = 0; y < TILE_ROWS; y++)
 		for (int x = 0; x < TILE_COLS;) {
 			int start = x++;
@@ -506,27 +553,8 @@ static int damage_regions(Display *display, Damage damage, XserverRegion region,
 			struct rect area = clipped((struct rect){
 				start * TILE, y * TILE, x * TILE, (y + 1) * TILE,
 			}, 0);
-			bounds = united(bounds, area);
-			if (used > MAX_REGIONS)
-				continue;
-			int merged = 0;
-			for (int i = 0; i < used; i++)
-				if (areas[i].bottom == area.top && areas[i].left == area.left &&
-				    areas[i].right == area.right) {
-					areas[i].bottom = area.bottom;
-					merged = 1;
-					break;
-				}
-			if (!merged) {
-				if (used < MAX_REGIONS)
-					areas[used] = area;
-				used++;
-			}
+			add_damage_rect(areas, &used, area);
 		}
-	if (used > MAX_REGIONS) {
-		areas[0] = bounds;
-		return 1;
-	}
 	return used;
 }
 
@@ -904,6 +932,7 @@ int main(int argc, char **argv)
 	uint64_t last_damage = 0, pending_since = 0, next_capture = 0, layout_until = 0;
 	uint64_t damage_seen = 0, inflight_since = 0;
 	uint8_t inflight = 0;
+	int prefetched = 0;
 
 	for (;;) {
 		XEvent event;
@@ -964,17 +993,17 @@ int main(int argc, char **argv)
 			sources[worker_index].events = 0;
 			sources[worker_index].revents = 0;
 		}
-		/* XDamage accumulates while the shared frame is being consumed.
-		 * Capturing only after ACK avoids overwrites and CPU/scanout contention. */
-		if (inflight)
-			goto wait_input;
-		/* Force a fresh grab on a manual reset, including after a failed update. */
-		if (!has_frame || controls.clean_requested)
+		/* Only the submitted shared buffer is frozen during scanout.
+		 * The independent desired frame can be refreshed from XDamage
+		 * while the worker is busy, then reconciled with its ACK. */
+		if (!inflight && (!has_frame || controls.clean_requested))
 			dirty = 1;
 
 		struct capture_stats stats = {0};
 		uint64_t capture_start = now, damage_wait = 0;
-		int captured = 0;
+		int captured = inflight ? 0 : prefetched;
+		if (!inflight)
+			prefetched = 0;
 		if ((dirty || !damage) && now >= next_capture && now >= layout_until) {
 			struct rect areas[MAX_REGIONS];
 			int count = damage ? damage_regions(display, damage, region, offset, areas) : 0;
@@ -985,23 +1014,29 @@ int main(int argc, char **argv)
 			if (controls.pointer_visible) {
 				struct rect next = pointer_rect(display, root, offset);
 				struct rect area = clipped(united(pointer, next), 0);
-				if (nonempty(area) && count < MAX_REGIONS)
-					areas[count++] = area;
-				else if (nonempty(area))
-					areas[0] = united(areas[0], area);
+				if (nonempty(area))
+					add_damage_rect(areas, &count, area);
 				pointer = next;
 			}
 			for (int i = 0; i < count; i++)
 				if (capture(display, root, offset, areas[i], frame, pointer, controls.vertical, &stats, &shm))
 					goto failed;
-			captured = count != 0;
+			captured |= count != 0;
 			if (damage_seen)
 				damage_wait = capture_start - damage_seen;
 			damage_seen = 0;
 			dirty = 0;
 			now = now_us();
-			next_capture = now + (damage ? 16000 : 250000);
+			/* Bound background grabs to avoid competing with scanout. */
+			next_capture = now + (damage ? (inflight ? INFLIGHT_CAPTURE_US : 16000) : 250000);
 		}
+		if (stats.changed) {
+			last_damage = now;
+			if (inflight)
+				prefetched = 1;
+		}
+		if (inflight)
+			goto wait_input;
 
 		if (!has_frame && !captured)
 			goto wait_input;
@@ -1012,8 +1047,6 @@ int main(int argc, char **argv)
 				different |= dirty_tiles[y][x];
 				cleanup_count += cleanup_pixels[y][x];
 			}
-		if (stats.changed)
-			last_damage = now;
 		if (different) {
 			if (!pending)
 				pending_since = now;
@@ -1067,7 +1100,7 @@ int main(int argc, char **argv)
 wait_input:
 		now = now_us();
 		uint64_t deadline = UINT64_MAX;
-		if (!inflight && (dirty || !damage))
+		if (dirty || !damage)
 			deadline = next_capture > layout_until ? next_capture : layout_until;
 		if (!inflight && (pending || cleanup_count) && has_frame && !dirty) {
 			uint64_t settle = last_damage + (pending ? QUIET_US : cleanup_delay(cleanup_count));
@@ -1103,6 +1136,7 @@ recover_worker:
 		if (++failures >= 3)
 			return EXIT_FAILURE;
 		inflight = 0;
+		prefetched = 0;
 		has_frame = 0;
 		pending = 0;
 		pending_since = 0;
