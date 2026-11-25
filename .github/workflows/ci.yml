@@ -3,7 +3,32 @@ name: CI
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/megi-fel.yml'
+      - '.github/workflows/restore.yml'
+      - 'BT0-uncaged/**'
+      - 'boot/**'
+      - 'board/**'
+      - 'display/**'
+      - 'patches/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '!**/*.md'
   pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/megi-fel.yml'
+      - '.github/workflows/restore.yml'
+      - 'BT0-uncaged/**'
+      - 'boot/**'
+      - 'board/**'
+      - 'display/**'
+      - 'patches/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '!**/*.md'
   workflow_dispatch:
 
 concurrency:
@@ -15,7 +40,7 @@ permissions:
 
 jobs:
   probe:
-    name: Hardware probe checks
+    name: Host-side script and installer checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -39,12 +64,23 @@ jobs:
           bash -n scripts/fel-boot.sh
           bash -n scripts/configure-megi-kernel.sh
           bash -n scripts/build-alpine-rootfs.sh
+          bash -n scripts/build-desktop-base.sh
           bash -n scripts/build-megi-desktop.sh
+          sh -n display/pb626-settings
           bash -n scripts/build-megi-variants.sh
           bash -n scripts/assemble-megi-ram.sh
-          grep -Fqx 'hostname pb626 2>/dev/null || true' boot/init-megi
           shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh scripts/pb626-network.sh
           shellcheck -s bash scripts/fel-boot.sh
+      - name: Parse Windows FEL launchers
+        run: |
+          pwsh -NoProfile -Command '
+            foreach ($file in @("scripts/Start-PB626.ps1", "scripts/Start-PB626Desktop.ps1")) {
+              $tokens = $errors = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile(
+                "$PWD/$file", [ref]$tokens, [ref]$errors)
+              if ($errors) { $errors; exit 1 }
+            }
+          '
       - name: Test hardware inventory
         run: sh tests/probe-smoke.sh
       - name: Test offline firmware image builder
@@ -68,3 +104,22 @@ jobs:
           llvm-objcopy -O binary -j .text /tmp/menu.elf /tmp/menu.raw
           python3 BT0-uncaged/test_hook.py --hook-only /tmp/menu.raw
           python3 -m py_compile BT0-uncaged/build.py BT0-uncaged/pack-kernel.py
+  renderer:
+    name: Host-side E Ink renderer tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install X11 test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev
+      - name: Fetch pinned kernel UAPI and test renderer
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pb626-uapi/linux
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/Arnavion/linux/facc87117511221bb61410e3f92ad8579697f736/include/uapi/linux/sun5i-eink.h -o /tmp/pb626-uapi/linux/sun5i-eink.h
+          gcc -O2 -Wall -Wextra -Werror -I /tmp/pb626-uapi display/test-pb626-epd.c -o /tmp/test-pb626-epd
+          /tmp/test-pb626-epd
+          gcc -O2 -Wall -Wextra -Werror display/test-pb626-x11-epd.c -o /tmp/test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lm
+          /tmp/test-pb626-x11-epd

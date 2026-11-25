@@ -1,7 +1,6 @@
 # PocketBook 626 Plus: observed hardware profile
 
-Evidence: first read-only KOReader SSH inventory of the owner's unit, collected
-under stock firmware. Identifiers and raw device logs were intentionally
+Evidence: read-only [hardware inventory](../scripts/probe-device.sh) and KOReader SSH inspection of the owner's unit under stock firmware. Identifiers and raw device logs were intentionally
 omitted. This is an observed firmware inventory, not confirmation that the
 upstream Linux port operates all peripherals.
 
@@ -21,42 +20,20 @@ upstream Linux port operates all peripherals.
 | RTC | pcf8563 at I2C 1-0051 |
 | E Ink power supply | tps65185 at I2C 1-0068 |
 | SPI | spi2.0 present |
-| Power | battery and USB supply nodes reported; 85% battery at probe |
+| Power | battery and USB supply nodes reported |
 
 A second read-only SSH inspection confirmed `/sys/block/mmcblk0/device/type`
 reports `MMC`, with chip name `8WPD3R`. This confirms the internal eMMC
 storage type. Its physical PCB revision remains unverified.
 
-The reader SSH account is `reader` (UID/GID 101); no privileged access was
-established by this inspection. Follow-up diagnostics confirm that stock
-`sudo` is version 1.7.4p6, with SUID-root permissions. Its `sudo -l`
-allow-list matches the one analyzed by Synacktiv on Touch Lux 3, including
-`/bin/set_bootmode calibrate` and a passwordless `sshstart.sh` entry.
-Synacktiv documented a command-path validation weakness in this configuration:
-https://www.synacktiv.com/en/publications/e-ink-maiden-bring-your-reader-to-the-reverser.html
-
-A non-persistent attempt to run a temporary `/tmp/calibrate` script via
-`sudo ./calibrate` was denied by sudoers: `reader is not allowed to execute
-'./calibrate' as root`. Thus the historical Synacktiv proof of concept is
-**not reproduced on this firmware**. This does not establish that other
-root-access approaches work or fail.
-
-These observations describe the original unprivileged stock session. A separate FEL RAM recovery path was subsequently established; no stock privilege escalation is needed to back up the reader.
-The kernel reports `force_ro=1` on both eMMC hardware boot devices. This is a software read-only safeguard, not evidence
-that the contents are immutable or that the active boot source is known.
+Stock U626.5.20.1157 exposes an unprivileged KOReader SSH account `reader` (UID/GID 101). Its SUID `sudo` is 1.7.4p6; the [Synacktiv command-path weakness](https://www.synacktiv.com/en/publications/e-ink-maiden-bring-your-reader-to-the-reverser.html) was not reproduced (calibrate denied). FEL recovery does not need stock root. Both hardware eMMC boot nodes report `force_ro=1`; this is a software safeguard, not an immutable region.
 
 Observed filesystem mounts:
 - `/dev/mmcblk0p2` at `/boot` (VFAT, read-only).
 - `/dev/mmcblk0p8` at `/ebrmain` (ext2, read-only).
 - `/dev/mmcblk0p9` at `/mnt/secure` (ext2, read-write).
 
-The reported mount mode does not by itself establish which files the
-unprivileged SSH account may change. Do not publish raw contents of
-`/mnt/secure`; it may contain device-specific or private state.
-
-The stock firmware uses a vendor framebuffer; no `/dev/eink-panel` node was
-observed. This says nothing about whether a replacement kernel can expose the
-out-of-tree E Ink API.
+The stock display uses the vendor framebuffer, not `/dev/eink-panel`. The secure partition can contain private device state; never publish its contents.
 
 
 ## Board wiring and revisions
@@ -68,16 +45,16 @@ every unit: p7/etc/init.d/rcS chooses a driver by hwconfig.app device_touchpanel
 | Stock touch type | Factory module | FEL board variant | New kernel status |
 | --- | --- | --- | --- |
 | 8: ELAN eKTF2227, I2C2 0x15 (observed late eMMC board) | ektf2k_elan.ko | elan-display / elan-emmc-native | Native port uses patched eKTF2227 protocol; hardware touch verified |
-| 18: FocalTech FT5X / XC3 | ft5x_xc3.ko | not supported by current build | Experimental EDT FT5206 binding |
-| 19: Cypress TMA4 / XD4, 0x24 | cyttsp4.ko | not supported by current build | Megi's original early-board configuration |
-| unknown | none | not a separate build | Safe fallback with touch absent |
+| 18: FocalTech FT5X / XC3 | ft5x_xc3.ko | not supported by current build | not qualified |
+| 19: Cypress TMA4 / XD4, 0x24 | cyttsp4.ko | not supported by current build | not qualified |
+| unknown | none | not a separate build | not qualified |
 
 Common hardware from Megi DTS and the factory FEX:
 
 | Device | Interface / GPIO | Linux support target |
 | --- | --- | --- |
 | Allwinner A13, 256 MiB | sun5i | CPU, DMA, CCU, regulators |
-| External microSD | MMC0 PF0–PF5, PG0 card detect, PE4 active-low power | MMC sunxi; clock capped 12 MHz due to observed I/O stalls |
+| External microSD | MMC0 PF0–PF5, PG0 card detect, PE4 active-low power | disabled (observed I/O stalls) |
 | Internal eMMC (late), internal SD (early) | MMC2 PC6–PC11 | disabled in display RAM; enabled read-only in recovery; native root on MMC2 |
 | ED060XD4-family 1024x758 E Ink | DEBE/TCON0 and PD GPIOs | Megi sun5i-eink V4L2 /dev/video0 |
 | Panel power | TPS65185 I2C1 0x68, PD18 wake, PD19 VCOM, PE7 power, PE6 good | TPS65185 regulator |
@@ -99,18 +76,14 @@ can damage the display. Never embed factory waveform files, host SSH keys,
 MMC IDs or user settings in the public repository.
 
 
-Stock firmware version U626.5.20.1157. The older sudo calibrate proof did
-not work on this unit. PBJB v8 compatibility was reported by other users,
-not verified here. No downgrade or stock jailbreak is required for our FEL
-recovery workflow. Stock firmware signed updates and revision gating are
-independent of the modern Linux port. See [factory boot chain](STOCK-BOOT-CHAIN.md).
+Factory signed updates and board revision checks are separate from this native port. See [factory boot chain](STOCK-BOOT-CHAIN.md).
 
 ## Current hardware validation
 
 - Late ELAN/eMMC: autonomous native Linux boot and USB ACM console verified.
 - ED060XD4: monochrome, grayscale and partial updates verified with the
   original waveform and 2440000 uV VCOM magnitude. Manual refresh and touch
-  verified on Preclear v1; final consolidated build still needs its own test.
+  verified on the previously installed renderer; current builds still require on-device acceptance.
 - Frontlight: off and two brightness levels verified. PB4 enable is active
   high; keep PB2 disconnected from PWM while off. Stock PG1 VBUS sensing
   works under vendor Linux; modern MUSB enumerated after removing that GPIO
@@ -122,10 +95,8 @@ independent of the modern Linux port. See [factory boot chain](STOCK-BOOT-CHAIN.
   boot and suspend/resume not validated.
 - External microSD I/O previously stalled; independent SD recovery failed.
   Current build disables MMC0. No independent recovery if SPL cannot enter FEL.
-- GPU/Lima remains disabled in userspace; a separate experimental session
-  had display/touch failures without established cause.
+- GPU/Lima is not qualified and is disabled in the desktop.
 
 Sources: https://linux-sunxi.org/PocketBook_Touch_Lux_3 ,
 https://github.com/pocketbook/Platform_A13 ,
-Megi board DTS pinned in the build workflow. The old Megi 5.9 tree
-e98db7f114d7602c6b847d76e183787f0c97cf5b is historical, not a build input.
+Megi board DTS pinned in the build workflow.

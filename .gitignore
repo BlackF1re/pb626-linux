@@ -29,3 +29,10 @@ alpine-cache/
 alpine-base/
 desktop-cache/
 __pycache__/
+bridge-cache/
+fel-root/
+fel-bundle/
+dtb-stage/
+module-root/
+native-worker
+ram-worker-cache/

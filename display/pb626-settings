@@ -17,6 +17,11 @@ case ${1:-} in
             case $percent in
                 [0-9]|[1-9][0-9]|100)
                     printf '%s\n' "$(((max * percent + 50) / 100))" >"$light/brightness"
+                    if [ "$percent" -eq 0 ]; then
+                        printf '4\n' >"$light/bl_power"
+                    else
+                        printf '0\n' >"$light/bl_power"
+                    fi
                     ;;
                 *) printf 'Enter a number from 0 to 100. Press Enter to close.\n'; read -r _ ;;
             esac
@@ -28,10 +33,7 @@ case ${1:-} in
             printf 'Battery  %s%%  %s\n' "$(cat "$supply/capacity")" "$(cat "$supply/status")"
         done
         awk '/^MemAvailable:/ {printf "Free RAM  %.0f MiB\n", $2 / 1024}' /proc/meminfo
-        for render in /dev/dri/renderD*; do
-            [ -c "$render" ] && printf 'GPU device  %s\n' "$render"
-        done
-        df -h /mnt/pb626-apps
+        df -h /
         printf '\nPress Enter to close.\n'
         read -r _
         ;;

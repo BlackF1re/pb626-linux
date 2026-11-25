@@ -1,4 +1,4 @@
-/* ELAN / ED060XD4 display bring-up from RAM, with USB ACM diagnostics. */
+/* ELAN / ED060XD4 display wiring shared by RAM and native Linux. */
 &mmc0 {
   status = "disabled";
 };
@@ -30,7 +30,7 @@
   pwm-off-delay-ms = <1>;
 };
 
-/* Keep the peripheral-only VBUS fallback proven by elan-usbtest. */
+/* Keep the hardware-tested USB peripheral-only VBUS fallback. */
 &usbphy {
   /delete-property/ usb0_vbus_det-gpios;
 };

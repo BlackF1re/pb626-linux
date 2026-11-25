@@ -62,9 +62,6 @@ zImage SHA256 aaaa131a34bca28a2f815b2af583ad02f1007dcfde1d6a1ff5d5acda49bde4f9
 Native DTB SHA256 351d15522cb4bdbca2b2edc14a64e2c48396810cf882279fa51eff302a75e958.
 New raw image SHA256 33380f0bf21a7ba8b0480d7c545609bf0c05b9b5999c8bf3cced9dd16283384e.
 14959 sectors, payload 7658540 bytes; LBA 80–15038 inclusive.
-Previous raw image 14894 sectors SHA256 ff11503fa46198e1175fac659fcfaa354bc2f01fbe1861677468fc6440b9de7c.
-Full rollback extent (14959 sectors, includes 65 extra zero sectors) SHA256
-5f98e5c1b946ef50e9331074494191f6df5b3f662be28b627ea184598538e301.
 Protected prefix LBA 0–79 SHA256 2673c7b186a731b8b429812f4d55340c054fbbd5c42e0582b3a06794e12e8b63.
 Both BT1 extents LBA 38192 and 38704, 448 sectors each, SHA256
 3698c3aa4e809898bdbebd172a66b9214872235d8dc6680363335cdf29c30227.
@@ -78,11 +75,8 @@ and verifies 64 KiB writes/readbacks. The 52-byte entry at 0x41000000 passes
 zImage 0x42000000 and DTB 0x43200000; initramfs starts at 0x45000000.
 The DTB describes RAM 0x40000000–0x50000000 and exact initrd bounds.
 Linux enumerates as 0525:a4a7; execute return alone is not proof of boot.
-See README for external local prerequisites. Never execute a native DTB
-via the RAM loader. Independent recovery when SPL itself fails is unproven.
+See [installation guide](INSTALL.md) for prerequisites. Never execute a native DTB via the RAM loader. Independent recovery when SPL itself fails is unproven.
 
 ## Installing and recovery
 
-Use an offline verified full image and the FEL backup/restore workflow
-in [README](../README.md). No direct raw update of a live mounted native
-root. The old single-image BT0 and MBUS updaters remain in Git history.
+Use the [offline installer and FEL backup/restore](INSTALL.md). Never write a live mounted native root.

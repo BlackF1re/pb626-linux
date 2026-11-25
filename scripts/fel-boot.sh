@@ -56,6 +56,8 @@ for f in "$fel" "$spl" "$entry" "$kernel" "$fdt" "$ramfs" "$manifest"; do
     [[ -s $f ]] || { echo "Missing FEL input: $f" >&2; exit 11; }
 done
 [[ -x $fel ]] || { echo "Not executable: $fel" >&2; exit 11; }
+# Require the exact audited lab SPL before the first device operation.
+printf '%s  %s\n' 7543ab1379d19cd07cd01e7ea3ff7d257aada22f770d0e937a6ae0605732a38f "$spl" | sha256sum -c -
 [[ $(stat -c '%s' "$entry") -eq 52 ]] || { echo 'Entry stub is not 52 bytes' >&2; exit 11; }
 
 # Authenticity: match the bundle's per-file CI SHA256SUMS. The local SPL and

@@ -4,7 +4,6 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^COM[1-9][0-9]*$')][string]$Port,
     [Parameter(Mandatory)][string]$BundleDir,
     [Parameter(Mandatory)][string]$Waveform,
-    [switch]$UseMountedApps,
     [switch]$ProfileDisplay,
     [ValidateRange(0,100)][int]$FrontlightPercent
 )
@@ -20,6 +19,9 @@ if ((Get-Content -LiteralPath (Join-Path $bundle 'SHA256SUMS')) -cnotcontains "$
     throw 'The desktop archive failed SHA256 verification.'
 }
 $waveformHash = (Get-FileHash -LiteralPath $waveformPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($waveformHash -cne 'bc3e0338e3b537dfb69470727cae0bbba3e10aa62f82cc1a47fd7737447cc05f') {
+    throw 'Unsupported panel waveform. Use the verified factory default.wbf.'
+}
 $archivePath = Join-Path ([IO.Path]::GetTempPath()) ('pb626-desktop-' + [guid]::NewGuid().ToString('N') + '.tar')
 $serial = [IO.Ports.SerialPort]::new($Port, 115200)
 $serial.ReadTimeout = 1000
@@ -28,7 +30,7 @@ $serial.DtrEnable = $true
 $serial.RtsEnable = $true
 
 function Invoke-Reader([string]$Command, [byte[]]$Payload = @(), [int]$Count = 0) {
-    $marker = 'AXF_' + [guid]::NewGuid().ToString('N')
+    $marker = 'PB626_' + [guid]::NewGuid().ToString('N')
     $serial.Write("$Command; printf '\n$marker=%s\n' `$?`n")
     $deadline = [datetime]::UtcNow.AddSeconds(60)
     $lines = [Collections.Generic.List[string]]::new()
@@ -62,9 +64,6 @@ try {
     $serial.Open()
     $serial.Write("`n")
     $storageCheck = 'set -- /sys/block/mmcblk* && test ! -e "$1"'
-    if ($UseMountedApps) {
-        $storageCheck = 'mountpoint -q /mnt/pb626-apps && test -x /mnt/pb626-apps/bin/pb626-settings'
-    }
     $check = 'test -f /sys/firmware/devicetree/base/chosen/pb626,display-bringup && test "$(stat -f -c %T /run)" = tmpfs && test ! -d /run/pb626-desktop'
     $work = Invoke-Reader "$check && $storageCheck && mktemp -d /run/pb626-gui.XXXXXX" |
         Where-Object { $_ -cmatch '^/run/pb626-gui\.[A-Za-z0-9]+$' }
@@ -92,18 +91,12 @@ try {
     $launch = @'
 ( set -e; set -o pipefail; cd '__WORK__'; mkdir root; gzip -dc __ROOT__ | (cd root && cpio -id --quiet); rm __ROOT__;
   for fs in dev dev/pts proc sys run; do mount -o bind "/$fs" "root/$fs"; done;
-  __APPS_MOUNT__;
   __EPD_PROFILE__ setsid chroot root /usr/bin/pb626-desktop '__WORK__/__WBF__' </dev/null >/run/pb626-desktop.log 2>&1 &
   for second in $(seq 1 35); do test -s /run/pb626-desktop/ready && exit 0; sleep 1; done;
   cat /run/pb626-desktop.log; exit 1 )
 '@
-    $appsMount = ':'
-    if ($UseMountedApps) {
-        $appsMount = 'mkdir -p root/mnt/pb626-apps && mount -o bind /mnt/pb626-apps root/mnt/pb626-apps && mount -o remount,bind,ro root/mnt/pb626-apps'
-    }
     $epdProfile = if ($ProfileDisplay) { 'PB626_EPD_PROFILE=1' } else { '' }
     $launch = $launch.Replace('__EPD_PROFILE__', $epdProfile).Replace([string][char]13, '').Replace([string][char]10, ' ').
-        Replace('__APPS_MOUNT__', $appsMount).
         Replace('__WORK__', $work).Replace('__ROOT__', $rootName).Replace('__WBF__', $waveformName)
     $null = Invoke-Reader $launch
     if ($PSBoundParameters.ContainsKey('FrontlightPercent')) {

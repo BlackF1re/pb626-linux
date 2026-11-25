@@ -6,7 +6,7 @@
 # Recovery: -Variant elan-emmc-backup -Profile diagnostic
 #
 # What it does, in order:
-#   1. Verify Megi artifact paths and start the existing XperiaDev WSL distro.
+#   1. Verify Megi artifact paths and start the selected WSL distro (Ubuntu by default).
 #   2. Discover the reader in cold-boot Allwinner FEL (1f3a:efe8), attach via
 #      usbipd, and verify that WSL sees the reader.
 #   3. Convert paths using /mnt/c/... WITHOUT `wslpath` quoting issues.
@@ -26,7 +26,7 @@ param(
     [Parameter(Mandatory=$true)][string]$BundleDir,
     [ValidateSet('elan-display','elan-emmc-backup')][string]$Variant='elan-display',
     [ValidateSet('standard','diagnostic')][string]$Profile='standard',
-    [string]$Distro='XperiaDev',
+    [string]$Distro='Ubuntu',
     [switch]$NoExecute
 )
 

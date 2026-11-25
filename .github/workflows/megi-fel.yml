@@ -1,9 +1,36 @@
-name: Megi mainline Linux 7.2 RAM Linux
+name: Build native Linux and FEL recovery
 
+# Main produces the shared caches and downloadable firmware. Use Run workflow
+# on a feature branch for a full pre-merge build. Workflow edits also validate
+# automatically on PRs; ordinary PRs run the lightweight CI instead.
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/megi-fel.yml'
+      - 'scripts/build-alpine-rootfs.sh'
+      - 'scripts/configure-megi-kernel.sh'
+      - 'scripts/build-megi-variants.sh'
+      - 'scripts/assemble-megi-ram.sh'
+      - 'scripts/build-desktop-base.sh'
+      - 'scripts/build-megi-desktop.sh'
+      - 'scripts/Start-PB626*.ps1'
+      - 'scripts/fel-boot.sh'
+      - 'scripts/inspect-live.sh'
+      - 'scripts/probe-device.sh'
+      - 'scripts/pb626-network.sh'
+      - 'BT0-uncaged/pack-kernel.py'
+      - 'BT0-uncaged/kernel-entry.S'
+      - 'board/**'
+      - 'boot/**'
+      - 'display/**'
+      - 'patches/a13-mbus-dma-devlink.patch'
+      - 'patches/ektf2227-pocketbook-touch.patch'
+      - 'patches/pwm-backlight-disconnect-when-off.patch'
   pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/megi-fel.yml'
   workflow_dispatch:
 
 concurrency:
@@ -94,8 +121,9 @@ jobs:
       - name: Fetch pinned Megi 7.2 source and verify A13 drivers
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch orange-pi-7.2-20260903-2131 \
-            https://github.com/Arnavion/linux.git linux
+          git init -q linux
+          git -C linux fetch -q --depth 1 https://github.com/Arnavion/linux.git facc87117511221bb61410e3f92ad8579697f736
+          git -C linux checkout -q --detach FETCH_HEAD
           test "$(git -C linux rev-parse HEAD)" = facc87117511221bb61410e3f92ad8579697f736
           grep -q '^VERSION = 7$' linux/Makefile
           grep -q '^PATCHLEVEL = 2$' linux/Makefile
@@ -179,7 +207,14 @@ jobs:
           grep -Fxq 'kernel/drivers/video/fbdev/sun5i-eink.ko' /tmp/pb626-modules.builtin
           echo "Prebuilt kernel cache hit: ${{ steps.cache.outputs.cache-hit }}"
           echo "Rebuilt for Kconfig drift: ${{ steps.kconfig.outputs.rebuild }}"
-      - name: Build current Device Trees
+      - name: Restore validated DTBs
+        id: dtbs
+        uses: actions/cache@v4
+        with:
+          path: dtb-stage
+          key: pb626-dtbs-v1-facc87117511221-${{ runner.os }}-${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('kernel-cache/pb626-megi.config', 'board/**', 'scripts/build-megi-variants.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch') }}
+      - name: Build current Device Trees on cache miss
+        if: steps.dtbs.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
@@ -192,6 +227,9 @@ jobs:
           fi
           mkdir -p dtb-stage
           bash scripts/build-megi-variants.sh linux dtb-stage "$PWD"
+          (cd dtb-stage && sha256sum pb626-*.dtb > SHA256SUMS)
+      - name: Verify DTB cache
+        run: (cd dtb-stage && sha256sum -c SHA256SUMS)
       - name: Assemble portable kernel-stage artifact
         run: |
           set -euo pipefail
@@ -199,22 +237,35 @@ jobs:
           cp kernel-cache/* kernel-stage/
           cp dtb-stage/pb626-*.dtb kernel-stage/
           install -D -m 0644 linux/include/uapi/linux/sun5i-eink.h kernel-stage/uapi/linux/sun5i-eink.h
-          # The retired factory eMMC installer DTB is no longer built.
           expected=$(printf '%s\n' pb626-{elan-display,elan-emmc-backup,elan-emmc-native}.dtb | LC_ALL=C sort)
           actual=$(find kernel-stage -maxdepth 1 -type f -name 'pb626-*.dtb' -printf '%f\n' | LC_ALL=C sort)
           if [ "$actual" != "$expected" ]; then
-            echo '::error::Unexpected RAM DTB set'
+            echo '::error::Unexpected DTB set'
             diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") || true
             exit 1
           fi
-      - name: Test and compile the E Ink utility with the existing ARM toolchain
+      - name: Restore static RAM E Ink worker
+        id: ram-worker
+        uses: actions/cache@v4
+        with:
+          path: ram-worker-cache
+          key: pb626-ram-worker-v1-${{ runner.os }}-${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('kernel-stage/uapi/linux/sun5i-eink.h', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/test-pb626-epd.c') }}
+      - name: Test and compile the RAM E Ink utility on cache miss
+        if: steps.ram-worker.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           gcc -O2 -Wall -Wextra -Werror -I kernel-stage/uapi \
             display/test-pb626-epd.c -o test-pb626-epd
           ./test-pb626-epd
+          mkdir -p ram-worker-cache
           arm-linux-gnueabihf-gcc -O3 -Wall -Wextra -Werror -static -I kernel-stage/uapi \
-            display/pb626-epd.c -o kernel-stage/pb626-epd
+            display/pb626-epd.c -o ram-worker-cache/pb626-epd
+          (cd ram-worker-cache && sha256sum pb626-epd > SHA256SUMS)
+      - name: Verify and stage the RAM E Ink utility
+        run: |
+          set -euo pipefail
+          (cd ram-worker-cache && sha256sum -c SHA256SUMS)
+          cp ram-worker-cache/pb626-epd kernel-stage/
           test -s kernel-stage/pb626-epd
       - uses: actions/upload-artifact@v4
         with:
@@ -238,7 +289,7 @@ jobs:
         with:
           name: pb626-alpine-base-stage
           path: alpine-base
-      - name: Install packaging tools and the display utility cross-compiler
+      - name: Install RAM packaging tools
         timeout-minutes: 9
         run: |
           set -euo pipefail
@@ -273,7 +324,7 @@ jobs:
 
   desktop:
     name: Paired RAM desktop and native firmware
-    needs: bundle
+    needs: [bundle, alpine-base]
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -282,29 +333,36 @@ jobs:
         with:
           name: pb626-mainline-7.2-ram-bundle
           path: fel-bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-alpine-base-stage
+          path: alpine-base
       - name: Install packaging tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cpio device-tree-compiler ncurses-bin clang lld qemu-user-static
-      - name: Cache desktop userspace
+      - name: Identify desktop dependencies
+        id: desktop-inputs
+        run: |
+          echo "alpine=$(sha256sum alpine-base/alpine-rootfs.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Cache distribution desktop base (no kernel or project runtime)
         id: cache
         uses: actions/cache@v4
         with:
           path: desktop-cache
-          key: pb626-current-desktop-${{ runner.os }}-${{ hashFiles('scripts/build-megi-desktop.sh', 'scripts/build-alpine-rootfs.sh', 'scripts/assemble-megi-ram.sh', 'boot/**', 'board/**', 'patches/**', 'display/**') }}
-      - name: Build paired firmware
-        run: |
-          if [ -s desktop-cache/pb626-desktop-root.cpio.gz ]; then
-            bash scripts/build-megi-desktop.sh fel-bundle desktop-cache
-          else
-            bash scripts/build-megi-desktop.sh fel-bundle
-          fi
-      - name: Save desktop base
+          key: pb626-desktop-base-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.desktop-inputs.outputs.alpine }}-${{ hashFiles('scripts/build-desktop-base.sh', 'display/matchbox-keyboard-eink.patch', 'display/matchbox-panel-power-supply.patch') }}
+      - name: Build Matchbox and Xorg on cache miss
         if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p desktop-cache
-          cp dist/pb626-desktop-root.cpio.gz desktop-cache/
-          (cd desktop-cache && sha256sum pb626-desktop-root.cpio.gz > SHA256SUMS)
+        run: bash scripts/build-desktop-base.sh alpine-base/alpine-rootfs.tar.gz desktop-cache
+      - name: Verify desktop base
+        run: (cd desktop-cache && sha256sum -c SHA256SUMS)
+      - name: Cache compiled display bridge and native worker
+        uses: actions/cache@v4
+        with:
+          path: bridge-cache
+          key: pb626-display-binaries-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop-cache/SHA256SUMS', 'scripts/build-megi-desktop.sh', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/pb626-x11-epd.c', 'display/test-pb626-*.c', 'fel-bundle/uapi/linux/sun5i-eink.h') }}
+      - name: Assemble paired firmware from current FEL bundle and cached desktop
+        run: bash scripts/build-megi-desktop.sh fel-bundle desktop-cache bridge-cache
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-megi-eink-desktop
@@ -315,9 +373,3 @@ jobs:
           name: pb626-native-system
           path: native-dist/
           if-no-files-found: error
-      - name: Package optional apps
-        run: tar -czf pb626-desktop-extras.tar.gz -C display/extras .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pb626-desktop-extras
-          path: pb626-desktop-extras.tar.gz
