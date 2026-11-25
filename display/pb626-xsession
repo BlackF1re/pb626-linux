@@ -6,7 +6,13 @@ if [ -r /usr/lib/libharfbuzz.so.0 ]; then
 fi
 xset s off
 xsetroot -solid white
-export XENVIRONMENT=/etc/pb626/Xresources
+# Publish defaults to the X server, not just this process's environment.
+# xinit brings xrdb as a dependency. -nocpp avoids requiring a compiler.
+export NO_COLOR=1 CLICOLOR=0
+if ! xrdb -nocpp -merge /etc/X11/pb626.Xresources; then
+    echo 'PB626: xrdb failed; using session resource file' >&2
+    export XENVIRONMENT=/etc/X11/pb626.Xresources
+fi
 matchbox-window-manager -theme PB626 -use_titlebar yes &
 wm=$!
 panel=

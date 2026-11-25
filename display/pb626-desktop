@@ -1,21 +1,6 @@
 #!/bin/sh
 set -eu
 
-# Read a single profile name, never source a configuration file as shell code.
-# An explicit environment override is useful for RAM and diagnostic sessions.
-if [ -z "${PB626_EPD_GRAY_PROFILE:-}" ]; then
-    profile=mono
-    if [ -r /etc/pb626/display-profile ]; then
-        IFS= read -r profile </etc/pb626/display-profile || true
-    fi
-    case "$profile" in
-        mono|balanced|ui|photo|legacy) ;;
-        *) echo "PB626: invalid display profile; using mono" >&2; profile=mono ;;
-    esac
-    export PB626_EPD_GRAY_PROFILE="$profile"
-fi
-# CLI applications that support these conventions should avoid ANSI colors.
-export NO_COLOR=1 CLICOLOR=0
 waveform=${1:-/run/default.wbf}
 if [ ! -s "$waveform" ] ||
    [ ! -f /proc/device-tree/chosen/pb626,display-bringup ]; then
