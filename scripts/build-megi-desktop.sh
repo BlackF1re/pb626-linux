@@ -118,8 +118,9 @@ fi
 
 # Always rebuild the bridge, even when reusing a previous desktop rootfs.
 sudo install -m 755 /usr/bin/qemu-arm-static desktop-root/usr/bin/
-test "$(/usr/bin/qemu-arm-static desktop-root/usr/bin/pb626-epd --protocol)" = pb626-epd-shm-3
-sudo install -m 644 display/{pb626-x11-epd.c,test-pb626-x11-epd.c,pb626-epd.h} desktop-root/tmp/
+test "$(/usr/bin/qemu-arm-static desktop-root/usr/bin/pb626-epd --protocol)" = pb626-epd-shm-4
+sudo install -m 644 display/{pb626-x11-epd.c,test-pb626-x11-epd.c,pb626-epd.c,test-pb626-epd.c,pb626-epd.h} desktop-root/tmp/
+sudo cp -r "$bundle/uapi" desktop-root/tmp/uapi
 sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
 sudo chroot desktop-root /usr/bin/qemu-arm-static /sbin/apk add --no-cache --virtual .pb626-bridge-build \
   build-base linux-headers libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev
@@ -129,9 +130,15 @@ sudo chroot desktop-root /usr/bin/qemu-arm-static /bin/sh -ec '
   cc -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lm
   ./test-pb626-x11-epd
   strip /usr/bin/pb626-x11-epd
+  cc -O3 -Wall -Wextra -Werror -I uapi pb626-epd.c -o /tmp/native-worker
+  cc -O2 -Wall -Wextra -Werror -I uapi test-pb626-epd.c -o /tmp/test-native-worker
+  /tmp/test-native-worker
+  test "$(/tmp/native-worker --protocol)" = pb626-epd-shm-4
+  strip /tmp/native-worker
   apk del .pb626-bridge-build
 '
-sudo rm -f desktop-root/tmp/{pb626-x11-epd.c,test-pb626-x11-epd.c,test-pb626-x11-epd,pb626-epd.h} desktop-root/usr/bin/qemu-arm-static
+sudo cp desktop-root/tmp/native-worker ./native-worker
+sudo rm -rf desktop-root/tmp/{pb626-x11-epd.c,test-pb626-x11-epd.c,test-pb626-x11-epd,pb626-epd.c,test-pb626-epd.c,test-native-worker,native-worker,pb626-epd.h,uapi} desktop-root/usr/bin/qemu-arm-static
 printf 'nameserver 1.1.1.1\n' | sudo tee desktop-root/etc/resolv.conf >/dev/null
 
 sudo install -m 755 display/pb626-desktop display/pb626-xsession desktop-root/usr/bin/
@@ -162,3 +169,14 @@ for mmc in 1c0f000 1c11000; do
   test "$(fdtget -t s "$dtb" "/soc/mmc@$mmc" status)" = disabled
 done
 (cd dist && sha256sum pb626-* KERNELRELEASE > SHA256SUMS)
+# Build native root separately from the RAM archive.
+mkdir -p native-dist
+sudo install -m 755 ./native-worker desktop-root/usr/bin/pb626-epd
+sudo install -m 755 boot/pb626-native-{setup,desktop,console} desktop-root/sbin/
+sudo install -m 644 boot/pb626-native.inittab desktop-root/etc/inittab
+printf 'pb626-native-alpine-v1\n' | sudo tee desktop-root/etc/pb626-image-id >/dev/null
+sudo rm -f desktop-root/init
+sudo tar --numeric-owner -C desktop-root -czf native-dist/pb626-native-rootfs.tar.gz .
+cp "$bundle"/{pb626-native-zImage,pb626-elan-emmc-native.dtb,KERNELRELEASE} native-dist/
+python3 BT0-uncaged/pack-kernel.py native-dist/pb626-native-zImage native-dist/pb626-elan-emmc-native.dtb native-dist/raw-linux.img
+(cd native-dist && sha256sum pb626-* KERNELRELEASE raw-linux.img > SHA256SUMS)

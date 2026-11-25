@@ -46,9 +46,7 @@ sudo install -m 755 boot/init-megi initramfs/init
 sudo install -m 755 scripts/inspect-live.sh initramfs/usr/sbin/inspect-pb626
 sudo install -m 755 scripts/probe-device.sh initramfs/usr/sbin/probe-pb626
 sudo install -m 755 scripts/pb626-network.sh initramfs/usr/sbin/pb626-network
-# Explicitly user-authorized public, disposable test-AP credentials (NOT personal).
 sudo install -d -m 700 initramfs/etc/pb626
-sudo install -m 600 board/megi/wifi-test.conf initramfs/etc/pb626/wpa_supplicant.conf
 test -e initramfs/dev/null || sudo mknod -m 666 initramfs/dev/null c 1 3
 
 (cd initramfs && sudo find . -print0 | sudo cpio --null -o --format=newc --quiet) \
@@ -58,12 +56,20 @@ cp kernel-stage/pb626-megi-zImage dist/
 cp kernel-stage/pb626-megi.config dist/
 cp kernel-stage/KERNELRELEASE kernel-stage/KERNEL-SOURCE.txt dist/
 cp kernel-stage/pb626-*.dtb dist/
+cp kernel-stage/pb626-megi-zImage dist/pb626-native-zImage
+cp -r kernel-stage/uapi dist/
 
 # Reserve a zero word at the appended-DTB probe address in FEL images.
 printf '\0\0\0\0' >> dist/pb626-megi-zImage
 initrd_start=$((0x45000000))
 
 for dtb in dist/pb626-*.dtb; do
+  if [[ ${dtb##*/} == pb626-elan-emmc-native.dtb ]]; then
+    fdtget "$dtb" /chosen pb626,emmc-root >/dev/null
+    test "$(fdtget -t s "$dtb" /soc/mmc@1c11000 status)" = okay
+    ! fdtget "$dtb" /chosen linux,initrd-start >/dev/null 2>&1
+    continue
+  fi
   initrd=dist/pb626-megi-initramfs.cpio.gz
   initrd_end=$((initrd_start + $(stat -c '%s' "$initrd")))
   test "$initrd_end" -lt $((0x50000000))
@@ -88,8 +94,6 @@ gzip -t dist/pb626-megi-initramfs.cpio.gz
 gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t > dist/INITRAMFS-CONTENTS.txt 2>/dev/null
 (grep -Fxq 'init' dist/INITRAMFS-CONTENTS.txt || grep -Fxq './init' dist/INITRAMFS-CONTENTS.txt)
 grep -F '/rtl8188eufw.bin' dist/INITRAMFS-CONTENTS.txt >/dev/null
-(grep -Fxq 'etc/pb626/wpa_supplicant.conf' dist/INITRAMFS-CONTENTS.txt || \
- grep -Fxq './etc/pb626/wpa_supplicant.conf' dist/INITRAMFS-CONTENTS.txt)
 grep -Fxq 'kernel/drivers/video/fbdev/sun5i-eink.ko' "rootfs/lib/modules/$kernel_release/modules.builtin"
 if grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null; then
   echo 'Unexpected loadable E Ink driver in built-in kernel bundle' >&2
@@ -97,28 +101,14 @@ if grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null; then
 fi
 grep -F '/pb626-epd' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
-grep -F '/aireplay-ng' dist/INITRAMFS-CONTENTS.txt >/dev/null
-grep -F '/hcxdumptool' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F 'lib/modules/' dist/INITRAMFS-CONTENTS.txt >/dev/null
 rm dist/INITRAMFS-CONTENTS.txt
 
-(cd dist && sha256sum pb626-megi-zImage *.dtb *.gz *.config > SHA256SUMS)
+(cd dist && sha256sum pb626-megi-zImage pb626-native-zImage *.dtb *.gz *.config uapi/linux/sun5i-eink.h > SHA256SUMS)
 cat > dist/README.txt <<'NOTE'
-EXPERIMENTAL ALPINE FOR POCKETBOOK 626 PLUS.
-Megi mainline Linux 7.2 (2026-09-03), commit facc87117511221bb61410e3f92ad8579697f736.
-2026 sun4i timer fixes already upstream.
-The first FEL Linux boot blinked LED but did not enumerate 0525:a4a7.
-This image has new UDC LED codes and an attempted frontlight-off fix.
-DTB variants: four standard, plus elan-lightoff, elan-usbtest and elan-display.
-elan-lightoff: disable backlight/PWM and hog PB4 LOW, KEEP factory PG1
-VBUS detect. Test this variant FIRST and verify that frontlight goes off.
-elan-usbtest: same PB4-off configuration, plus experimental PG1 fallback.
-Use it ONLY AFTER the elan-lightoff test is safe and without other changes.
-elan-display: ELAN / ED060XD4 with PWM backlight, USB ACM and both MMC hosts off.
-elan-emmc-backup: dedicated USB backup from RAM with read-only eMMC and SD off.
-Never use these experimental DTBs on a reader with unverified GPIO pinout.
-Optional removable rootfs needs explicit pb626.root=sd and is read-only.
-SPL/ARM entry are external lab dependencies and remain unreviewed.
+PB626 ELAN/eMMC: elan-display is RAM-only; elan-emmc-backup is read-only recovery.
+elan-emmc-native is for offline native image construction ONLY, never FEL RAM.
+Use matching kernel, modules, DTB and checksums. See repository README.
 NOTE
 test -s dist/pb626-megi-zImage
 test -s dist/pb626-megi-initramfs.cpio.gz

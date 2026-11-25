@@ -30,7 +30,7 @@ imgs=${1%/}
 variant=$2
 profile=$3
 option=${4:-}
-case "$variant" in elan|elan-lightoff|elan-usbtest|elan-display|elan-emmc-backup|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
+case "$variant" in elan-display|elan-emmc-backup) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
 case "$profile" in
   standard) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
   diagnostic) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;

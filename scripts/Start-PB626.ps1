@@ -24,7 +24,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$BundleDir,
-    [ValidateSet('elan','elan-lightoff','elan-usbtest','elan-display','elan-emmc-backup','cypress','focaltech','no-touch')][string]$Variant='elan',
+    [ValidateSet('elan-display','elan-emmc-backup')][string]$Variant='elan-display',
     [ValidateSet('standard','diagnostic')][string]$Profile='standard',
     [string]$Distro='XperiaDev',
     [switch]$NoExecute
