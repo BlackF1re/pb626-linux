@@ -39,7 +39,7 @@ static void test_gray(void)
 	assert(gray_value(255, 0, 0) == 56);
 	assert(quantize(127, 0, 0, 0) == paper_level(127, 0, 0, 0));
 	unsetenv("PB626_EPD_QUANT_REFERENCE");
-	for (int profile = GRAY_BALANCED; profile <= GRAY_LEGACY; profile++) {
+	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++) {
 		setup_gray(profile, 0, 1.0);
 		setup_quantization();
 		for (int y = 0; y < 16; y++)
@@ -49,7 +49,26 @@ static void test_gray(void)
 					assert(quantize(v, 48, x, y) == quantize_reference(v, 48, x, y));
 				}
 	}
-	puts("E Ink grayscale profiles, exact lookup and stable dithering passed");
+	/* Every desired pixel is black or white, including exact old gray levels.
+	 * Flat selection fills stay visible; edge decisions ignore dither phase. */
+	setup_gray(GRAY_MONO, 0, 1.0);
+	setup_quantization();
+	for (unsigned int v = 0; v < 256; v++) {
+		int white = 0;
+		for (int y = 0; y < 4; y++)
+			for (int x = 0; x < 4; x++) {
+				uint8_t level = quantize(v, 0, x, y);
+				assert(level == 0 || level == WHITE);
+				assert(level == quantize(v, 0, x + 4, y + 4));
+				assert(quantize(v, 48, x, y) == (v >= 128 ? WHITE : 0));
+				white += level == WHITE;
+			}
+		if (v == 0) assert(white == 0);
+		if (v == 255) assert(white == 16);
+		if (v == 204) assert(white > 0 && white < 16);
+		if (v == 128) assert(white == 8);
+	}
+	puts("E Ink grayscale/mono profiles, exact lookup and stable dithering passed");
 }
 
 int main(void)

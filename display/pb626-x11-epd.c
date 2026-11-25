@@ -223,7 +223,7 @@ static unsigned int channel(unsigned long pixel, unsigned long mask)
 	return ((pixel & mask) >> shift) * 255 / (mask >> shift);
 }
 
-enum gray_profile { GRAY_BALANCED, GRAY_UI, GRAY_PHOTO, GRAY_LEGACY };
+enum gray_profile { GRAY_BALANCED, GRAY_UI, GRAY_PHOTO, GRAY_LEGACY, GRAY_MONO };
 enum { LUMA_STEPS = 4096 };
 static enum gray_profile gray_profile;
 static uint16_t linear_r[256], linear_g[256], linear_b[256];
@@ -297,6 +297,15 @@ static const uint8_t blue_noise[16][16] = {
 
 static inline uint8_t quantize_reference(unsigned int value, unsigned int contrast, int x, int y)
 {
+	/* Binary output, with stable panel-aligned stipple for flat midtones.
+	 * Keep the nearest binary level at edges to protect text strokes. */
+	if (gray_profile == GRAY_MONO) {
+		static const uint8_t bayer[4][4] = {
+			{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5},
+		};
+		unsigned int threshold = contrast >= 48 ? 127 : bayer[y & 3][x & 3] * 16 + 8;
+		return value + threshold >= 255 ? WHITE : 0;
+	}
 	if (gray_profile == GRAY_UI)
 		return (value * WHITE + 127) / 255;
 	if (gray_profile == GRAY_PHOTO && contrast < 48) {
@@ -447,8 +456,8 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 			const uint8_t *pixel = lightness + y * WIDTH + x;
 			unsigned int value = *pixel;
 			uint8_t next = value / 17;
-			/* Exact levels are independent of the contrast and dither thresholds. */
-			if (value != 17u * next) {
+			/* Only grayscale profiles may bypass quantization at exact gray levels. */
+			if (gray_profile == GRAY_MONO || value != 17u * next) {
 				unsigned int contrast = 0;
 				if (uses_contrast) {
 					unsigned int lx = x > 0 ? pixel[-1] : value;
@@ -786,7 +795,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Usage: pb626-x11-epd DEFAULT.WBF READY\n");
 		return EXIT_FAILURE;
 	}
-	static const char *const profiles[] = {"balanced", "ui", "photo", "legacy"};
+	static const char *const profiles[] = {"balanced", "ui", "photo", "legacy", "mono"};
 	const char *gray = getenv("PB626_EPD_GRAY_PROFILE");
 	enum gray_profile selected = GRAY_BALANCED;
 	if (gray) {

@@ -1,11 +1,13 @@
 *foreground: black
 *background: white
+*borderColor: black
 *VT100.colorMode: false
 *VT100.allowColorOps: false
 *termName: pb626-mono
 XTerm*faceName: Liberation Mono:style=Bold
 XTerm*faceSize: 12
 XTerm*cursorBlink: false
+XTerm*cursorColor: black
 XTerm*resizeGravity: SouthWest
 XTerm*VT100.scrollBar: true
 XTerm*VT100.rightScrollBar: true
