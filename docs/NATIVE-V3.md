@@ -19,3 +19,9 @@ Run `python3 scripts/build-native-v4.py pb626-v3-diagnostic.zip out` with clang/
 Gapped build hashes (local Clang/LLD):
 - clean: c63321916c2640dbea9f101bb9f94e79d777cbb2841a4e7997a76d78a71e805e
 - stages: 36f07592570a6eec37ef7aaad63d8f21b39a638decac25a85d0b22805e1166fb
+
+## Hardware matrix (2026-11-25, v4 archive)
+
+Direct zImage/DTB FEL, exact v3 FEL, v4-clean FEL and v4-stages FEL all mount ext4 on 179:1 and run BusyBox init. Native USB enumerates. Cold clean and cold stages do not enumerate. Cold stages reaches pulse group 9 after the decompressor returned and its cache cleanup path, but before original Image entry. Active file remains pb626v4.bin with stages SHA256 36f07592570a6eec37ef7aaad63d8f21b39a638decac25a85d0b22805e1166fb, contiguous 3724 clusters per installer. Cold USB monitored about 3 minutes. All five SHA256SUMS entries in supplied hardware test archive match. Do not change p1 or the factory loaders.
+
+Offline decompression of exact kernel.bin yields Image size 16370708 (0xf9cc14), SHA256 612534f6cddde64365931e45c07214a69155fc04fde2af12d687268d05eae933, word-wise FNV-style hash 0xb9bf5439. Physical range 0x40008000..0x40fa4c14 (exclusive). First instruction 0xeb0446f6 (BL 0x40119be0). FEL reference dmesg reserves 96 MiB CMA and sees 256 MiB physical DRAM; this does not imply a cold boot DRAM defect. Next experiment verifies Image and DTB at stage 9, and separately probes first Image entry. Test via FEL first; no hardware success for v5 established.
