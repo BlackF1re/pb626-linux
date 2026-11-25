@@ -51,10 +51,11 @@ fresh-device Alpine installer.** The complete native OS packaging path will
 need to be adapted to the new raw image layout separately. Historical FAT/AXF
 and intermediate U-Boot experiments are retired; see Git history only.
 
-**Safety:** cold normal Power boot succeeded on the tested device. Menu
-recovery has been confirmed via the FEL upload wrapper, not yet after the cold
-eMMC replacement. The microSD recovery attempt did not work. Keep the original
-full eMMC and boot-region backup; a backup alone does not guarantee recovery.
+**Safety:** cold normal Power boot and Menu-triggered FEL entry succeeded after
+installing BT0-uncaged on the tested device (2026-11-25). FEL version and SRAM
+reads worked. A complete rescue session after cold Menu entry has not yet been
+tested. The microSD recovery attempt did not work. Keep the original full eMMC
+and boot-region backup; a backup alone does not guarantee recovery if SPL fails.
 
 ## Verified on the physical reader
 
@@ -80,7 +81,7 @@ full eMMC and boot-region backup; a backup alone does not guarantee recovery.
 
 **Not yet verified:** touch input, battery/power management, suspend, Wi-Fi,
 removable SD root, panel
-voltage safety on other units, or cold Menu-to-FEL recovery after replacing BT0.
+voltage safety on other units, or a full rescue session after cold Menu-to-FEL entry.
 
 ## RAM-only safety boundary
 

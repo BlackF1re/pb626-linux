@@ -7,7 +7,7 @@ param(
     [switch]$AcceptNoRecovery
 )
 $ErrorActionPreference='Stop'
-if ($Mode -eq 'Install' -and !$AcceptNoRecovery) {throw 'Install requires -AcceptNoRecovery. Cold FEL and independent recovery are NOT proven.'}
+if ($Mode -eq 'Install' -and !$AcceptNoRecovery) {throw 'Install requires -AcceptNoRecovery. Independent recovery if SPL fails is NOT proven.'}
 $d=(Resolve-Path -LiteralPath $BundleDir).Path
 . "$PSScriptRoot/transport.ps1"
 function Get-Sha256([byte[]]$Bytes) {

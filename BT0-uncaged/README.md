@@ -5,7 +5,7 @@ A separate, deliberately small primary bootloader component for the late PocketB
 BootROM → BT0-uncaged SPL → raw Linux image (MMC2, LBA 80) → Alpine on p1.
 No factory BT0, BT1, boot.axf or FAT boot file participates. BT1 and the FAT partition are preserved on disk for recovery. No SD boot was demonstrated.
 
-**Not a general installer.** The cold Menu → BootROM FEL path is not yet physically confirmed after replacing BT0. Both Menu and normal paths were tested through a FEL upload; normal cold boot was subsequently observed. The external SD recovery route did not work on the tested board. A failed cold boot may require hardware recovery. Do not flash another revision. Keep a verified full factory eMMC user-area and hardware boot-region backup.
+**Not a general installer.** Both normal cold boot and Menu-triggered FEL entry have been demonstrated after replacing BT0 on the tested board. FEL version and SRAM reads work; a full recovery session from this cold FEL state remains untested. The external SD recovery route did not work on the tested board. A failed cold boot may require hardware recovery. Do not flash another revision. Keep a verified full factory eMMC user-area and hardware boot-region backup.
 
 ## Build
 
@@ -18,7 +18,7 @@ The base is U-Boot SPL, not factory BT0. Its exact upstream build tree, compiler
     python3 BT0-uncaged/test_hook.py BT0-uncaged.bin
 
 Output: 24576 bytes, SHA-256 39e4a51962e7288ddbef7dcecfbf508d43e23d3e59b2e970896dd2393f9824ae.
-The build verifies original patch bytes, intermediate safe SPL, eGON header/checksum and final hash. The 5249 mocked instruction tests exercise the early LRADC hook, not the entire SoC. No-event idle boot, key/partial-sample recovery, and FEL-thunk return are covered. Cold ROM return remains a hardware test.
+The build verifies original patch bytes, intermediate safe SPL, eGON header/checksum and final hash. The 5249 mocked instruction tests exercise the early LRADC hook, not the entire SoC. No-event idle boot, key/partial-sample recovery, and FEL-thunk return are covered. Cold Menu-triggered FEL communication was subsequently demonstrated on hardware; the modeled paths alone do not establish why the ROM preserved or changed SRAM.
 
 The BT0-uncaged Action is manually dispatched with the exact base encoded as a single base64 string. Example with GitHub CLI on Linux/WSL, from the repository:
 
@@ -56,6 +56,7 @@ To restore original BT0 while Linux still runs, use -Mode Rollback with the same
 - Primary v2 with Menu held returned to FEL through the USB thunk: PB26, reason 2, 4 samples of 0x29; version and SRAM reads successful.
 - Primary v2 with Menu released booted Linux via FEL.
 - Install recorded PRIMARY_V2_INSTALLED_VERIFIED; subsequent cold Power start reached Alpine Desktop with no host upload.
-- Cold Menu/FEL and independent hardware recovery remain unverified.
+- 2026-11-25: cold Menu entry after installing primary v2 enumerated as 1f3a:efe8. sunxi-fel version returned AWUSBFEX soc=00001625(A13), and a 40-byte hexdump at 0x5400 succeeded. The SRAM report no longer contained PB26; the reason is unknown, so it is not proof of the exact internal branch taken. The operational FEL interface is confirmed.
+- Full recovery from cold FEL (upload/execute and restart), and an independent recovery route if SPL fails, remain unverified.
 
 Earlier stock-chain experiments remain in Git history; they are not supported boot paths.
