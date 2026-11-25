@@ -1,143 +1,132 @@
-# PocketBook 626 Plus / Touch Lux 3 — native Alpine Linux
+# PocketBook 626 Plus / Touch Lux 3 · Native Linux
 
-Target: the verified late ELAN eKTF2227 / Samsung 8WPD3R eMMC board,
-Allwinner A13, 256 MiB DDR3, ED060XD4. Alpine 3.24.4 ARMv7 with Megi
-Linux 7.2, Xorg and E Ink-aware userspace. Not a universal PB626 image:
-other revisions and panel calibrations are not supported by this build.
+![Linux](https://img.shields.io/badge/Linux-7.2-0f766e?style=flat-square) ![Alpine](https://img.shields.io/badge/Alpine-3.24.4%20armv7-2563eb?style=flat-square) ![Status](https://img.shields.io/badge/status-experimental-d97706?style=flat-square)
+
+**Native Alpine Linux** on the PocketBook 626 Plus (Touch Lux 3): Allwinner A13, 256 MiB RAM and ED060XD4 E Ink (758×1024). A lightweight Xorg/Matchbox desktop boots directly from internal eMMC, without the factory OS, microSD or a host PC.
+
+> [!WARNING]
+> Only the late ELAN eKTF2227 / Samsung 8WPD3R eMMC board has been verified (stock U626.5.20.1157, VCOM −2440 mV). Other revisions and panel calibrations are not supported.
+
+## What this project adds
+
+- **BT0-uncaged:** MMC2-safe SPL, direct eMMC-to-Linux boot, ARM kernel wrapper and early Menu-to-FEL recovery.
+- **Faster boot:** targeted A13 MBUS DMA dependency fix and early persistent E Ink worker. Observed boot time fell from ~69 s to ~22 s to ~12 s; first acknowledged frame at 4.863 s after kernel start.
+- **Custom E Ink renderer:** C WBF decoder, six waveform modes (INIT/DU/GC16/GL16/A2/DU4), temperature-aware transition checks, indexed PIN32 scanout, asynchronous X11 bridge, dirty tiles, grayscale/dithering, fast previews and idle ghosting cleanup.
+- **Board support:** ELAN eKTF2227 touch driver, portrait input/button fallback, frontlight PWM fix, USB ACM and dedicated native/RAM/recovery DTBs.
+- **Desktop:** lightweight software-rendered Xorg/Matchbox, monochrome theme, on-screen keyboard, battery applet, manual refresh and optional utilities.
+- **Recovery:** verified 64 KiB FEL transfers, read-only full eMMC backup, differential restore with 4 MiB SHA-256-checked blocks and optional gzip, offline native image assembler.
+- **Research & CI:** reverse-engineered factory boot chain and waveform behavior, pinned and cached paired firmware builds.
+
+> [!NOTE]
+> Native boot, USB ACM, touch, grayscale/partial refresh and frontlight were demonstrated on hardware. Wi-Fi firmware loaded and wlan0 appeared; full networking, suspend, charger-only boot, Lima and SD recovery are not qualified. Timings are historical observations, not a controlled benchmark. The consolidated build, offline installer, backup receiver and CID adaptation still need physical validation; the original differential restore was tested on hardware.
+
+## Downloads
+
+Use matching artifacts from successful [system builds](https://github.com/BlackF1re/pb626-linux/actions/workflows/megi-fel.yml) ([consolidation build](https://github.com/BlackF1re/pb626-linux/actions/runs/45680410170)):
+
+- `pb626-mainline-7.2-ram-bundle` — FEL recovery and RAM Linux.
+- `pb626-native-system` — rootfs, kernel/DTB and packed `raw-linux.img`.
+- `pb626-megi-eink-desktop` — optional RAM desktop; `pb626-desktop-extras` — optional utilities.
+- `pb626-emmc-tools` — from the matching [restore build](https://github.com/BlackF1re/pb626-linux/actions/runs/45680410272) ([workflow](https://github.com/BlackF1re/pb626-linux/actions/workflows/restore.yml)).
+
+Extract ZIPs separately and verify `SHA256SUMS` (or `SHA256SUMS.fast` for the recovery helper). Artifacts expire; use manual workflow dispatch if necessary. No local ARM compilation/QEMU is needed for routine deployment.
+
+## Installation & recovery
+
+> [!CAUTION]
+> Installation replaces the primary SPL, raw Linux image and **all of p1 (including books and user data)**. Keep verified original factory and working-system backups separately. A broken SPL may prevent FEL recovery; no independent rescue path is established.
+
+### 1. Boot read-only recovery
+
+Requirements: Windows PowerShell 5.1, PowerShell 7.4+ (backup/restore), usbipd-win, WSL2 with `usbutils` and `device-tree-compiler`. The launcher defaults to WSL distro `XperiaDev` (override with `-Distro`).
+
+Keep these verified local inputs in WSL `/root/pb626-lab` (override `PB626_LAB_DIR`):
+
+- `pb626-spl.bin` — exact original lab SPL ([hash](BT0-uncaged/README.md)).
+- `direct-entry.bin` — known-working 52-byte ARM entry stub.
+- `retry-tools/sunxi-tools-master/sunxi-fel` — executable with [MMU patch](patches/sunxi-fel-keep-mmu-off.patch), or set `PB626_FEL_TOOL`.
+
+> [!IMPORTANT]
+> The exact SPL base and FEL stub are not distributed or fully reproducible here. Stop if you lack these inputs; do not substitute an arbitrary SPL. No stock jailbreak is required.
+
+Power off, unplug USB, hold the far-right Menu button and reconnect USB (FEL `1f3a:efe8`). Extract the RAM bundle to `C:\PB626\FEL`. From `C:\PB626`:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\FEL\Start-PB626.ps1 -BundleDir .\FEL -Variant elan-emmc-backup -Profile diagnostic
+```
+
+Elevate PowerShell for initial USB binding if required. Never run SPL twice per power cycle. Confirm Linux USB ACM `0525:a4a7` and the actual COM port (115200 8N1). Recovery leaves eMMC read-only and unmounted; power off if the frontlight remains bright.
+
+### 2. Back up stock firmware
+
+Extract `pb626-emmc-tools` to `C:\PB626\tools`, close the serial terminal and use PowerShell 7.4+ (replace COM12 with your port):
+
+```powershell
+.\tools\Backup-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\stock
+```
+
+Use a new directory. The tool saves and verifies the entire 7.28 GiB user area, hardware boot0/boot1, EXT_CSD, original CID and `SHA256SUMS`. A post-installation dump is not a factory backup.
+
+Obtain your original `/boot/default.wbf` and verify VCOM and [waveform SHA-256](docs/EINK.md). On the verified factory geometry, `/boot` is FAT16 at LBA 73728; with WSL/Linux `mtools`:
+
+```bash
+mcopy -i /mnt/c/PB626/stock/pb626-emmc-user.img@@37748736 ::/default.wbf /mnt/c/PB626/default.wbf
+mtype -i /mnt/c/PB626/stock/pb626-emmc-user.img@@37748736 ::/vcom
+sha256sum /mnt/c/PB626/default.wbf
+```
+
+Stop if the board, VCOM or waveform differs. Never publish dumps, CID, credentials or proprietary calibration.
+
+### 3. Install native Linux
+
+Clone this repo in WSL/Linux. Install `python3`, `e2fsprogs`, `device-tree-compiler`, `mtools`, `clang`, `lld`, `llvm`. Extract `pb626-native-system` to `C:\PB626\native`. Reconstruct the exact SPL locally ([details](BT0-uncaged/README.md)):
+
+```bash
+python3 BT0-uncaged/build.py /root/pb626-lab/pb626-spl.bin /mnt/c/PB626/BT0-uncaged.bin
+python3 BT0-uncaged/test_hook.py /mnt/c/PB626/BT0-uncaged.bin
+```
+
+Build a new offline image set from the repository root (allow ~16 GiB extra for output and temporary work):
+
+```bash
+sudo python3 scripts/build-native-image.py \
+  --backup /mnt/c/PB626/stock \
+  --system /mnt/c/PB626/native \
+  --spl /mnt/c/PB626/BT0-uncaged.bin \
+  --waveform /mnt/c/PB626/default.wbf \
+  --output /mnt/c/PB626/linux \
+  --accept-replace-p1
+```
+
+The assembler verifies input hashes, geometry, boot extents, DTB and modules. It preserves MBR/EBR, both BT1 copies, remaining partitions and hardware boot areas; EXT_CSD is not programmed. Boot recovery if needed and follow step 4 with `C:\PB626\linux` instead of `stock`. After verification, power off, disconnect USB and boot normally.
+
+### 4. Restore stock (or a verified Linux backup)
+
+Boot recovery (step 1), close the serial terminal, then run preflight before enabling writes:
+
+```powershell
+.\tools\Restore-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\stock
+.\tools\Restore-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\stock -Write
+```
+
+Only after preflight passes, type `RESTORE` followed by the displayed CID. Keep USB connected until **All three eMMC regions match SHA256SUMS**, then power off. For legacy dumps lacking `pb626-emmc-cid.txt`, pass `-ExpectedCid ORIGINAL_CID` to both commands and `--expected-cid ORIGINAL_CID` to the image assembler. Do not override mismatched CID/geometry. [Recovery details](scripts/restore/README.md).
+
+### Optional: RAM desktop
+
+Extract `pb626-megi-eink-desktop` to `C:\PB626\desktop`. Cold-boot its own bundle using step 1 with `-Variant elan-display -Profile standard` and the desktop directory/launcher instead of FEL. Both MMC hosts are disabled. Then:
+
+```powershell
+.\desktop\Start-PB626Desktop.ps1 -BundleDir .\desktop -Port COM12 -Waveform C:\PB626\default.wbf
+```
+
+Hold Menu for one second and release for a manual reset. USB ACM is an unauthenticated physical root console; no network root login is enabled.
 
 ## Reference
 
-- [Hardware and stock system](docs/HARDWARE-PROFILE.md)
-- [Factory boot chain](docs/STOCK-BOOT-CHAIN.md)
-- [Current boot chain and physical validation](docs/BOOT.md)
-- [E Ink / factory waveform reference](docs/EINK.md)
-- [BT0-uncaged SPL](BT0-uncaged/README.md)
+[Hardware](docs/HARDWARE-PROFILE.md) · [Factory boot](docs/STOCK-BOOT-CHAIN.md) · [Native boot & measurements](docs/BOOT.md) · [E Ink](docs/EINK.md) · [BT0-uncaged](BT0-uncaged/README.md) · [Recovery](scripts/restore/README.md)
 
-## Build
+## License & credits
 
-[System workflow](.github/workflows/megi-fel.yml) builds a paired set
-of artifacts from pinned Megi source
-facc87117511221bb61410e3f92ad8579697f736 (Arnavion/linux mirror)
-and Alpine 3.24.4. All ARM compilation/emulation happens on CI.
+Original contributions: **GPL-2.0-or-later** unless otherwise marked ([LICENSE](LICENSE)). Kernel changes follow the applicable Linux GPL-2.0-only terms and syscall exception; upstream and packaged components retain their own licenses. Do not redistribute reconstructed SPL binaries until the exact U-Boot corresponding source/configuration obligations are resolved.
 
-| Artifact | Purpose |
-|---|---|
-| pb626-mainline-7.2-ram-bundle | FEL RAM and read-only recovery; matching kernel/modules/DTBs |
-| pb626-megi-eink-desktop | Optional RAM desktop, no internal flash access |
-| pb626-native-system | Native rootfs, native zImage/DTB, packed raw Linux image |
-| pb626-desktop-extras | Optional application package |
-| pb626-emmc-tools | Full backup and differential restore tools, from [restore workflow](.github/workflows/restore.yml) |
-| BT0-uncaged | Manual reconstruction of the tested primary SPL |
-
-Use files from successful matching builds; verify SHA256SUMS.
-The system workflow includes the canonical early persistent E Ink renderer.
-The integrated build is not yet hardware-validated. No claim of bit-for-bit
-reproduction of the previously installed experimental package.
-
-BT0-uncaged can be reconstructed using the original local 24576-byte U-Boot
-SPL, the checked-in source patches and assembler. Its base source/config
-and toolchain provenance remain missing; do not publish the binary until
-corresponding-source obligations are resolved. The original base is not
-factory BT0. No factory WBF, device CID or full dump is distributed.
-
-## Recovery / RAM boot
-
-Requirements: Windows PowerShell 5.1 for FEL launch; PowerShell 7.4+
-for backup/restore and RAM desktop. usbipd, WSL2 (default XperiaDev),
-usbutils, device-tree-compiler. Existing local prerequisites in
-/root/pb626-lab (override PB626_LAB_DIR in WSL):
-- pb626-spl.bin (exact original lab SPL; see BT0 README for hash)
-- direct-entry.bin (known working 52-byte ARM entry)
-- retry-tools/sunxi-tools-master/sunxi-fel, built with
-  patches/sunxi-fel-keep-mmu-off.patch; or PB626_FEL_TOOL override.
-
-The local FEL prerequisites are not fully reproducible from this repo;
-preserve the working copies. No local QEMU or ARM compilation is needed
-for routine boot and restore. Never run SPL twice in one power cycle.
-
-Power off, disconnect USB, hold far-right Menu, reconnect USB. Extract
-a successful RAM bundle to C:\PB626\FEL and run:
-
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\FEL\Start-PB626.ps1 -BundleDir .\FEL -Variant elan-emmc-backup -Profile diagnostic
-
-Use elan-emmc-backup for backup/restore (MMC2 read-only, no partitions
-mounted, frontlight off). Use elan-display for the RAM desktop (both MMC
-hosts disabled). The native DTB is never accepted by the FEL RAM loader.
-Find the actual 0525:a4a7 USB ACM COM port. A successful FEL execute
-does not alone prove Linux boot. If frontlight remains bright, power off.
-
-For RAM desktop extract pb626-megi-eink-desktop separately, boot its
-elan-display bundle and invoke Start-PB626Desktop.ps1 with -BundleDir,
--Port, and -Waveform pointing to the owner's factory default.wbf.
-Do not substitute another panel's calibration. Hold Menu for one second
-and release to manually reset the screen. USB console remains available.
-
-## Backup and restore
-
-See [full instructions](scripts/restore/README.md). Boot the recovery
-variant above and download pb626-emmc-tools. Close any serial terminal.
-
-    .\Backup-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\backup
-
-Backup creates verified user, boot0 and boot1 raw images, 512-byte EXT_CSD,
-original CID and SHA256SUMS in a new private directory. Keep the original
-factory dump and a separate current working-system dump. Never publish them.
-
-Restore (first preflight, then explicit write):
-
-    .\Restore-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\backup
-    .\Restore-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\backup -Write
-
-For legacy dumps without the private CID file add -ExpectedCid with the
-original backup CID to both commands. Type RESTORE <CID> only after
-checking preflight. Wait for full three-region SHA256 verification.
-The original differential restore was used on hardware. The external-CID
-adaptation and new backup tool are not yet hardware-tested.
-
-## Install the built firmware
-
-**This replaces all content of p1 (including existing books/user data)
-and the primary bootloader/raw Linux image.** Never flash an unverified
-board. First preserve and verify the original and current dumps.
-The installer operates offline on a new set of image files, not a disk
-device. The existing differential restore then transfers the new dump from
-RAM recovery. It leaves MBR/EBR, both BT1 copies, remaining factory partitions
-and hardware boot0/boot1 unchanged. EXT_CSD is not programmed.
-
-Extract pb626-native-system and obtain the verified BT0-uncaged.bin plus
-the original default.wbf (SHA256 recorded in docs/EINK.md). In WSL/Linux
-install python3, e2fsprogs and device-tree-compiler. Run as root, with
-adequate space in WSL /tmp and a new output directory (allow roughly
-16 GiB for output and work, in addition to the existing dumps).
-No mount, loop device, QEMU or direct flash is needed:
-
-    sudo python3 scripts/build-native-image.py \
-      --backup /path/to/private-backup \
-      --system /path/to/pb626-native-system \
-      --spl /path/to/BT0-uncaged.bin \
-      --waveform /path/to/default.wbf \
-      --output /path/to/new-private-firmware \
-      --accept-replace-p1
-
-Legacy backups require --expected-cid ORIGINAL_CID. The tool checks
-known prefix, geometry, BT1 copies, SPL and waveform hashes, payload
-CRC and DTB, matching modules; builds p1 ext4 and verifies every copied
-or changed span. The output has the same manifest format as a backup.
-Boot the RAM recovery variant, run Restore-PB626Fast.ps1 first without
--Write and then with -Write using the new output directory.
-
-This offline assembler and clean native build are new integration paths,
-not yet a physically verified fresh installer. Do not replace the only
-known working installation without a verified rescue setup. Backup
-does not guarantee recovery if the primary SPL cannot reach FEL.
-
-## Development boundaries
-
-Only the two RAM modes and the native ELAN/eMMC mode are built. Historical
-diagnostic DTBs, temporary boot optimizations and obsolete installers
-are available in Git history rather than the working tree. The factory
-boot chain remains documented as reference. Local USB ACM is an explicitly
-unauthenticated root lab console on physical connection; no network root
-login is enabled. Wi-Fi configuration is private and optional. Suspend,
-charger-only boot and independent recovery without working SPL are not
-qualified.
+Special thanks to **[Ondřej Jirman (megi)](https://xnux.eu/)** and [his Linux project](https://xff.cz/kernels/) for the foundational PocketBook support, E Ink V4L2 driver and Allwinner work. This port uses his [pinned Linux 7.2 tree](https://github.com/Arnavion/linux/tree/facc87117511221bb61410e3f92ad8579697f736) via [Arnavion/linux](https://github.com/Arnavion/linux). Thanks also to [linux-sunxi](https://linux-sunxi.org/PocketBook_Touch_Lux_3), [PocketBook A13 sources](https://github.com/pocketbook/Platform_A13), [sunxi-tools](https://github.com/linux-sunxi/sunxi-tools), Matchbox and Alpine.
