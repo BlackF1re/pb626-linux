@@ -30,7 +30,7 @@ bridge=change(bridge, '\tDisplay *display = XOpenDisplay(NULL);', '''	/* The wra
 		return EXIT_FAILURE;
 	}
 	while (access(marker, F_OK) && now_us() < deadline)
-		usleep(20000);
+		nanosleep(&(struct timespec){ .tv_nsec = 20000000L }, NULL);
 	if (access(marker, F_OK)) {
 		fprintf(stderr, "preclear-persistent: session marker timed out\\n");
 		stop_worker(&worker);
