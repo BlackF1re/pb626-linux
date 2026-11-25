@@ -1,0 +1,2 @@
+.equ KERNEL_HASH, 0xff889735
+.equ DTB_HASH, 0x7c83d26c
