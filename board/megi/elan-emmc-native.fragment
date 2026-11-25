@@ -1,0 +1,19 @@
+/* Compose AFTER elan, elan-display and elan-ektf2227.
+ * Preserve the proven display/USB/touch wiring; allow the internal MMC only.
+ */
+&mmc0 {
+  status = "disabled";
+};
+&mmc2 {
+  max-frequency = <25000000>;
+  no-sd;
+  no-sdio;
+  status = "okay";
+};
+&{/chosen} {
+  pb626,emmc-root;
+  bootargs = "console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rootwait rw init=/sbin/init";
+  /delete-property/ linux,initrd-start;
+  /delete-property/ linux,initrd-end;
+  /delete-property/ pb626,emmc-backup;
+};

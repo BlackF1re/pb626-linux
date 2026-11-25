@@ -62,4 +62,9 @@ To restore original BT0 while Linux still runs, use -Mode Rollback with the same
 - 2026-11-25: cold Menu FEL followed by execution of the known MMC2-safe SPL successfully started native Alpine Desktop from the original raw eMMC image. A separate cold FEL session initialized DRAM, transferred and read back all 7625340 payload bytes of the fast wrapper image, then executed it at 0x40008000; Alpine Desktop appeared quickly. No measured boot duration was supplied. Neither test replaced eMMC boot sectors. The fast wrapper was subsequently installed and verified on eMMC. With the original timeout the complete boot took approximately 69 seconds.
 - Shortened LRADC timeout: both FEL-uploaded button branches passed. Held Menu produced PB26, reason 2, four samples of 0x29. Released Menu booted Alpine quickly. The new SPL was installed with full prefix and protected extents verified; cold normal boot reached the desktop in about 22 seconds, and cold Menu FEL worked (operator report). Recovery upload after the final revision was not separately reported. Independent recovery if the primary SPL itself fails remains unverified.
 
+The later MBUS-fixed native image was installed and cold-booted successfully;
+see [native validation](../docs/NATIVE-BOOT-MBUS.md). The existing BT0 installer
+is intentionally restricted to the earlier kernel extents and is **not** an
+updater for the current installed kernel. Do not reinstall BT0 for a kernel update.
+
 Earlier stock-chain experiments remain in Git history; they are not supported boot paths.
