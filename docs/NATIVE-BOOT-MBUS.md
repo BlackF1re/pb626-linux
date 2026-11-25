@@ -85,5 +85,6 @@ Neither power-loss safety nor independent recovery when SPL fails is proven.
 
 The one-device update scripts were exercised outside Git; the original
 backup and hardcoded device-specific material are intentionally not included.
-See the known-image updater in this PR if present; it is not a fresh-device
-installer. Never apply this layout to an unverified revision.
+See the [known-image updater](../native/mbus-update/README.md), adapted
+from the hardware-tested v2; the CID/transport adaptations have not been
+retested on-device. It is not a fresh-device installer. Never apply this layout to an unverified revision.
