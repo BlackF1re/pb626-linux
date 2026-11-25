@@ -32,13 +32,26 @@ try {
         $data=[IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $files[$name]))
         $hash=Get-Sha256 $data
         Invoke-Device "cd $path && : > $name"
+        # Short ASCII commands avoid intermittent USB ACM raw-transfer corruption.
+        # A retry overwrites the same block; it cannot append duplicate bytes.
+        $blockSize=768
         for($off=0;$off -lt $data.Length;$off+=$len) {
-            $len=[Math]::Min(256KB,$data.Length-$off)
+            $len=[Math]::Min($blockSize,$data.Length-$off)
             $piece=[byte[]]::new($len)
             [Array]::Copy($data,$off,$piece,0,$len)
-            $command='(set -eu; cd /run/pb626-preclear-test; t=$(stty -g); trap ''stty "$t"'' EXIT; stty raw -echo; printf ''\nPB626_READY\n''; timeout 15 head -c LEN > piece; stty "$t"; echo ''HASH  piece'' | sha256sum -c -; cat piece >> NAME)'
-            $command=$command.Replace('LEN',"$len").Replace('HASH',(Get-Sha256 $piece)).Replace('NAME',$name)
-            $null=Invoke-Device $command -Payload $piece -TimeoutSeconds 30
+            $encoded=[Convert]::ToBase64String($piece)
+            $block=[int]($off/$blockSize)
+            $pieceHash=Get-Sha256 $piece
+            $command="(set -eu; cd $path; printf '%s' '$encoded' | base64 -d > piece; echo '$pieceHash  piece' | sha256sum -c -; dd if=piece of=$name bs=$blockSize seek=$block conv=notrunc 2>/dev/null)"
+            for($attempt=1;$attempt -le 3;$attempt++) {
+                try {
+                    $null=Invoke-Device $command -TimeoutSeconds 15
+                    break
+                } catch {
+                    if($attempt -eq 3){throw}
+                    Write-Warning "Retrying $name block $block (attempt $attempt failed)"
+                }
+            }
         }
         Invoke-Device "cd $path && echo '$hash  $name' | sha256sum -c -"
     }
