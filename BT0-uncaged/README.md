@@ -21,9 +21,7 @@ Output: 24576 bytes, SHA-256 1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28
 The build verifies original patch bytes, intermediate safe SPL, eGON header/checksum and final hash. The LRADC polling bound is 0x80000 per conversion, reduced from 0x800000. The ADC setup, five conversions (first discarded), decision logic, and FEL return path are unchanged. The 5249 mocked instruction tests exercise the early LRADC hook, not the entire SoC. No-event idle boot, key/partial-sample recovery, and FEL-thunk return are covered. Cold Menu-triggered FEL communication was subsequently demonstrated on hardware; the modeled paths alone do not establish why the ROM preserved or changed SRAM.
 
 
-The manual BT0 workflow packages the reconstructed SPL; it does not
-publish a release or include the private base. CI assembles/tests the hook
-without the base. Keep the local base outside the repository.
+Reconstruction is local only. CI assembles/tests the hook without the private base. Keep the base outside the repository.
 
 SPL uses a legacy uImage at LBA 80, header load/entry 0x40008000.
 The wrapper copies zImage to 0x46000000 and DTB to 0x47000000.
@@ -33,7 +31,7 @@ SPL runtime data-CRC verification is not established.
 
 The regular firmware workflow generates raw-linux.img. For installation,
 use the offline image builder and verified full restore as described in
-[README](../README.md). Do not reflash BT0 simply to update Linux. Keep a
+[installation guide](../docs/INSTALL.md). Do not reflash BT0 simply to update Linux. Keep a
 complete original backup and the local FEL inputs. Normal cold boot and
 Menu FEL worked on the tested installed SPL; independent recovery when
 SPL itself fails is unproven. See [boot contract](../docs/BOOT.md).

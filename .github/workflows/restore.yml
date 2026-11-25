@@ -6,11 +6,18 @@ on:
     paths:
       - '.github/workflows/restore.yml'
       - 'scripts/restore/**'
+      - '!scripts/restore/README.md'
   pull_request:
+    branches: [main]
     paths:
       - '.github/workflows/restore.yml'
       - 'scripts/restore/**'
+      - '!scripts/restore/README.md'
   workflow_dispatch:
+
+concurrency:
+  group: restore-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -69,7 +76,9 @@ jobs:
           mkdir dist
           cp scripts/restore/{Backup-PB626Fast.ps1,Restore-PB626Fast.ps1,pb626-restore-fast.sh,README.md} dist/
           gzip -n -9 -c pb626-restore-scan >dist/pb626-restore-scan.gz
+          git rev-parse HEAD > dist/BUILD-COMMIT
           (cd dist && sha256sum pb626-restore-scan.gz >SHA256SUMS.fast)
+          (cd dist && sha256sum Backup-PB626Fast.ps1 Restore-PB626Fast.ps1 pb626-restore-fast.sh pb626-restore-scan.gz README.md BUILD-COMMIT SHA256SUMS.fast > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-emmc-tools

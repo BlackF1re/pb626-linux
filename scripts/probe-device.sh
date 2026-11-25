@@ -80,6 +80,8 @@ for dev in "$ROOT"/sys/block/mmcblk* "$ROOT"/sys/block/mtdblock* "$ROOT"/sys/blo
     printf 'block: %s\n' "${dev##*/}"
     field '  removable' "$dev/removable"
     field '  sectors' "$dev/size"
+    field '  type' "$dev/device/type"
+    field '  model' "$dev/device/name"
 done
 
 section 'Display and backlight'

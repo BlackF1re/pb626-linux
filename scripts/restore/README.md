@@ -1,48 +1,25 @@
-# eMMC backup and restore
+# eMMC backup and restore: format and safeguards
 
-Only for the tested late ELAN / Samsung 8WPD3R board, 512-byte sectors,
-15,269,888 user-area sectors and two 8192-sector boot areas. Power off and
-enter cold FEL with Menu while attaching USB. Boot the matching RAM recovery
-bundle, not the native Linux filesystem:
+**[Step-by-step Windows instructions](https://github.com/BlackF1re/pb626-linux/blob/main/docs/INSTALL.md)**
 
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\FEL\Start-PB626.ps1 -BundleDir .\FEL -Variant elan-emmc-backup -Profile diagnostic
+Use the tested ELAN / Samsung 8WPD3R board with recovery variant elan-emmc-backup. The eMMC is read-only and unmounted until an explicit restore. PowerShell 7.4+ and all files from pb626-emmc-tools are required. Verify the tool artifact's SHA256SUMS; older artifacts provide SHA256SUMS.fast for the ARM helper only. The new backup receiver and CID adaptation still need physical validation; the original differential restore was hardware-tested.
 
-The recovery image starts with all MMC nodes read-only and no mounted
-partitions. Find the current VID:PID 0525:a4a7 COM port and close PuTTY.
-Use PowerShell 7.4 or newer. Download the matching pb626-emmc-tools CI
-artifact and keep all its files together. The FEL bundle and private dumps
-remain separate. See the repository README for local FEL dependencies.
+## Backup format
 
-Backup (new directory; does not write eMMC):
+All files are required in a private directory:
 
-    .\Backup-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\backup
+| File | Contents |
+| --- | --- |
+| pb626-emmc-user.img | 15,269,888 sectors × 512 bytes |
+| pb626-emmc-boot0.img / pb626-emmc-boot1.img | 8192 sectors × 512 bytes each |
+| pb626-emmc-ext-csd.bin | 512-byte EXT_CSD snapshot |
+| pb626-emmc-cid.txt | Original card CID |
+| SHA256SUMS | SHA-256 of all files |
 
-All three raw regions, a 512-byte EXT_CSD snapshot, original CID and SHA256SUMS
-are saved. Each 4 MiB read is verified and the full local files are compared
-against fresh device hashes. A partial/incomplete directory lacks the final
-manifest and is not restorable. The new host receive path is not yet
-hardware-validated; preserve your already verified original dumps.
+A partial backup has no final manifest and is not restorable. The backup verifies each 4 MiB block and compares full local files against independent device hashes. The restore preflight checks image sizes, hashes, CID, geometry, EXT_CSD configuration, unmounted/read-only status and a RAM USB transfer. Write requires -Write and the exact RESTORE CID confirmation.
 
-Restore preflight, then explicit destructive write:
+Only differing blocks are written (gzip if smaller); each payload is verified before enabling writes. Regions are relocked and all three full readback hashes must match before power-off. EXT_CSD is checked, not programmed; RPMB and other hardware-specific state are not cloned. Recovery independent of a working FEL entry is unproven.
 
-    .\Restore-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\backup
-    .\Restore-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\backup -Write
+Legacy backups without a CID file require -ExpectedCid ORIGINAL_CID. -AllowOtherCard overrides CID only and copies device-specific data; it is unsupported on unverified boards. Never bypass geometry, identity or checksum failures.
 
-For an older backup without pb626-emmc-cid.txt supply -ExpectedCid with the
-ORIGINAL backup card's CID in both calls. Do not use the current card's CID
-unless it is the original. -AllowOtherCard explicitly overrides matching
-CID only; never bypass geometry, model, read-only, EXT_CSD or checksum
-checks. Different-card restores copy device-specific factory data and are
-not supported on an unverified board.
-
-Type RESTORE <CID> when requested. Wait for
-All three eMMC regions match SHA256SUMS before powering off.
-The helper compares 4 MiB blocks, transfers only different blocks (gzip
-when beneficial), verifies hashes before opening a region for writes,
-relocks it and verifies full readback. The EXT_CSD is recorded/checked,
-not programmed. RPMB and other hardware-specific state are not cloned.
-No recovery if BootROM cannot be reached is established.
-
-The original restore implementation was used on hardware by the owner.
-Externalizing its original CID and the new backup path still need device
-validation. Never publish a dump, CID, device credentials or calibration.
+Do not publish dumps, CID, credentials or proprietary calibration.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build standard RAM DTBs and ELAN diagnostic DTBs.
+# Build the three supported board configurations: RAM, recovery, native.
 set -euo pipefail
 if (( $# != 3 )); then
   echo 'usage: build-megi-variants.sh LINUX_TREE OUT_DIR REPOSITORY_ROOT' >&2
@@ -36,7 +36,7 @@ for variant in elan-display elan-emmc-backup elan-emmc-native; do
       exit 2
       ;;
   esac
-  # Built-in driver must not probe non-display RAM or recovery variants.
+  # Keep the built-in display driver disabled in recovery.
   if [[ "$variant" == elan-display || "$variant" == elan-emmc-native ]]; then
     printf '\n&{/soc/display-controller@1c0c000} { status = "okay"; };\n' >> "$src"
   else

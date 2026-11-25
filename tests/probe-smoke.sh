@@ -10,7 +10,7 @@ mkdir -p "$fixture/proc/device-tree" \
     "$fixture/sys/class/backlight/lcd" \
     "$fixture/sys/class/net/wlan0/wireless" \
     "$fixture/sys/class/power_supply/battery" \
-    "$fixture/sys/block/mmcblk0" \
+    "$fixture/sys/block/mmcblk0/device" \
     "$fixture/sys/bus/i2c/devices/0-0024"
 
 printf 'PocketBook Test Board\000' > "$fixture/proc/device-tree/model"
@@ -23,6 +23,9 @@ printf '100\n' > "$fixture/sys/class/backlight/lcd/max_brightness"
 printf '85\n' > "$fixture/sys/class/backlight/lcd/brightness"
 printf '0\n' > "$fixture/sys/block/mmcblk0/removable"
 printf '8000000\n' > "$fixture/sys/block/mmcblk0/size"
+printf 'MMC\n' > "$fixture/sys/block/mmcblk0/device/type"
+printf '8WPD3R\n' > "$fixture/sys/block/mmcblk0/device/name"
+printf 'PRIVATE-CANARY\n' > "$fixture/sys/block/mmcblk0/device/cid"
 printf 'test-touch\n' > "$fixture/sys/bus/i2c/devices/0-0024/name"
 printf 'Battery\n' > "$fixture/sys/class/power_supply/battery/type"
 printf '81\n' > "$fixture/sys/class/power_supply/battery/capacity"
@@ -33,6 +36,7 @@ grep -Fq 'allwinner,sun5i-a13' "$fixture/report"
 grep -Fq 'MemTotal:' "$fixture/report"
 grep -Fq 'test touchscreen' "$fixture/report"
 grep -Fq 'backlight: lcd' "$fixture/report"
+grep -Fq 'model: 8WPD3R' "$fixture/report"
 grep -Fq 'interface: wlan0' "$fixture/report"
 grep -Fq 'test-touch' "$fixture/report"
 grep -Fq 'Inventory complete. No changes were made.' "$fixture/report"

@@ -1,6 +1,6 @@
 #!/bin/sh
-# RAM-only WPA Wi-Fi: automatically starts when /etc/pb626/wpa_supplicant.conf
-# exists. Current published image uses a user-authorized disposable TEST network.
+# Optional WPA Wi-Fi for native or RAM Linux. Credentials are local only;
+# no connection is attempted without /etc/pb626/wpa_supplicant.conf.
 set -u
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 CONF=/etc/pb626/wpa_supplicant.conf

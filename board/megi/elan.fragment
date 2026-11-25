@@ -10,7 +10,8 @@
   };
 };
 /* Stock type 8: ELAN eKTF2227 on I2C2 0x15 (late/eMMC revisions).
- * elants_i2c's EKTH3500 protocol is only a candidate; test before claiming support.
+ * Display/native builds override the binding with the eKTF2227 driver.
+ * Recovery retains this board marker without using touchscreen input.
  */
 &i2c2 {
   /delete-node/ touchpanel@24;

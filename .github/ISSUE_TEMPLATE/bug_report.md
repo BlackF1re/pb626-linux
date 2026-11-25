@@ -24,6 +24,6 @@ What happened, and what did you expect?
 Attach relevant **sanitized** logs (e.g. dmesg, /run/pb626-boot.log, /run/pb626-desktop.log, /run/pb626-xorg.log), exact error messages and USB VID:PID if relevant. For display issues, include refresh mode and whether a manual reset helps.
 
 ## Safety
-- [ ] I checked the supported hardware and known limitations in the README.
+- [ ] I checked the supported hardware and known limitations in the README and installation guide.
 - [ ] I have a verified private factory backup if reporting an installation/restore issue (or this is a RAM-only issue).
 - [ ] No raw dumps, CID, credentials, private calibration files or personal data are attached.

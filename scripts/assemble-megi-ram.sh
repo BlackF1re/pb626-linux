@@ -102,11 +102,12 @@ grep -F 'lib/modules/' dist/INITRAMFS-CONTENTS.txt >/dev/null
 rm dist/INITRAMFS-CONTENTS.txt
 
 cp scripts/{Start-PB626.ps1,fel-boot.sh} dist/
-(cd dist && sha256sum pb626-megi-zImage pb626-native-zImage *.dtb *.gz *.config KERNELRELEASE KERNEL-SOURCE.txt uapi/linux/sun5i-eink.h Start-PB626.ps1 fel-boot.sh > SHA256SUMS)
+git rev-parse HEAD > dist/BUILD-COMMIT
+(cd dist && sha256sum pb626-megi-zImage pb626-native-zImage *.dtb *.gz *.config KERNELRELEASE KERNEL-SOURCE.txt BUILD-COMMIT uapi/linux/sun5i-eink.h Start-PB626.ps1 fel-boot.sh > SHA256SUMS)
 cat > dist/README.txt <<'NOTE'
 PB626 ELAN/eMMC: elan-display is RAM-only; elan-emmc-backup is read-only recovery.
 elan-emmc-native is for offline native image construction ONLY, never FEL RAM.
-Use matching kernel, modules, DTB and checksums. See repository README.
+Use matching kernel, modules, DTB and checksums. See docs/INSTALL.md.
 NOTE
 test -s dist/pb626-megi-zImage
 test -s dist/pb626-megi-initramfs.cpio.gz
