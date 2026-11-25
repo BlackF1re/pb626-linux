@@ -2,8 +2,8 @@
 #
 # Usage (Windows PowerShell 5.1; from the folder holding fel-boot.sh):
 #   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-PB626.ps1 `
-#       -BundleDir C:\PB626\bundle -Variant elan -Profile standard
-# Diagnostics (no microSD): -BundleDir C:\PB626\memfix -Profile diagnostic
+#       -BundleDir C:\PB626\bundle -Variant elan-display -Profile standard
+# Recovery: -Variant elan-emmc-backup -Profile diagnostic
 #
 # What it does, in order:
 #   1. Verify Megi artifact paths and start the existing XperiaDev WSL distro.

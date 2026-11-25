@@ -16,9 +16,9 @@
 #     proven only by a 0525:a4a7 USB ACM gadget and working shell (or another
 #     independent Linux signature). A blank E Ink screen proves nothing.
 #
-# Usage: bash fel-boot.sh IMAGE_DIR elan standard|diagnostic [--no-execute]
+# Usage: bash fel-boot.sh IMAGE_DIR elan-display|elan-emmc-backup standard|diagnostic [--no-execute]
 # Needs in WSL: the audited local SPL + 52-byte stub and patched sunxi-fel;
-# kernel, DTB and initramfs come from the pinned Megi CI artifact/diagnostic ZIP.
+# kernel, DTB and initramfs come from the matching Megi CI artifact.
 # Never writes the factory eMMC, internal bootloader, removable microSD or SPI.
 set -Eeuo pipefail
 

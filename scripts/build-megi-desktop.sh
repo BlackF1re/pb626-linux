@@ -177,6 +177,7 @@ sudo install -m 644 boot/pb626-native.inittab desktop-root/etc/inittab
 printf 'pb626-native-alpine-v1\n' | sudo tee desktop-root/etc/pb626-image-id >/dev/null
 sudo rm -f desktop-root/init
 sudo tar --numeric-owner -C desktop-root -czf native-dist/pb626-native-rootfs.tar.gz .
-cp "$bundle"/{pb626-native-zImage,pb626-elan-emmc-native.dtb,KERNELRELEASE} native-dist/
+cp "$bundle"/{pb626-native-zImage,pb626-elan-emmc-native.dtb,KERNELRELEASE,KERNEL-SOURCE.txt} native-dist/
 python3 BT0-uncaged/pack-kernel.py native-dist/pb626-native-zImage native-dist/pb626-elan-emmc-native.dtb native-dist/raw-linux.img
-(cd native-dist && sha256sum pb626-* KERNELRELEASE raw-linux.img > SHA256SUMS)
+git rev-parse HEAD > native-dist/BUILD-COMMIT
+(cd native-dist && sha256sum pb626-* KERNELRELEASE KERNEL-SOURCE.txt BUILD-COMMIT raw-linux.img > SHA256SUMS)

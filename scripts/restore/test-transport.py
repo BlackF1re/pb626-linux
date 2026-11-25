@@ -70,6 +70,33 @@ def main():
         if b"Payload SHA-256 mismatch" not in result:
             raise RuntimeError(f"Invalid corruption response: {result!r}")
 
+        # Exercise the backup sender with a regular file instead of eMMC.
+        image = temp / "mock-user.img"
+        image.write_bytes(data)
+        mock = source.replace("/dev/mmcblk2\n", str(image) + "\n", 1)
+        mock = mock.replace("operation=$1", "unmounted() { :; }\nblockdev() { test \"$1\" = --getro && echo 1; }\noperation=$1", 1)
+        script.write_text(mock)
+        master, slave = os.openpty()
+        try:
+            result = subprocess.run(
+                ["busybox", "sh", str(script), "backup-read", "user", "0"],
+                stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=20, check=True,
+            )
+            expected = f"\nPB626_DATA {len(data)} {checksum}\n".encode() + data + b"\nPB626_DATA_END\n"
+            if result.stdout != expected:
+                raise RuntimeError("Invalid outbound frame")
+            result = subprocess.run(
+                ["busybox", "sh", str(script), "backup-read", "boot0", "1"],
+                stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=5,
+            )
+            if result.returncode == 0 or b"Block index outside region" not in result.stderr:
+                raise RuntimeError("Out-of-range backup read not rejected")
+        finally:
+            os.close(master)
+            os.close(slave)
+
 
 if __name__ == "__main__":
     main()
