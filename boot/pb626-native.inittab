@@ -1,7 +1,7 @@
-# BusyBox init; direct eMMC root, no RAM root or host needed.
-::sysinit:/sbin/pb626-native-setup
-::respawn:/sbin/pb626-native-desktop
-::respawn:/sbin/pb626-native-console
+# Alpine BusyBox PID 1; OpenRC owns service startup and shutdown.
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
 ::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/openrc shutdown
 ::shutdown:/bin/sync
-::shutdown:/bin/umount -a -r

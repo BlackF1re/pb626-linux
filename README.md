@@ -13,6 +13,7 @@
 - **Faster boot:** targeted A13 MBUS DMA dependency fix and early persistent E Ink worker. Observed boot time fell from ~69 s to ~22 s to ~12 s; first acknowledged frame at 4.863 s after kernel start.
 - **Custom E Ink renderer:** C WBF decoder, six waveform modes (INIT/DU/GC16/GL16/A2/DU4), temperature-aware transition checks, indexed PIN32 scanout, asynchronous X11 bridge, dirty tiles, grayscale/dithering, fast previews and idle ghosting cleanup.
 - **Board support:** ELAN eKTF2227 touch driver, portrait input/button fallback, frontlight PWM fix, USB ACM and dedicated native/RAM/recovery DTBs.
+- **Native system:** Alpine OpenRC, supervised desktop and USB login, unprivileged reader account, on-demand ConnMan networking, bounded logs, zram and graphical system settings.
 - **Desktop:** lightweight software-rendered Xorg/Matchbox, monochrome theme, on-screen keyboard, battery applet, manual refresh, frontlight and system status utilities.
 - **Recovery:** verified 64 KiB FEL transfers, read-only full eMMC backup, differential restore with 4 MiB SHA-256-checked blocks and optional gzip, offline native image assembler.
 - **Research & CI:** reverse-engineered factory boot chain and waveform behavior, pinned and cached paired firmware builds.
@@ -45,6 +46,7 @@ Alpine, kernel/modules, DTBs, the static RAM worker, Matchbox/Xorg base and nati
 - [Hardware and factory observations](docs/HARDWARE-PROFILE.md)
 - [Factory boot chain and partition layout](docs/STOCK-BOOT-CHAIN.md)
 - [Native boot chain and measured results](docs/BOOT.md)
+- [Native system administration and acceptance checklist](docs/NATIVE-SYSTEM.md)
 - [E Ink waveform and renderer](docs/EINK.md)
 - [BT0-uncaged SPL reconstruction](BT0-uncaged/README.md)
 - [Recovery format and safeguards](scripts/restore/README.md)

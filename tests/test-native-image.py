@@ -32,6 +32,20 @@ class NativeImage(unittest.TestCase):
         b.validate_raw(raw)
         with self.assertRaises(SystemExit):
             b.validate_raw(raw[:64]+b"fail"+raw[68:])
+    def test_root_password(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            (root/"etc").mkdir()
+            shadow=root/"etc/shadow"
+            shadow.write_text("root:!:0:0:99999:7:::\nreader:!:0:0:99999:7:::\n")
+            h="$6$salt$"+"a"*86
+            b.set_root_password(root,h)
+            self.assertTrue(shadow.read_text().startswith("root:"+h+":"))
+            self.assertIn("reader:!:",shadow.read_text())
+            self.assertEqual(shadow.stat().st_mode & 0o777,0o600)
+            for invalid in ("", "plaintext", "$6$salt$abc", h+":bad"):
+                with self.assertRaises(SystemExit):
+                    b.set_root_password(root,invalid)
     def test_regular(self):
         with self.assertRaises(SystemExit):
             b.regular(Path("/dev/null"))

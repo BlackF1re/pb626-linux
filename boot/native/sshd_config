@@ -1,0 +1,7 @@
+# Optional, explicitly enabled by the owner. No root or password SSH.
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+AllowUsers reader
+Subsystem sftp internal-sftp

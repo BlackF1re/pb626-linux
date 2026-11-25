@@ -1,0 +1,2 @@
+# Bounded persistent log: current file plus two rotations, 256 KiB each.
+SYSLOGD_OPTS="-s 256 -b 2"

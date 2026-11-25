@@ -1,0 +1,2 @@
+# Only the native system partition. Never auto-mount factory partitions.
+/dev/mmcblk2p1 / ext4 defaults,noatime 0 1

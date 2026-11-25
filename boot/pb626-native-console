@@ -1,8 +1,4 @@
 #!/bin/sh
-# Local USB console only, for recovery diagnostics. No login over the network.
-export PATH=/sbin:/bin:/usr/sbin:/usr/bin HOME=/root TERM=vt100
+set -eu
 while [ ! -c /dev/ttyGS0 ]; do sleep 2; done
-cd /root || exit 1
-setsid -c sh -c 'printf "\r\nPB626 native eMMC Linux\r\n"; exec sh -i' \
-    </dev/ttyGS0 >/dev/ttyGS0 2>&1 || true
-sleep 2
+exec /sbin/getty -L 115200 ttyGS0 vt100

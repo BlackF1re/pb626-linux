@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+description="PocketBook USB CDC ACM serial gadget"
+depend() {
+    need localmount
+    after modules
+    before pb626-console
+}
+start() {
+    ebegin "Binding PocketBook USB serial gadget"
+    /usr/libexec/pb626-usb start
+    eend $?
+}
+stop() {
+    ebegin "Unbinding PocketBook USB serial gadget"
+    /usr/libexec/pb626-usb stop
+    eend $?
+}

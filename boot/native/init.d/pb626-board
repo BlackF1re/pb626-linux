@@ -1,0 +1,21 @@
+#!/sbin/openrc-run
+description="PocketBook board defaults and frontlight state"
+depend() {
+    need localmount
+    after bootmisc modules
+    before pb626-desktop
+}
+start() {
+    ebegin "Applying PocketBook board defaults"
+    /usr/sbin/pb626-admin restore-light || ewarn "Frontlight unavailable"
+    for led in /sys/class/leds/*; do
+        [ -w "$led/trigger" ] || continue
+        echo none > "$led/trigger" || :
+    done
+    eend 0
+}
+stop() {
+    ebegin "Turning off the frontlight"
+    /usr/sbin/pb626-admin light-off || :
+    eend 0
+}

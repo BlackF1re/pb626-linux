@@ -14,6 +14,7 @@ on:
       - 'scripts/assemble-megi-ram.sh'
       - 'scripts/build-desktop-base.sh'
       - 'scripts/build-megi-desktop.sh'
+      - 'scripts/build-native-rootfs.sh'
       - 'scripts/Start-PB626*.ps1'
       - 'scripts/fel-boot.sh'
       - 'scripts/inspect-live.sh'

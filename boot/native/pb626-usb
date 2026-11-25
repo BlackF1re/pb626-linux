@@ -1,0 +1,39 @@
+#!/bin/sh
+# Only the project-owned ACM gadget is touched. No mass-storage export.
+set -eu
+g=/sys/kernel/config/usb_gadget/pb626
+case "${1:-}" in
+start)
+    grep -q ' /sys/kernel/config configfs ' /proc/mounts ||
+        mount -t configfs configfs /sys/kernel/config
+    mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/acm.usb0"
+    echo 0x0525 >"$g/idVendor"
+    echo 0xa4a7 >"$g/idProduct"
+    echo 0x02 >"$g/bDeviceClass"
+    echo 0x02 >"$g/bDeviceSubClass"
+    echo PB626NATIVE >"$g/strings/0x409/serialnumber"
+    echo PocketBook >"$g/strings/0x409/manufacturer"
+    echo 'PocketBook native Linux console' >"$g/strings/0x409/product"
+    echo ACM >"$g/configs/c.1/strings/0x409/configuration"
+    [ -L "$g/configs/c.1/acm.usb0" ] ||
+        ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
+    [ -z "$(cat "$g/UDC")" ] || exit 0
+    for n in $(seq 1 15); do
+        for udc in /sys/class/udc/*; do
+            [ -d "$udc" ] || continue
+            if echo "${udc##*/}" >"$g/UDC"; then exit 0; fi
+        done
+        sleep 1
+    done
+    echo 'PB626: USB device controller not ready' >&2
+    exit 1
+    ;;
+stop)
+    [ -d "$g" ] || exit 0
+    if [ -n "$(cat "$g/UDC")" ]; then echo '' >"$g/UDC"; fi
+    rm -f "$g/configs/c.1/acm.usb0"
+    rmdir "$g/functions/acm.usb0" "$g/configs/c.1/strings/0x409" \
+        "$g/configs/c.1" "$g/strings/0x409" "$g"
+    ;;
+*) exit 2 ;;
+esac

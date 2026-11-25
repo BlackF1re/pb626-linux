@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+# Xorg and the hardware bridge remain privileged; all X clients do not.
+export PB626_SESSION_WAVE="$1" PB626_SESSION_READY="$2"
+exec su -s /bin/sh -c 'cd "$HOME"; exec /usr/bin/pb626-xsession "$PB626_SESSION_WAVE" "$PB626_SESSION_READY"' reader

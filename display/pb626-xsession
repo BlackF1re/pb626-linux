@@ -34,7 +34,7 @@ desktop=$!
 trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} 2>/dev/null || true' EXIT
 if [ -n "${PB626_EPD_BRIDGE_PID:-}" ]; then
     : > "${PB626_EPD_SESSION_STARTED:?}"
-    (while kill -0 "$PB626_EPD_BRIDGE_PID" 2>/dev/null; do sleep 0.2; done) &
+    (while [ -d "/proc/$PB626_EPD_BRIDGE_PID" ]; do sleep 1; done) &
     screen=$!
 fi
 wait -n "$desktop" "$screen"

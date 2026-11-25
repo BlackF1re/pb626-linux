@@ -1,0 +1,91 @@
+#!/usr/bin/wish
+# Native-only on-demand panel. No periodic refresh or privileged GUI.
+tk_setPalette background #eeeeee foreground black activeBackground #bbbbbb \
+    activeForeground black selectBackground #222222 selectForeground white
+option add *Font {Liberation Sans 15}
+option add *Button.padY 14
+option add *Button.padX 12
+option add *Scale.sliderLength 36
+wm title . "PocketBook Settings"
+wm geometry . 700x840
+proc admin {args} {
+    if {[catch {exec /usr/bin/doas /usr/sbin/pb626-admin {*}$args 2>@1} result]} {
+        tk_messageBox -icon error -title "Operation failed" -message $result
+        return 0
+    }
+    return 1
+}
+proc readfile {path} {
+    if {[catch {set fd [open $path r]}]} {return ""}
+    set data [string trim [read $fd]]
+    close $fd
+    return $data
+}
+proc brightness {} {
+    foreach path [glob -nocomplain /sys/class/backlight/*] {
+        set max [readfile $path/max_brightness]
+        set current [readfile $path/brightness]
+        if {[string is integer -strict $max] && $max > 0 && [string is integer -strict $current]} {
+            return [expr {100*$current/$max}]
+        }
+    }
+    return 0
+}
+proc updateStatus {} {
+    set data ""
+    foreach path [glob -nocomplain /sys/class/power_supply/*] {
+        set cap [readfile $path/capacity]
+        if {$cap ne ""} {append data "Battery: $cap% [readfile $path/status]\n"}
+    }
+    foreach cmd {{free -m} {df -h /} {date} {rc-status -a}} {
+        if {![catch {exec {*}$cmd 2>@1} result]} {append data "$result\n"}
+    }
+    .status configure -state normal
+    .status delete 1.0 end
+    .status insert end $data
+    .status configure -state disabled
+}
+proc term {title args} {
+    if {[catch {exec xterm -T $title -e {*}$args &} err]} {tk_messageBox -icon error -message $err}
+}
+proc wifi {} {
+    if {[admin wifi-on]} {
+        tk_messageBox -title "Wi-Fi" -message "In the network manager enter:\nagent on\nscan wifi\nservices\nconnect <service-id>\n\nUse Tab completion and follow the password prompt. Saved networks reconnect automatically."
+        term "Wi-Fi networks" /usr/bin/doas /usr/sbin/pb626-admin wifi-console
+    }
+}
+proc power {action} {
+    if {[tk_messageBox -type yesno -icon question -message "Really $action the reader?"] eq "yes"} {admin $action}
+}
+label .heading -text "System settings" -font {Liberation Sans 22 bold}
+pack .heading -pady 12
+labelframe .light -text "Frontlight"
+set level [brightness]
+scale .light.level -from 0 -to 100 -orient horizontal -variable level -resolution 10 -length 500
+button .light.apply -text "Apply and save" -command {admin frontlight $level}
+pack .light.level -fill x -expand 1 -padx 16
+pack .light.apply -fill x -padx 16 -pady 4
+pack .light -fill x -padx 12 -pady 5
+frame .net
+button .net.on -text "Wi-Fi settings" -command wifi
+button .net.off -text "Wi-Fi off" -command {admin wifi-off; updateStatus}
+pack .net.on .net.off -side left -fill x -expand 1 -padx 4
+pack .net -fill x -padx 12 -pady 5
+frame .tools
+button .tools.admin -text "Administrator" -command {term "Administrator login" su -}
+button .tools.refresh -text "Refresh status" -command updateStatus
+pack .tools.admin .tools.refresh -side left -fill x -expand 1 -padx 4
+pack .tools -fill x -padx 12 -pady 5
+frame .config
+button .config.time -text "Time zone" -command {term "Time zone (root password)" su -c /sbin/setup-timezone}
+button .config.host -text "Hostname" -command {term "Hostname (root password)" su -c /sbin/setup-hostname}
+pack .config.time .config.host -side left -fill x -expand 1 -padx 4
+pack .config -fill x -padx 12 -pady 5
+text .status -height 12 -wrap none -font {Liberation Mono 11} -background white -foreground black
+pack .status -fill both -expand 1 -padx 12 -pady 6
+frame .power
+button .power.reboot -text "Restart" -command {power reboot}
+button .power.off -text "Shut down" -command {power poweroff}
+pack .power.reboot .power.off -side left -fill x -expand 1 -padx 4
+pack .power -fill x -padx 12 -pady 8
+updateStatus

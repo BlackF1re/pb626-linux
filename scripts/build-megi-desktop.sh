@@ -108,10 +108,8 @@ done
 # Build native root separately from the RAM archive.
 mkdir -p native-dist
 sudo install -m 755 ./native-worker desktop-root/usr/bin/pb626-epd
-sudo install -m 755 boot/pb626-native-{setup,desktop,console} desktop-root/sbin/
-sudo install -m 644 boot/pb626-native.inittab desktop-root/etc/inittab
-printf 'pb626-native-alpine-v1\n' | sudo tee desktop-root/etc/pb626-image-id >/dev/null
-sudo rm -f desktop-root/init
+bash scripts/build-native-rootfs.sh desktop-root
+printf 'pb626-native-alpine-openrc-v2\n' | sudo tee desktop-root/etc/pb626-image-id >/dev/null
 sudo tar --numeric-owner -C desktop-root -czf native-dist/pb626-native-rootfs.tar.gz .
 cp "$bundle"/{pb626-native-zImage,pb626-elan-emmc-native.dtb,KERNELRELEASE,KERNEL-SOURCE.txt} native-dist/
 python3 BT0-uncaged/pack-kernel.py native-dist/pb626-native-zImage native-dist/pb626-elan-emmc-native.dtb native-dist/raw-linux.img

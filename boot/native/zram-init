@@ -1,0 +1,7 @@
+# Built-in zram; no disk writeback. Size is logical uncompressed MiB.
+load_on_start=no
+unload_on_stop=no
+num_devices=1
+type0=swap
+size0=64
+algo0=
