@@ -63,6 +63,9 @@ for diag in (False,True):
         install='    mov r8, #0x85\n    bl trace_mark\n'
     s=base[:start]+install+base[end:]
     s=s.replace('.include "payload-check.inc"',blob+'.include "payload-check.inc"')
+    # Separate successive pulse groups, even when adjacent hooks execute immediately.
+    s=s.replace("    str r2, [r0]\nled_loop:", "    str r2, [r0]\n    mov r2, #0x04000000\n9:  subs r2, r2, #1\n    bne 9b\nled_loop:")
+    s=s.replace("    str r2, [r0]\nrelocated_loop:", "    str r2, [r0]\n    mov r2, #0x04000000\n9:  subs r2, r2, #1\n    bne 9b\nrelocated_loop:")
     with tempfile.TemporaryDirectory() as tmp:
         d=pathlib.Path(tmp)
         for f,data in [('entry.S',s.encode()),('kernel.bin',k),('board.dtb',dt),('payload-check.inc',inc)]: (d/f).write_bytes(data)
