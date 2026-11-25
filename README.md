@@ -47,8 +47,9 @@ binary release. A single fixed-name draft release may be prepared manually.
 The installation script replaces only eMMC user-area LBA 16–63, after strict
 checks of the existing layout, kernel and original backup. It requires an
 already prepared native Alpine system and exact known raw image. **It is not a
-fresh-device Alpine installer.** The complete native OS packaging path will
-need to be adapted to the new raw image layout separately. Historical FAT/AXF
+fresh-device Alpine installer.** The native runtime scripts and board fragment are retained in this tree; see
+[the native validation and update record](docs/NATIVE-BOOT-MBUS.md).
+A fresh-device installer is still not provided. Historical FAT/AXF
 and intermediate U-Boot experiments are retired; see Git history only.
 
 **Safety:** cold normal Power boot and Menu-triggered FEL entry succeeded after
@@ -58,7 +59,9 @@ booted native Alpine. The fast kernel handoff (steady LED, no diagnostic delays
 or repeated hashes) booted Alpine in RAM/FEL and was subsequently installed and readback-verified on eMMC.
 The LRADC polling limit was reduced 16-fold; the installed revision booted to
 the desktop in about 22 seconds (previously about 69 seconds) and cold Menu FEL
-still worked on the tested board. The microSD recovery attempt did not work. Keep the original full eMMC
+still worked on the tested board. With the built-in E Ink / MBUS correction,
+a subsequent verified raw kernel update reached the desktop in approximately
+12 seconds (operator stopwatch, not a loader measurement). The microSD recovery attempt did not work. Keep the original full eMMC
 and boot-region backup; a backup alone does not guarantee recovery if SPL fails.
 
 ## Verified on the physical reader

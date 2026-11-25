@@ -1,0 +1,53 @@
+#!/bin/sh
+# BusyBox PID 1 invokes this on persistent Alpine, without a host connection.
+set -eu
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin HOME=/root TERM=linux
+hostname pb626
+mkdir -p /proc /sys /dev /run /tmp
+grep -q ' /proc proc ' /proc/mounts 2>/dev/null || mount -t proc proc /proc
+grep -q ' /sys sysfs ' /proc/mounts || mount -t sysfs sysfs /sys
+grep -q ' /dev devtmpfs ' /proc/mounts || mount -t devtmpfs devtmpfs /dev
+grep -q ' /run tmpfs ' /proc/mounts || mount -t tmpfs tmpfs /run
+mkdir -p /dev/pts /dev/shm /var/lib/xkb /root
+grep -q ' /dev/pts devpts ' /proc/mounts || mount -t devpts devpts /dev/pts
+grep -q ' /dev/shm tmpfs ' /proc/mounts || mount -t tmpfs -o mode=1777 tmpfs /dev/shm
+chmod 1777 /tmp
+echo "PocketBook native Linux $(uname -r)" >/dev/kmsg
+for bl in /sys/class/backlight/*; do
+    [ ! -w "$bl/brightness" ] || echo 0 >"$bl/brightness"
+    [ ! -w "$bl/bl_power" ] || echo 4 >"$bl/bl_power"
+done
+# Load independently so a slow optional USB/Wi-Fi probe cannot block PID 1.
+for module in rtl8xxxu elants_i2c sun5i_eink; do
+    (modprobe "$module" || echo "PB626: modprobe $module failed" >/dev/kmsg) &
+done
+# Do not load experimental Lima, and do not require USB or Wi-Fi for Desktop.
+for led in /sys/class/leds/*; do
+    [ ! -w "$led/trigger" ] || echo heartbeat >"$led/trigger" || true
+done
+# Optional physically attached USB diagnostics; no network root login.
+(
+    mount -t configfs configfs /sys/kernel/config 2>/dev/null ||
+        grep -q ' /sys/kernel/config configfs ' /proc/mounts || exit 0
+    g=/sys/kernel/config/usb_gadget/pb626
+    mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/acm.usb0"
+    echo 0x0525 >"$g/idVendor"
+    echo 0xa4a7 >"$g/idProduct"
+    echo 0x02 >"$g/bDeviceClass"
+    echo 0x02 >"$g/bDeviceSubClass"
+    echo PB626NATIVE >"$g/strings/0x409/serialnumber"
+    echo PocketBook >"$g/strings/0x409/manufacturer"
+    echo 'PocketBook native Linux console' >"$g/strings/0x409/product"
+    echo ACM >"$g/configs/c.1/strings/0x409/configuration"
+    ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
+    for n in $(seq 1 30); do
+        for udc in /sys/class/udc/*; do
+            [ -d "$udc" ] || continue
+            if echo "$(basename "$udc")" >"$g/UDC"; then exit 0; fi
+        done
+        sleep 1
+    done
+) >/run/pb626-usb.log 2>&1 &
+if [ -s /etc/pb626/wpa_supplicant.conf ] && [ -x /usr/sbin/pb626-network ]; then
+    /usr/sbin/pb626-network >/run/pb626-network.log 2>&1 &
+fi
