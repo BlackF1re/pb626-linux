@@ -23,7 +23,7 @@ c=linux/scripts/config
   -e TOUCHSCREEN_ELAN -e TOUCHSCREEN_EDT_FT5X06 \
   -d CPU_FREQ_DEFAULT_GOV_PERFORMANCE -e CPU_FREQ_DEFAULT_GOV_ONDEMAND \
   -e DRM -m DRM_LIMA -e FB_SUN5I_EINK -m RTL8XXXU \
-  --set-str LOCALVERSION '-pb626-eink-builtin'
+  --set-str LOCALVERSION '-pb626-eink-builtin-mbusfix'
 
 # 256MiB physical RAM, so a 128MiB default CMA reservation is excessive.
 "$c" --file linux/.config --set-val CMA_SIZE_MBYTES 32
