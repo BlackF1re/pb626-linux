@@ -1,0 +1,25 @@
+diff --git a/drivers/of/property.c b/drivers/of/property.c
+--- a/drivers/of/property.c
++++ b/drivers/of/property.c
+@@ -1644,6 +1644,21 @@
+ 			matched = true;
+ 			i++;
++
++			/* A13 MBUS describes DMA translation, not a driver
++			 * dependency, when the interconnect framework is off.
++			 * Keep the DT property for __of_get_dma_parent().
++			 */
++			if (s->parse_prop == parse_interconnects &&
++			    !IS_ENABLED(CONFIG_INTERCONNECT) &&
++			    of_device_is_compatible(phandle,
++						    "allwinner,sun5i-a13-mbus") &&
++			    of_property_match_string(con_np, "interconnect-names",
++						     "dma-mem") == (int)i - 1) {
++				of_node_put(phandle);
++				continue;
++			}
++
+ 			of_link_to_phandle(con_dev_np, phandle, s->fwlink_flags);
+ 			of_node_put(phandle);
+ 		}
+ 		s++;

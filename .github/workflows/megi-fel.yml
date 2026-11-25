@@ -118,7 +118,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kernel-cache
-          key: pb626-megi-kernel-v3-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch') }}
+          key: pb626-megi-kernel-v3-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/rtl8xxxu-reset-linktype.patch', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch') }}
       - name: Fetch pinned Megi 7.2 source and verify A13 drivers
         run: |
           set -euo pipefail
@@ -138,6 +138,8 @@ jobs:
           git -C linux apply "$GITHUB_WORKSPACE/patches/rtl8xxxu-reset-linktype.patch"
           git -C linux apply "$GITHUB_WORKSPACE/patches/pwm-backlight-disconnect-when-off.patch"
           git -C linux apply "$GITHUB_WORKSPACE/patches/ektf2227-pocketbook-touch.patch"
+          git -C linux apply --check "$GITHUB_WORKSPACE/patches/a13-mbus-dma-devlink.patch"
+          git -C linux apply "$GITHUB_WORKSPACE/patches/a13-mbus-dma-devlink.patch"
           grep -A 13 '^static void rtl8xxxu_remove_interface' linux/drivers/net/wireless/realtek/rtl8xxxu/core.c | grep -Fq 'NL80211_IFTYPE_UNSPECIFIED'
       - name: Verify cached Kconfig reproducibility
         id: kconfig
@@ -182,6 +184,7 @@ jobs:
           echo 'Experimental local patch: patches/rtl8xxxu-reset-linktype.patch' >> kernel-cache/KERNEL-SOURCE.txt
           echo 'Local patch: patches/pwm-backlight-disconnect-when-off.patch' >> kernel-cache/KERNEL-SOURCE.txt
           echo 'Local patch: patches/ektf2227-pocketbook-touch.patch' >> kernel-cache/KERNEL-SOURCE.txt
+          echo 'Local patch: patches/a13-mbus-dma-devlink.patch' >> kernel-cache/KERNEL-SOURCE.txt
       - name: Check cached or newly compiled zImage, modules and USB contract
         run: |
           set -euo pipefail
@@ -203,7 +206,7 @@ jobs:
           for key in AUTO_ZRELADDR FB_SUN5I_EINK VIDEOBUF2_CORE VIDEOBUF2_V4L2 VIDEOBUF2_MEMOPS VIDEOBUF2_DMA_CONTIG; do
             grep -qx "CONFIG_$key=y" kernel-cache/pb626-megi.config
           done
-          grep -Fq -- '-pb626-eink-builtin' kernel-cache/KERNELRELEASE
+          grep -Fq -- '-pb626-eink-builtin-mbusfix' kernel-cache/KERNELRELEASE
           tar -xOzf kernel-cache/kernel-modules.tar.gz "lib/modules/$(cat kernel-cache/KERNELRELEASE)/modules.builtin" > /tmp/pb626-modules.builtin
           grep -Fxq 'kernel/drivers/video/fbdev/sun5i-eink.ko' /tmp/pb626-modules.builtin
           echo "Prebuilt kernel cache hit: ${{ steps.cache.outputs.cache-hit }}"
