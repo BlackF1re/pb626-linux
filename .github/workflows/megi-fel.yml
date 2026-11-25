@@ -200,6 +200,12 @@ jobs:
           grep -qx 'CONFIG_CMA_SIZE_MBYTES=32' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_REGULATOR_TPS65185=y' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_DRM_LIMA=m' kernel-cache/pb626-megi.config
+          for key in AUTO_ZRELADDR FB_SUN5I_EINK VIDEOBUF2_CORE VIDEOBUF2_V4L2 VIDEOBUF2_MEMOPS VIDEOBUF2_DMA_CONTIG; do
+            grep -qx "CONFIG_$key=y" kernel-cache/pb626-megi.config
+          done
+          grep -Fq -- '-pb626-eink-builtin' kernel-cache/KERNELRELEASE
+          tar -xOzf kernel-cache/kernel-modules.tar.gz "lib/modules/$(cat kernel-cache/KERNELRELEASE)/modules.builtin" > /tmp/pb626-modules.builtin
+          grep -Fxq 'kernel/drivers/video/fbdev/sun5i-eink.ko' /tmp/pb626-modules.builtin
           echo "Prebuilt kernel cache hit: ${{ steps.cache.outputs.cache-hit }}"
           echo "Rebuilt for Kconfig drift: ${{ steps.kconfig.outputs.rebuild }}"
       - name: Build current Device Trees

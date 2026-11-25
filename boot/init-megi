@@ -92,7 +92,7 @@ if [ -d "/lib/modules/$(uname -r)" ]; then
     modprobe "$module" 2>/dev/null || true
   done
   if [ -f /sys/firmware/devicetree/base/chosen/pb626,display-bringup ]; then
-    (modprobe sun5i_eink || log "failed to load sun5i_eink") &
+    # E Ink is built in; its probe is controlled by the DTB status.
     (modprobe lima || log "failed to load lima") &
   fi
 fi

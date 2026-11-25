@@ -90,7 +90,11 @@ gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t > dist/INITRAMFS-CONTENTS.t
 grep -F '/rtl8188eufw.bin' dist/INITRAMFS-CONTENTS.txt >/dev/null
 (grep -Fxq 'etc/pb626/wpa_supplicant.conf' dist/INITRAMFS-CONTENTS.txt || \
  grep -Fxq './etc/pb626/wpa_supplicant.conf' dist/INITRAMFS-CONTENTS.txt)
-grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
+grep -Fxq 'kernel/drivers/video/fbdev/sun5i-eink.ko' "rootfs/lib/modules/$kernel_release/modules.builtin"
+if grep -F '/sun5i-eink.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null; then
+  echo 'Unexpected loadable E Ink driver in built-in kernel bundle' >&2
+  exit 1
+fi
 grep -F '/pb626-epd' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F '/aireplay-ng' dist/INITRAMFS-CONTENTS.txt >/dev/null

@@ -40,6 +40,12 @@ for variant in cypress elan focaltech no-touch elan-lightoff elan-usbtest elan-d
       cat "$repo/board/megi/$variant.fragment" >> "$src"
       ;;
   esac
+  # Built-in driver must not probe non-display RAM or recovery variants.
+  if [[ "$variant" == elan-display ]]; then
+    printf '\n&{/soc/display-controller@1c0c000} { status = "okay"; };\n' >> "$src"
+  else
+    printf '\n&{/soc/display-controller@1c0c000} { status = "disabled"; };\n' >> "$src"
+  fi
   make -C "$linux" -j2 "$target"
   cp "$linux/arch/arm/boot/dts/$target" "$out/pb626-$variant.dtb"
 done
@@ -59,6 +65,9 @@ for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/soc/mmc@1c11000' status)" = "$emmc_status"
   test "$(fdtget -t s "$dtb" '/soc/mmc@1c0f000' status)" = "$sd_status"
   test "$(fdtget -t s "$dtb" '/soc/display-controller@1c0c000' compatible)" = 'custom,pocketbook-touch-lux-3-tcon0-ed060xd4-display'
+  display_status=disabled
+  [[ ${dtb##*/} != pb626-elan-display.dtb ]] || display_status=okay
+  test "$(fdtget -t s "$dtb" /soc/display-controller@1c0c000 status)" = "$display_status"
   # Essential Megi board devices: firmware pinout does not equal driver success.
   test "$(fdtget -t s "$dtb" '/soc/usb@1c13000' dr_mode)" = peripheral
   test "$(fdtget -t s "$dtb" '/soc/usb@1c13000' status)" = okay
