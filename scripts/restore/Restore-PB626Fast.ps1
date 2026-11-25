@@ -5,12 +5,12 @@ param(
     [ValidatePattern('^COM[1-9][0-9]*$')]
     [string]$Port,
     [string]$BackupDir = $PSScriptRoot,
+    [string]$ExpectedCid,
     [switch]$Write,
     [switch]$AllowOtherCard
 )
 
 $ErrorActionPreference = 'Stop'
-$backupCid = '1501003857504433520068d8fe0384e3'
 $blockSize = 4MB
 $remote = '/bin/sh /run/pb626-restore-fast.sh'
 $images = @(
@@ -136,6 +136,22 @@ function Send-ImageBlock($Image, [int]$Index, [byte[]]$Buffer) {
 }
 
 $manifest = Read-Checksums (Join-Path $BackupDir 'SHA256SUMS')
+$cidName = 'pb626-emmc-cid.txt'
+$cidPath = Join-Path $BackupDir $cidName
+if (Test-Path -LiteralPath $cidPath) {
+    if ((Get-FileHash -LiteralPath $cidPath).Hash -ne $manifest[$cidName]) {
+        throw 'Backup CID file checksum mismatch.'
+    }
+    $backupCid = (Get-Content -Raw -LiteralPath $cidPath).Trim().ToLowerInvariant()
+    if ($ExpectedCid -and $ExpectedCid.ToLowerInvariant() -cne $backupCid) {
+        throw 'ExpectedCid differs from the backup identity.'
+    }
+} else {
+    $backupCid = ([string]$ExpectedCid).ToLowerInvariant()
+}
+if ($backupCid -cnotmatch '^[a-f0-9]{32}$') {
+    throw 'Missing or invalid original backup CID; use -ExpectedCid for a legacy backup.'
+}
 $tools = Read-Checksums (Join-Path $PSScriptRoot 'SHA256SUMS.fast')
 $scannerName = 'pb626-restore-scan.gz'
 $scanner = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot $scannerName))
@@ -192,7 +208,8 @@ try {
         $part = $encoded.Substring($offset, [Math]::Min(1024, $encoded.Length - $offset))
         $null = Invoke-Device "printf '%s' '$part' >> $destination.b64"
     }
-    $null = Invoke-Device "base64 -d $destination.b64 > $destination && rm $destination.b64"
+    $codeHash = (Get-Sha256 ([Text.Encoding]::UTF8.GetBytes($code))).ToLowerInvariant()
+    $null = Invoke-Device "base64 -d $destination.b64 > $destination && echo '$codeHash  $destination' | sha256sum -c - && rm $destination.b64"
     $probe = @(Invoke-Device "$remote probe" | Where-Object { $_ -match '^CID=[a-f0-9]{32}$' })
     if ($probe.Count -ne 1) { throw 'No valid eMMC CID received.' }
     $cid = $probe[0].Substring(4)

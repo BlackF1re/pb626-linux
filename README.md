@@ -1,240 +1,132 @@
-# PocketBook 626 Plus / Touch Lux 3 — Alpine Linux 3.24 / Megi 7.2
+# PocketBook 626 Plus / Touch Lux 3 · Native Linux
 
-**Hardware milestone: 2026-11-25 — autonomous cold boot into Alpine Desktop from
-internal eMMC was demonstrated on one late PocketBook 626 Plus / Touch Lux 3
-(Allwinner A13, ELAN/eMMC revision).** The factory boot chain is no longer
-used. RAM-only FEL builds remain available for development and rescue.
+![Linux](https://img.shields.io/badge/Linux-7.2-0f766e?style=flat-square) ![Alpine](https://img.shields.io/badge/Alpine-3.24.4%20armv7-2563eb?style=flat-square) ![Status](https://img.shields.io/badge/status-experimental-d97706?style=flat-square)
 
-## E Ink desktop in RAM
+**Native Alpine Linux** on the PocketBook 626 Plus (Touch Lux 3): Allwinner A13, 256 MiB RAM and ED060XD4 E Ink (758×1024). A lightweight Xorg/Matchbox desktop boots directly from internal eMMC, without the factory OS, microSD or a host PC.
 
-Download `pb626-megi-eink-desktop` from the
-[Megi E Ink desktop workflow](.github/workflows/megi-desktop.yml) and run its
-`Start-PB626.ps1 -BundleDir <bundle> -Variant elan-display -Profile diagnostic`
-after entering cold FEL. Both MMC controllers are disabled in this image.
-Once the USB console appears, run
-`Start-PB626Desktop.ps1 -BundleDir <bundle> -Port COM12 -Waveform <default.wbf>`
-in PowerShell 7.4, with the console port available. The script verifies and
-transfers the desktop into RAM. Supply the factory waveform for the reader.
-Xorg and Matchbox Desktop provide an application launcher, onscreen keyboard, XTerm, Midnight
-Commander, NEdit, XCalc and Htop. Close an application to return to the launcher.
-For optional Frontlight and System Status apps, extract the separate
-`pb626-desktop-extras` artifact to a volume mounted at `/mnt/pb626-apps` on
-the reader and pass `-UseMountedApps` to the desktop launcher. This requires a
-boot configuration in which that volume is already accessible.
-The keyboard opens for terminal and editor windows and can be toggled with F12
-or Home when touch input is available.
-If touch input is absent, Left and Right move the onscreen pointer, Home changes
-the movement axis, and a short Menu press clicks. Hold Menu for at least one
-second and release to clear ghosting and redraw the desktop.
-The desktop uses black/white DU previews during interaction and restores grays
-with GL16 once the image settles. Frequently updated 32 × 32 pixel tiles
-can receive a local GC16 cleanup. The panel still scans all rows. For timing
-logs, pass `-ProfileDisplay` to the desktop launcher and read
-`/run/pb626-desktop.log` over USB. The USB console stays available.
+> [!WARNING]
+> Only the late ELAN eKTF2227 / Samsung 8WPD3R eMMC board has been verified (stock U626.5.20.1157, VCOM −2440 mV). Other revisions and panel calibrations are not supported.
 
-## Native boot: BT0-uncaged
+## What this project adds
 
-The supported primary bootloader development path is [BT0-uncaged](BT0-uncaged/README.md):
-BootROM → custom 24 KiB SPL → MMC2 raw legacy image at LBA 80 → Linux → Alpine
-on ext4 p1. The factory BT0, BT1, boot.axf and FAT boot scripts are not executed.
+- **BT0-uncaged:** MMC2-safe SPL, direct eMMC-to-Linux boot, ARM kernel wrapper and early Menu-to-FEL recovery.
+- **Faster boot:** targeted A13 MBUS DMA dependency fix and early persistent E Ink worker. Observed boot time fell from ~69 s to ~22 s to ~12 s; first acknowledged frame at 4.863 s after kernel start.
+- **Custom E Ink renderer:** C WBF decoder, six waveform modes (INIT/DU/GC16/GL16/A2/DU4), temperature-aware transition checks, indexed PIN32 scanout, asynchronous X11 bridge, dirty tiles, grayscale/dithering, fast previews and idle ghosting cleanup.
+- **Board support:** ELAN eKTF2227 touch driver, portrait input/button fallback, frontlight PWM fix, USB ACM and dedicated native/RAM/recovery DTBs.
+- **Desktop:** lightweight software-rendered Xorg/Matchbox, monochrome theme, on-screen keyboard, battery applet, manual refresh and optional utilities.
+- **Recovery:** verified 64 KiB FEL transfers, read-only full eMMC backup, differential restore with 4 MiB SHA-256-checked blocks and optional gzip, offline native image assembler.
+- **Research & CI:** reverse-engineered factory boot chain and waveform behavior, pinned and cached paired firmware builds.
 
-The [manual build workflow](.github/workflows/bt0-uncaged.yml) rebuilds the exact
-hardware-tested SPL using the known original lab SPL and the checked-in patches
-and assembly. The final hash must match before the installer can be packaged.
-Full original U-Boot source provenance remains to be recovered before public
-binary release. A single fixed-name draft release may be prepared manually.
+> [!NOTE]
+> Native boot, USB ACM, touch, grayscale/partial refresh and frontlight were demonstrated on hardware. Wi-Fi firmware loaded and wlan0 appeared; full networking, suspend, charger-only boot, Lima and SD recovery are not qualified. Timings are historical observations, not a controlled benchmark. The consolidated build, offline installer, backup receiver and CID adaptation still need physical validation; the original differential restore was tested on hardware.
 
-The installation script replaces only eMMC user-area LBA 16–63, after strict
-checks of the existing layout, kernel and original backup. It requires an
-already prepared native Alpine system and exact known raw image. **It is not a
-fresh-device Alpine installer.** The native runtime scripts and board fragment are retained in this tree; see
-[the native validation and update record](docs/NATIVE-BOOT-MBUS.md).
-A fresh-device installer is still not provided. Historical FAT/AXF
-and intermediate U-Boot experiments are retired; see Git history only.
+## Downloads
 
-**Safety:** cold normal Power boot and Menu-triggered FEL entry succeeded after
-installing BT0-uncaged on the tested device (2026-11-25). FEL version and SRAM
-reads worked; a subsequent cold FEL session with the known MMC2-safe SPL
-booted native Alpine. The fast kernel handoff (steady LED, no diagnostic delays
-or repeated hashes) booted Alpine in RAM/FEL and was subsequently installed and readback-verified on eMMC.
-The LRADC polling limit was reduced 16-fold; the installed revision booted to
-the desktop in about 22 seconds (previously about 69 seconds) and cold Menu FEL
-still worked on the tested board. With the built-in E Ink / MBUS correction,
-a subsequent verified raw kernel update reached the desktop in approximately
-12 seconds (operator stopwatch, not a loader measurement). The microSD recovery attempt did not work. Keep the original full eMMC
-and boot-region backup; a backup alone does not guarantee recovery if SPL fails.
+Use matching artifacts from successful [system builds](https://github.com/BlackF1re/pb626-linux/actions/workflows/megi-fel.yml) ([consolidation build](https://github.com/BlackF1re/pb626-linux/actions/runs/45680410170)):
 
-## Verified on the physical reader
+- `pb626-mainline-7.2-ram-bundle` — FEL recovery and RAM Linux.
+- `pb626-native-system` — rootfs, kernel/DTB and packed `raw-linux.img`.
+- `pb626-megi-eink-desktop` — optional RAM desktop; `pb626-desktop-extras` — optional utilities.
+- `pb626-emmc-tools` — from the matching [restore build](https://github.com/BlackF1re/pb626-linux/actions/runs/45680410272) ([workflow](https://github.com/BlackF1re/pb626-linux/actions/workflows/restore.yml)).
 
-- FEL SPL initialized DDR, then the host transferred and read back the 7.2
-  zImage, DTB, full Alpine initramfs and ARM entry stub.
-- Linux reached `/init`, created a USB ConfigFS ACM gadget, registered
-  `musb-hdrc.1.auto`, and enumerated on the Windows host as **0525:a4a7**,
-  serial `PB626RAM01`, on COM12 in this experiment.
-- An interactive shell responded over the COM port:
-  - `uname -a`: `Linux (none) 7.2.0-gfacc87117511 ... armv7l Linux`.
-  - `/etc/os-release`: `Alpine Linux v3.24.4`.
-  - `cat /sys/class/udc/*/state`: `configured`.
-- The `elan-display` variant boots with the frontlight off. Two brightness
-  levels and switch-off were verified through `/sys/class/backlight`.
-- The ED060XD4 panel cleared to white, displayed monochrome and 16-level
-  grayscale patterns, and updated a region through the `sun5i-eink` V4L2
-  output at `/dev/video0`. Tests used factory waveforms and calibrated VCOM.
-- USB with factory-compatible PG1 VBUS sensing did **not** enumerate. The
-  `elan-usbtest` variant, which removes that sensing GPIO and uses the
-  sun4i PHY fallback, **did enumerate**. This diagnoses a likely modern-driver
-  VBUS-detection problem but is not proof PG1 is miswired. The factory OS
-  successfully uses the same PG1 GPIO.
+Extract ZIPs separately and verify `SHA256SUMS` (or `SHA256SUMS.fast` for the recovery helper). Artifacts expire; use manual workflow dispatch if necessary. No local ARM compilation/QEMU is needed for routine deployment.
 
-**Not yet verified:** touch input, battery/power management, suspend, Wi-Fi,
-removable SD root, panel
-voltage safety on other units, or independent recovery if the primary SPL fails.
+## Installation & recovery
 
-## RAM-only safety boundary
+> [!CAUTION]
+> Installation replaces the primary SPL, raw Linux image and **all of p1 (including books and user data)**. Keep verified original factory and working-system backups separately. A broken SPL may prevent FEL recovery; no independent rescue path is established.
 
-The default boot image is a full Alpine ARMv7 initramfs with matching kernel
-modules. The device tree has the internal eMMC controller
-`/soc/mmc@1c11000` set to `status = "disabled"`; the FEL uploader checks
-this before execution. No flash/erase/eMMC write commands are part of the
-loader. Optional SD root handoff requires `pb626.root=sd`, is read-only, and
-is *not* enabled by default.
+### 1. Boot read-only recovery
 
-The local SPL, custom 52-byte ARM entry stub, and patched `sunxi-fel` are
-still outside this repository at `/root/pb626-lab` in WSL. CI cannot yet
-reproduce that part of the boot chain. **Do not run SPL twice in the same
-power cycle**; fully power off the reader before starting FEL again.
+Requirements: Windows PowerShell 5.1, PowerShell 7.4+ (backup/restore), usbipd-win, WSL2 with `usbutils` and `device-tree-compiler`. The launcher defaults to WSL distro `XperiaDev` (override with `-Distro`).
 
-The `elan` DTBs include panel VCOM calibrated from the factory files of
-**one unit** (−2440 mV). Do not use them on an unverified unit without first
-checking its own calibration.
+Keep these verified local inputs in WSL `/root/pb626-lab` (override `PB626_LAB_DIR`):
 
-## Reproduce the verified RAM session
+- `pb626-spl.bin` — exact original lab SPL ([hash](BT0-uncaged/README.md)).
+- `direct-entry.bin` — known-working 52-byte ARM entry stub.
+- `retry-tools/sunxi-tools-master/sunxi-fel` — executable with [MMU patch](patches/sunxi-fel-keep-mmu-off.patch), or set `PB626_FEL_TOOL`.
 
-Requirements: Windows PowerShell 5.1, `usbipd`, WSL2 distribution
-`XperiaDev`, `usbutils` and `device-tree-compiler` in WSL, and the known
-local FEL tools/SPL/stub.
+> [!IMPORTANT]
+> The exact SPL base and FEL stub are not distributed or fully reproducible here. Stop if you lack these inputs; do not substitute an arbitrary SPL. No stock jailbreak is required.
 
-1. Download `pb626-mainline-7.2-ram-bundle` from a **successful**
-   [Megi Linux 7.2 GitHub Actions workflow](.github/workflows/megi-fel.yml).
-   Extract all files to `C:\PB626\bundle`; do not mix builds.
-2. Save current `scripts/Start-PB626.ps1` and `scripts/fel-boot.sh` beside
-   one another at `C:\PB626`.
-3. Fully power off, disconnect USB, then enter FEL using the far-right
-   **Menu** button while reconnecting the USB cable.
-4. For the **specific already-verified ELAN reader**, use the display
-   diagnostic variant:
+Power off, unplug USB, hold the far-right Menu button and reconnect USB (FEL `1f3a:efe8`). Extract the RAM bundle to `C:\PB626\FEL`. From `C:\PB626`:
 
-   ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass `
-     -File C:\PB626\Start-PB626.ps1 `
-     -BundleDir C:\PB626\bundle `
-     -Variant elan-display -Profile diagnostic -Distro XperiaDev
-   ```
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\FEL\Start-PB626.ps1 -BundleDir .\FEL -Variant elan-emmc-backup -Profile diagnostic
+```
 
-   `elan-lightoff` leaves factory PG1 USB sensing in place, turning off
-   the frontlight but **not** enumerating USB on the observed reader. The
-   standard `elan` variant has not achieved safe frontlight behavior. These
-   experimental DTBs must not be treated as production device definitions.
+Elevate PowerShell for initial USB binding if required. Never run SPL twice per power cycle. Confirm Linux USB ACM `0525:a4a7` and the actual COM port (115200 8N1). Recovery leaves eMMC read-only and unmounted; power off if the frontlight remains bright.
 
-5. When Windows discovers VID:PID `0525:a4a7`, find its **current** COM
-   number (COM12 was observed, but may change). Connect in PuTTY at
-   **115200 8N1 with no flow control**, press Enter, and run:
+### 2. Back up stock firmware
 
-   ```sh
-   uname -a
-   cat /etc/os-release
-   cat /sys/class/udc/*/state
-   cat /run/pb626-boot.log
-   ```
+Extract `pb626-emmc-tools` to `C:\PB626\tools`, close the serial terminal and use PowerShell 7.4+ (replace COM12 with your port):
 
-If the frontlight stays at maximum unexpectedly, promptly power down; do
-not leave an unverified image running. Do not assume an `execute` return code
-proves Linux booted: verify the console and kernel output.
+```powershell
+.\tools\Backup-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\stock
+```
 
-Copy the panel's factory `default.wbf` from the offline dump into `/run`.
-On the reader, run `pb626-epd /run/default.wbf full /run/page.pgm` for
-GC16 or use `partial` for GL16 over changed pixels. Supply a binary PGM
-(P5) at 758 × 1024 in portrait orientation. The utility reads the TPS65185
-temperature and resets an unknown screen state to white before updating.
-It also accepts `reset`, `du`, `a2`, and `du4`. The three fast modes
-require transitions supported by their factory tables. If another program
-uses the raw V4L2 output, run `reset` before resuming with `pb626-epd`.
+Use a new directory. The tool saves and verifies the entire 7.28 GiB user area, hardware boot0/boot1, EXT_CSD, original CID and `SHA256SUMS`. A post-installation dump is not a factory backup.
 
-## Development / build
+Obtain your original `/boot/default.wbf` and verify VCOM and [waveform SHA-256](docs/EINK.md). On the verified factory geometry, `/boot` is FAT16 at LBA 73728; with WSL/Linux `mtools`:
 
-GitHub Actions builds the pinned Megi mainline-based kernel and Alpine rootfs
-as separate cached jobs, then assembles a RAM-only bundle with six DTB
-variants. Source: Megi's `orange-pi-7.2-20260903-2131`, Git commit
-`facc87117511221bb61410e3f92ad8579697f736` (mirror:
-https://github.com/Arnavion/linux/tree/orange-pi-7.2-20260903-2131).
-The tree is **mainline-based plus downstream PocketBook E Ink support**, not
-unmodified upstream Linux.
+```bash
+mcopy -i /mnt/c/PB626/stock/pb626-emmc-user.img@@37748736 ::/default.wbf /mnt/c/PB626/default.wbf
+mtype -i /mnt/c/PB626/stock/pb626-emmc-user.img@@37748736 ::/vcom
+sha256sum /mnt/c/PB626/default.wbf
+```
 
-Further architecture and safety notes:
-[Full RAM Linux design](docs/RAM-LINUX-DESIGN.md) and
-[Megi boot / hardware](docs/MEGI-BOOT-AND-HARDWARE.md).
+Stop if the board, VCOM or waveform differs. Never publish dumps, CID, credentials or proprietary calibration.
 
-## Test Wi-Fi / monitor capabilities (experimental)
+### 3. Install native Linux
 
-The current RAM-only demo includes an **explicitly user-authorized public,
-disposable test network**, SSID `ACCESS_POINT` and passphrase `PASSWORD`.
-The `/init` script sets hostname `pb626` and runs `pb626-network`
-non-blockingly. This supplies WPA/WPA2-PSK; **if the AP is WPA3-only or
-enterprise/802.1X, it will not associate**. Network/firmware availability is
-reported in `/run/pb626-network.log` and verified with `iw dev wlan0 link`,
-`ip address show wlan0`, and `ip route`. The Wi-Fi configuration is in
-RAM and never persisted to eMMC. Do not put real credentials into the public
-`board/megi/wifi-test.conf` file.
+Clone this repo in WSL/Linux. Install `python3`, `e2fsprogs`, `device-tree-compiler`, `mtools`, `clang`, `lld`, `llvm`. Extract `pb626-native-system` to `C:\PB626\native`. Reconstruct the exact SPL locally ([details](BT0-uncaged/README.md)):
 
-Physical RTL8188EU `0bda:8179` was enumerated on the PocketBook, and the
-`rtl8xxxu` driver loaded firmware revision 28.0 from decompressed
-`rtl8188eufw.bin`; `iw list` reported `managed` and `monitor` and
-created `wlan0`. **SSID association/DHCP, actual monitor reception, and
-transmit injection are not yet proven**. The image includes `tcpdump` for
-controlled passive receive tests. Do not confuse advertised monitor support
-with verified packet injection.
+```bash
+python3 BT0-uncaged/build.py /root/pb626-lab/pb626-spl.bin /mnt/c/PB626/BT0-uncaged.bin
+python3 BT0-uncaged/test_hook.py /mnt/c/PB626/BT0-uncaged.bin
+```
 
-`lm-sensors` was confirmed to print AXP209 USB and battery voltage/current;
-`power_supply` separately exports battery charge state/capacity. OpenSSH
-is installed but no TCP listener was present; no unrestricted root SSH
-service is enabled. Avoid starting unauthenticated root SSH on Wi-Fi.
+Build a new offline image set from the repository root (allow ~16 GiB extra for output and temporary work):
 
-## hcxdumptool lab-only diagnostics
+```bash
+sudo python3 scripts/build-native-image.py \
+  --backup /mnt/c/PB626/stock \
+  --system /mnt/c/PB626/native \
+  --spl /mnt/c/PB626/BT0-uncaged.bin \
+  --waveform /mnt/c/PB626/default.wbf \
+  --output /mnt/c/PB626/linux \
+  --accept-replace-p1
+```
 
-The ARMv7 Alpine RAM image also contains **hcxdumptool 7.1.2**, built from
-ZerBea upstream Git revision `10aa88d3e955f507f56d24d3779ac251c4004c1c`
-under QEMU; no compiler, build dependencies, or tools are installed to factory
-flash. The bundled tool is not launched automatically. Its default operation
-includes active Wi-Fi interaction, possibly disconnecting stations and
-recording authentication-related data. Use only in a radio-shielded, fully
-owned lab. The project intentionally retains the USB CDC console as the
-control channel while hcxdumptool takes exclusive control of the real
-`wlan0`; do **not** run it on `mon0` or concurrently with
-`wpa_supplicant`/Aircrack-ng. A user must start/stop it explicitly.
+The assembler verifies input hashes, geometry, boot extents, DTB and modules. It preserves MBR/EBR, both BT1 copies, remaining partitions and hardware boot areas; EXT_CSD is not programmed. Boot recovery if needed and follow step 4 with `C:\PB626\linux` instead of `stock`. After verification, power off, disconnect USB and boot normally.
 
-A prior live experiment confirmed RTL8188EU monitor reception (20 Beacon frames,
-Radiotap with RSSI/channel/TSFT) and an Aircrack-ng directed probe test against
-user-owned AP `ACCESS_POINT` returned **30/30 responses (100%)** on channel 11.
-Those results demonstrate basic injection but do not guarantee the distinct
-802.11 operations used by hcxdumptool will succeed with `rtl8xxxu`.
+### 4. Restore stock (or a verified Linux backup)
 
-## Experimental RTL8188EU monitor-only RX regression test (2026-11-21)
+Boot recovery (step 1), close the serial terminal, then run preflight before enabling writes:
 
-On the physical reader, RTL8188EU + `rtl8xxxu` under Megi 7.2 successfully
-captured Beacon frames with a separately created `mon0`, and probe injection
-returned 30/30 replies. But converting the existing `wlan0` from managed
-to monitor yielded **zero received frames**, including with `tcpdump` and
-`hcxdumptool`. Reapplying `iw ... set monitor control otherbss` did not
-resolve the failure. Re-association in managed mode and reloading the module
-both restored reception.
+```powershell
+.\tools\Restore-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\stock
+.\tools\Restore-PB626Fast.ps1 -Port COM12 -BackupDir C:\PB626\stock -Write
+```
 
-A **test-only, unverified** kernel patch
-`patches/rtl8xxxu-reset-linktype.patch` clears the hardware link type to
-`MSR_LINKTYPE_NONE` in `rtl8xxxu_remove_interface()` after removal of a
-managed VIF. It addresses the observation that `rtl8xxxu_add_interface()`
-sets station link type, but removal previously cleared only the software VIF
-pointer. This is a hypothesis, **not an established root cause**. Never
-assume the patch works until the on-device negative/positive test is repeated.
+Only after preflight passes, type `RESTORE` followed by the displayed CID. Keep USB connected until **All three eMMC regions match SHA256SUMS**, then power off. For legacy dumps lacking `pb626-emmc-cid.txt`, pass `-ExpectedCid ORIGINAL_CID` to both commands and `--expected-cid ORIGINAL_CID` to the image assembler. Do not override mismatched CID/geometry. [Recovery details](scripts/restore/README.md).
 
-This patch changes only the external RAM boot kernel and is pinned and built
-in CI. Original DTB eMMC-disabled and frontlight safety checks remain in place.
+### Optional: RAM desktop
+
+Extract `pb626-megi-eink-desktop` to `C:\PB626\desktop`. Cold-boot its own bundle using step 1 with `-Variant elan-display -Profile standard` and the desktop directory/launcher instead of FEL. Both MMC hosts are disabled. Then:
+
+```powershell
+.\desktop\Start-PB626Desktop.ps1 -BundleDir .\desktop -Port COM12 -Waveform C:\PB626\default.wbf
+```
+
+Hold Menu for one second and release for a manual reset. USB ACM is an unauthenticated physical root console; no network root login is enabled.
+
+## Reference
+
+[Hardware](docs/HARDWARE-PROFILE.md) · [Factory boot](docs/STOCK-BOOT-CHAIN.md) · [Native boot & measurements](docs/BOOT.md) · [E Ink](docs/EINK.md) · [BT0-uncaged](BT0-uncaged/README.md) · [Recovery](scripts/restore/README.md)
+
+## License & credits
+
+Original contributions: **GPL-2.0-or-later** unless otherwise marked ([LICENSE](LICENSE)). Kernel changes follow the applicable Linux GPL-2.0-only terms and syscall exception; upstream and packaged components retain their own licenses. Do not redistribute reconstructed SPL binaries until the exact U-Boot corresponding source/configuration obligations are resolved.
+
+Special thanks to **[Ondřej Jirman (megi)](https://xnux.eu/)** and [his Linux project](https://xff.cz/kernels/) for the foundational PocketBook support, E Ink V4L2 driver and Allwinner work. This port uses his [pinned Linux 7.2 tree](https://github.com/Arnavion/linux/tree/facc87117511221bb61410e3f92ad8579697f736) via [Arnavion/linux](https://github.com/Arnavion/linux). Thanks also to [linux-sunxi](https://linux-sunxi.org/PocketBook_Touch_Lux_3), [PocketBook A13 sources](https://github.com/pocketbook/Platform_A13), [sunxi-tools](https://github.com/linux-sunxi/sunxi-tools), Matchbox and Alpine.

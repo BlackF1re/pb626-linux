@@ -35,22 +35,20 @@ jobs:
           sh -n scripts/inspect-live.sh
           sh -n scripts/pb626-network.sh
           sh -n boot/init-megi
-          sh -n boot/pb626-init-megi
+          for f in boot/pb626-native-{setup,desktop,console} display/pb626-{desktop,xsession}; do sh -n "$f"; done
           bash -n scripts/fel-boot.sh
           bash -n scripts/configure-megi-kernel.sh
           bash -n scripts/build-alpine-rootfs.sh
           bash -n scripts/build-megi-desktop.sh
           bash -n scripts/build-megi-variants.sh
           bash -n scripts/assemble-megi-ram.sh
-          test -s board/megi/wifi-test.conf
-          grep -Fqx '    ssid="ACCESS_POINT"' board/megi/wifi-test.conf
-          grep -Fqx '    psk="PASSWORD"' board/megi/wifi-test.conf
           grep -Fqx 'hostname pb626 2>/dev/null || true' boot/init-megi
-          bash -n scripts/inject-private-wifi.sh
           shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh scripts/pb626-network.sh
           shellcheck -s bash scripts/fel-boot.sh
       - name: Test hardware inventory
         run: sh tests/probe-smoke.sh
+      - name: Test offline firmware image builder
+        run: python3 tests/test-native-image.py
 
   bt0-hook:
     name: BT0-uncaged hook build and model tests (no base SPL)
@@ -69,5 +67,4 @@ jobs:
           ld.lld -Ttext=0x5000 -e _start /tmp/menu.o -o /tmp/menu.elf
           llvm-objcopy -O binary -j .text /tmp/menu.elf /tmp/menu.raw
           python3 BT0-uncaged/test_hook.py --hook-only /tmp/menu.raw
-          sh -n BT0-uncaged/stage.sh
           python3 -m py_compile BT0-uncaged/build.py BT0-uncaged/pack-kernel.py

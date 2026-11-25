@@ -15,6 +15,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/file.h>
 #include <sys/shm.h>
 #include <sys/socket.h>
 #include <stdint.h>
@@ -28,8 +29,8 @@
 
 #include "pb626-epd.h"
 
-enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 60000, QUIET_US = 450000,
-       MAX_PENDING_US = 450000, INFLIGHT_CAPTURE_US = 80000,
+enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 180000, QUIET_US = 300000,
+       MAX_PENDING_US = 850000,
        CLEAN_QUIET_US = 1200000, LARGE_CLEAN_QUIET_US = 5000000,
        LARGE_CLEAN_PIXELS = PIXELS / 16, CLEAN_AFTER = 8, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
@@ -188,54 +189,6 @@ static struct rect united(struct rect a, struct rect b)
 		a.left < b.left ? a.left : b.left, a.top < b.top ? a.top : b.top,
 		a.right > b.right ? a.right : b.right, a.bottom > b.bottom ? a.bottom : b.bottom,
 	};
-}
-
-static int rect_area(struct rect r)
-{
-	return (r.right - r.left) * (r.bottom - r.top);
-}
-
-/* Preserve disjoint damage instead of expanding nine small regions into one
- * full-screen bounding box. With MAX_REGIONS=8, evaluate at most 36 pairs
- * for each extra tile run; the XGetImage cost dominates this bookkeeping.
- * Every merged rectangle still contains all original changed pixels. */
-static void add_damage_rect(struct rect areas[MAX_REGIONS], int *used, struct rect next)
-{
-	for (int i = 0; i < *used; i++) {
-		struct rect current = areas[i];
-		if (current.left <= next.left && current.top <= next.top &&
-		    current.right >= next.right && current.bottom >= next.bottom)
-			return;
-		if (current.left == next.left && current.right == next.right &&
-		    current.bottom == next.top) {
-			areas[i].bottom = next.bottom;
-			return;
-		}
-	}
-	if (*used < MAX_REGIONS) {
-		areas[(*used)++] = next;
-		return;
-	}
-
-	int best_i = 0, best_j = MAX_REGIONS, best_cost = INT32_MAX;
-	for (int i = 0; i <= MAX_REGIONS; i++)
-		for (int j = i + 1; j <= MAX_REGIONS; j++) {
-			struct rect a = i == MAX_REGIONS ? next : areas[i];
-			struct rect b = j == MAX_REGIONS ? next : areas[j];
-			int cost = rect_area(united(a, b)) - rect_area(a) - rect_area(b);
-			if (cost < best_cost) {
-				best_cost = cost;
-				best_i = i;
-				best_j = j;
-			}
-		}
-	/* best_i cannot be the new rectangle: it has no j > MAX_REGIONS. */
-	if (best_j == MAX_REGIONS)
-		areas[best_i] = united(areas[best_i], next);
-	else {
-		areas[best_i] = united(areas[best_i], areas[best_j]);
-		areas[best_j] = next;
-	}
 }
 
 static struct rect pointer_rect(Display *display, Window root, int offset)
@@ -543,6 +496,7 @@ static int damage_regions(Display *display, Damage damage, XserverRegion region,
 		XFree(rectangles);
 
 	int used = 0;
+	struct rect bounds = {0};
 	for (int y = 0; y < TILE_ROWS; y++)
 		for (int x = 0; x < TILE_COLS;) {
 			int start = x++;
@@ -553,8 +507,27 @@ static int damage_regions(Display *display, Damage damage, XserverRegion region,
 			struct rect area = clipped((struct rect){
 				start * TILE, y * TILE, x * TILE, (y + 1) * TILE,
 			}, 0);
-			add_damage_rect(areas, &used, area);
+			bounds = united(bounds, area);
+			if (used > MAX_REGIONS)
+				continue;
+			int merged = 0;
+			for (int i = 0; i < used; i++)
+				if (areas[i].bottom == area.top && areas[i].left == area.left &&
+				    areas[i].right == area.right) {
+					areas[i].bottom = area.bottom;
+					merged = 1;
+					break;
+				}
+			if (!merged) {
+				if (used < MAX_REGIONS)
+					areas[used] = area;
+				used++;
+			}
 		}
+	if (used > MAX_REGIONS) {
+		areas[0] = bounds;
+		return 1;
+	}
 	return used;
 }
 
@@ -614,8 +587,7 @@ static void stop_worker(struct worker *worker)
 	munmap(worker->frame, sizeof(*worker->frame));
 }
 
-/* At most one in-flight update. The shared frame stays immutable until ACK. */
-static int submit_async(const struct worker *worker, uint8_t command)
+static int send_command(const struct worker *worker, uint8_t command)
 {
 	ssize_t done;
 	do {
@@ -624,14 +596,19 @@ static int submit_async(const struct worker *worker, uint8_t command)
 	return done == 1 ? 0 : -1;
 }
 
-static int complete_async(const struct worker *worker, uint8_t command)
+static int await_ack(const struct worker *worker, uint8_t command)
 {
-	uint8_t ack;
 	ssize_t done;
+	uint8_t ack;
 	do {
 		done = read(worker->socket, &ack, 1);
 	} while (done < 0 && errno == EINTR);
 	return done == 1 && ack == command ? 0 : -1;
+}
+
+static int submit(const struct worker *worker, uint8_t command)
+{
+	return send_command(worker, command) || await_ack(worker, command) ? -1 : 0;
 }
 
 /* A2 has only exact 0->15 / 15->0 transitions at every stock temperature.
@@ -766,20 +743,8 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 	if (command == RESET) {
 		memset(fast_changes, 0, sizeof(fast_changes));
 		memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
-		/* XDamage can arrive during INIT/GC16: the panel receives the
-		 * submitted pixels, not the latest X11 desired framebuffer. */
-		for (int ty = 0; ty < TILE_ROWS; ty++)
-			for (int tx = 0; tx < TILE_COLS; tx++) {
-				int right, bottom, differs = 0;
-				tile_bounds(tx, ty, &right, &bottom);
-				for (int y = ty * TILE; y < bottom; y++)
-					for (int x = tx * TILE; x < right; x++) {
-						size_t i = y * WIDTH + x;
-						panel[i] = frame->pixels[i] & WHITE;
-						differs |= panel[i] != desired[i];
-					}
-				dirty_tiles[ty][tx] = differs;
-			}
+		memset(dirty_tiles, 0, sizeof(dirty_tiles));
+		memcpy(panel, desired, PIXELS);
 		return;
 	}
 	for (int ty = 0; ty < TILE_ROWS; ty++)
@@ -849,10 +814,8 @@ int main(int argc, char **argv)
 			return EXIT_FAILURE;
 		}
 	}
-	setup_gray(selected, lightness, gamma);
-	setup_quantization();
     const char *fast = getenv("PB626_EPD_FAST_MODE");
-    enum fast_profile fast_mode = FAST_AUTO;
+    enum fast_profile fast_mode = FAST_DU;
     if (fast && strcmp(fast, "du")) {
         if (!strcmp(fast, "a2"))
             fast_mode = FAST_A2;
@@ -865,15 +828,45 @@ int main(int argc, char **argv)
             return EXIT_FAILURE;
         }
     }
+	/* Native startup overlaps INIT with Xorg. The session marker is
+	 * a generic handoff, not a GUI/application readiness condition. */
+	int lock_fd = open("/run/pb626-epd.lock", O_CREAT | O_RDWR, 0600);
+	if (lock_fd < 0 || flock(lock_fd, LOCK_EX | LOCK_NB) < 0)
+		return EXIT_FAILURE;
+	struct worker worker;
+	if (start_worker(&worker, argv[1]))
+		return EXIT_FAILURE;
+	unlink(argv[2]);
+	int profile = getenv("PB626_EPD_PROFILE") != NULL;
+	int init_sent = 0;
+	const char *marker = getenv("PB626_EPD_SESSION_STARTED");
+	if (marker) {
+		if (profile)
+			fprintf(stderr, "preclear: INIT begin mono_us=%llu\n", (unsigned long long)now_us());
+		init_sent = send_command(&worker, INIT_PANEL) == 0;
+	}
+	setup_gray(selected, lightness, gamma);
+	setup_quantization();
+	if (marker) {
+		uint64_t deadline = now_us() + 15000000ULL;
+		while (access(marker, F_OK) && now_us() < deadline)
+			nanosleep(&(struct timespec){ .tv_nsec = 20000000L }, NULL);
+		if (access(marker, F_OK)) {
+			stop_worker(&worker);
+			return EXIT_FAILURE;
+		}
+	}
 	Display *display = XOpenDisplay(NULL);
 	if (!display) {
 		fprintf(stderr, "pb626-x11-epd: cannot connect to Xorg\n");
+		stop_worker(&worker);
 		return EXIT_FAILURE;
 	}
 	int screen = DefaultScreen(display);
 	int width = DisplayWidth(display, screen);
 	if (width < WIDTH || DisplayHeight(display, screen) != HEIGHT) {
 		fprintf(stderr, "pb626-x11-epd: unexpected Xorg screen dimensions\n");
+		stop_worker(&worker);
 		return EXIT_FAILURE;
 	}
 
@@ -894,12 +887,12 @@ int main(int argc, char **argv)
 	XserverRegion region = damage ? XFixesCreateRegion(display, NULL, 0) : None;
 	Window previous_window = None;
 	struct controls controls = { .fallback = getenv("PB626_POINTER_FALLBACK") != NULL };
-	struct pollfd sources[4] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
+	struct pollfd sources[3] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
 	nfds_t source_count = 1;
 	const char *devices = getenv("PB626_BUTTON_DEVICES");
 	char *paths = devices ? strdup(devices) : NULL;
 	for (char *path = paths ? strtok(paths, " ") : NULL;
-	     path && source_count + 1 < sizeof(sources) / sizeof(sources[0]); path = strtok(NULL, " ")) {
+	     path && source_count < sizeof(sources) / sizeof(sources[0]); path = strtok(NULL, " ")) {
 		int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 		if (fd >= 0)
 			sources[source_count++] = (struct pollfd){ .fd = fd, .events = POLLIN };
@@ -908,17 +901,19 @@ int main(int argc, char **argv)
 	static uint8_t frame[PIXELS], previous[PIXELS];
 	const struct rect full = {0, 0, WIDTH, HEIGHT};
 	struct rect pointer = {0};
-	struct worker worker;
-	if (start_worker(&worker, argv[1]))
-		return EXIT_FAILURE;
-	const nfds_t worker_index = source_count;
-	sources[source_count++] = (struct pollfd){ .fd = worker.socket };
-	unlink(argv[2]);
-	int profile = getenv("PB626_EPD_PROFILE") != NULL;
 	const char *halo = getenv("PB626_EPD_CLEAN_HALO");
 	clean_halo = !halo || strcmp(halo, "0");
 	XShmSegmentInfo shm = {0};
 	setup_shm(display, &shm);
+	int precleared = init_sent && await_ack(&worker, INIT_PANEL) == 0;
+	if (marker && profile)
+		fprintf(stderr, "preclear: %s mono_us=%llu\n",
+			precleared ? "INIT_ACK" : "FALLBACK_RESET", (unsigned long long)now_us());
+	if (marker && !precleared) {
+		stop_worker(&worker);
+		if (start_worker(&worker, argv[1]))
+			return EXIT_FAILURE;
+	}
 	if (profile)
 		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f fast=%s\n",
                 shm.shmaddr ? "MIT-SHM" : "XGetImage", profiles[selected],
@@ -930,9 +925,7 @@ int main(int argc, char **argv)
 	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
 	unsigned int cleanup_count = 0;
 	uint64_t last_damage = 0, pending_since = 0, next_capture = 0, layout_until = 0;
-	uint64_t damage_seen = 0, inflight_since = 0;
-	uint8_t inflight = 0;
-	int prefetched = 0;
+	uint64_t damage_seen = 0;
 
 	for (;;) {
 		XEvent event;
@@ -954,7 +947,7 @@ int main(int argc, char **argv)
 			focus_changed = 0;
 		}
 		int pointer_changed = 0;
-		for (nfds_t i = 1; i < worker_index; i++)
+		for (nfds_t i = 1; i < source_count; i++)
 			if (sources[i].fd >= 0)
 				pointer_changed |= handle_buttons(display, root, keyboard, sources[i].fd, &controls);
 		uint64_t now = now_us();
@@ -967,43 +960,13 @@ int main(int argc, char **argv)
 			/* Retain the old cursor rectangle across the layout debounce. */
 			dirty = 1;
 		}
-		/* ACK is handled by the event loop, so input stays live while the
-		 * worker transmits slow physical scanout frames. */
-		short worker_events = sources[worker_index].revents;
-		if (worker_events & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) {
-			if (!inflight || (worker_events & (POLLERR | POLLHUP | POLLNVAL)) ||
-			    complete_async(&worker, inflight))
-				goto recover_worker;
-			if (profile)
-				fprintf(stderr, "x11-epd: completed=%c ipc_update_us=%llu\n",
-					inflight, (unsigned long long)(now_us() - inflight_since));
-			acknowledge(inflight, worker.frame, frame, previous);
-			if (!has_frame) {
-				FILE *ready = fopen(argv[2], "w");
-				if (!ready)
-					goto failed;
-				fputs("ready\n", ready);
-				if (fclose(ready))
-					goto failed;
-			}
-			has_frame = 1;
-			failures = 0;
-			pending_since = now_us();
-			inflight = 0;
-			sources[worker_index].events = 0;
-			sources[worker_index].revents = 0;
-		}
-		/* Only the submitted shared buffer is frozen during scanout.
-		 * The independent desired frame can be refreshed from XDamage
-		 * while the worker is busy, then reconciled with its ACK. */
-		if (!inflight && (!has_frame || controls.clean_requested))
+		/* Force a fresh grab on a manual reset, including after a failed update. */
+		if (!has_frame || controls.clean_requested)
 			dirty = 1;
 
 		struct capture_stats stats = {0};
-		uint64_t capture_start = now, damage_wait = 0;
-		int captured = inflight ? 0 : prefetched;
-		if (!inflight)
-			prefetched = 0;
+		uint64_t capture_start = now, damage_wait = 0, ack = 0;
+		int captured = 0;
 		if ((dirty || !damage) && now >= next_capture && now >= layout_until) {
 			struct rect areas[MAX_REGIONS];
 			int count = damage ? damage_regions(display, damage, region, offset, areas) : 0;
@@ -1014,29 +977,23 @@ int main(int argc, char **argv)
 			if (controls.pointer_visible) {
 				struct rect next = pointer_rect(display, root, offset);
 				struct rect area = clipped(united(pointer, next), 0);
-				if (nonempty(area))
-					add_damage_rect(areas, &count, area);
+				if (nonempty(area) && count < MAX_REGIONS)
+					areas[count++] = area;
+				else if (nonempty(area))
+					areas[0] = united(areas[0], area);
 				pointer = next;
 			}
 			for (int i = 0; i < count; i++)
 				if (capture(display, root, offset, areas[i], frame, pointer, controls.vertical, &stats, &shm))
 					goto failed;
-			captured |= count != 0;
+			captured = count != 0;
 			if (damage_seen)
 				damage_wait = capture_start - damage_seen;
 			damage_seen = 0;
 			dirty = 0;
 			now = now_us();
-			/* Bound background grabs to avoid competing with scanout. */
-			next_capture = now + (damage ? (inflight ? INFLIGHT_CAPTURE_US : 16000) : 250000);
+			next_capture = now + (damage ? 16000 : 250000);
 		}
-		if (stats.changed) {
-			last_damage = now;
-			if (inflight)
-				prefetched = 1;
-		}
-		if (inflight)
-			goto wait_input;
 
 		if (!has_frame && !captured)
 			goto wait_input;
@@ -1047,6 +1004,8 @@ int main(int argc, char **argv)
 				different |= dirty_tiles[y][x];
 				cleanup_count += cleanup_pixels[y][x];
 			}
+		if (stats.changed)
+			last_damage = now;
 		if (different) {
 			if (!pending)
 				pending_since = now;
@@ -1077,23 +1036,49 @@ int main(int argc, char **argv)
             command = PREVIEW_A2;
         uint64_t submit_start = now_us();
 		if (changes) {
-			if (submit_async(&worker, command))
-				goto recover_worker;
-			inflight = command;
-			inflight_since = now_us();
-			sources[worker_index].events = POLLIN;
-			/* Preserve any new manual cleanup requested while this is running. */
-			if (command == RESET)
-				controls.clean_requested = 0;
+			uint8_t wire = command;
+			if (precleared && !has_frame && command == RESET && !controls.clean_requested)
+				wire = CLEAN;
+			precleared = 0;
+			if (profile && !has_frame)
+				fprintf(stderr, "preclear: first wire=%c mono_us=%llu\n", wire, (unsigned long long)now_us());
+			if (submit(&worker, wire)) {
+				stop_worker(&worker);
+				if (++failures >= 3)
+					return EXIT_FAILURE;
+				has_frame = 0;
+				controls.clean_requested = 1;
+				sleep(1);
+				if (start_worker(&worker, argv[1]))
+					return EXIT_FAILURE;
+				continue;
+			}
+			if (profile)
+				ack = now_us();
+			acknowledge(command, worker.frame, frame, previous);
+			if (!has_frame) {
+				FILE *ready = fopen(argv[2], "w");
+				if (!ready)
+					goto failed;
+				fputs("ready\n", ready);
+				if (fclose(ready))
+					goto failed;
+			}
+			has_frame = 1;
+			failures = 0;
+			controls.clean_requested = 0;
+			/* Bound gray-only starvation from the last visible progress. */
+			pending_since = now_us();
 		}
 		if (profile && (captured || changes))
-			fprintf(stderr, "x11-epd: queued=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu submit_us=%llu capture_to_submit_us=%llu damage_wait_us=%llu\n",
+			fprintf(stderr, "x11-epd: mode=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu ipc_update_us=%llu total_us=%llu capture_mono_us=%llu damage_wait_us=%llu ack_mono_us=%llu\n",
 				command ? command : '-', stats.pixels, changes,
 				(unsigned long long)stats.read_us, (unsigned long long)stats.quant_us,
 				(unsigned long long)(submit_start - prepare_start),
-				(unsigned long long)(now_us() - submit_start),
+				(unsigned long long)(changes ? now_us() - submit_start : 0),
 				(unsigned long long)(now_us() - capture_start),
-				(unsigned long long)damage_wait);
+				(unsigned long long)capture_start, (unsigned long long)damage_wait,
+				(unsigned long long)ack);
 		if (changes || command == SETTLE)
 			continue; /* Discard intermediate frames and consume accumulated damage. */
 
@@ -1102,7 +1087,7 @@ wait_input:
 		uint64_t deadline = UINT64_MAX;
 		if (dirty || !damage)
 			deadline = next_capture > layout_until ? next_capture : layout_until;
-		if (!inflight && (pending || cleanup_count) && has_frame && !dirty) {
+		if ((pending || cleanup_count) && has_frame && !dirty) {
 			uint64_t settle = last_damage + (pending ? QUIET_US : cleanup_delay(cleanup_count));
 			if (settle < layout_until)
 				settle = layout_until;
@@ -1122,34 +1107,12 @@ wait_input:
 		const short disconnected = POLLERR | POLLHUP | POLLNVAL;
 		if (sources[0].revents & disconnected)
 			goto failed;
-		for (nfds_t i = 1; i < worker_index; i++) {
+		for (nfds_t i = 1; i < source_count; i++) {
 			if (sources[i].revents & disconnected) {
 				close(sources[i].fd);
 				sources[i].fd = -1;
 			}
 		}
-		continue;
-
-recover_worker:
-		/* Failed completion invalidates physical history; force INIT+GC16. */
-		stop_worker(&worker);
-		if (++failures >= 3)
-			return EXIT_FAILURE;
-		inflight = 0;
-		prefetched = 0;
-		has_frame = 0;
-		pending = 0;
-		pending_since = 0;
-		dirty = 1;
-		controls.clean_requested = 1;
-		next_capture = layout_until = 0;
-		sleep(1);
-		if (start_worker(&worker, argv[1]))
-			return EXIT_FAILURE;
-		sources[worker_index].fd = worker.socket;
-		sources[worker_index].events = 0;
-		sources[worker_index].revents = 0;
-		continue;
 	}
 
 failed:

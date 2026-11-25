@@ -6,6 +6,10 @@ on:
     paths:
       - '.github/workflows/restore.yml'
       - 'scripts/restore/**'
+  pull_request:
+    paths:
+      - '.github/workflows/restore.yml'
+      - 'scripts/restore/**'
   workflow_dispatch:
 
 permissions:
@@ -56,15 +60,18 @@ jobs:
             [void][System.Management.Automation.Language.Parser]::ParseFile(
               "$PWD/scripts/restore/Restore-PB626Fast.ps1", [ref]$tokens, [ref]$errors)
             if ($errors) { $errors; exit 1 }
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              "$PWD/scripts/restore/Backup-PB626Fast.ps1", [ref]$tokens, [ref]$errors)
+            if ($errors) { $errors; exit 1 }
           '
       - name: Package fast restore
         run: |
           mkdir dist
-          cp scripts/restore/{Restore-PB626Fast.ps1,pb626-restore-fast.sh} dist/
+          cp scripts/restore/{Backup-PB626Fast.ps1,Restore-PB626Fast.ps1,pb626-restore-fast.sh,README.md} dist/
           gzip -n -9 -c pb626-restore-scan >dist/pb626-restore-scan.gz
           (cd dist && sha256sum pb626-restore-scan.gz >SHA256SUMS.fast)
       - uses: actions/upload-artifact@v4
         with:
-          name: pb626-fast-restore
+          name: pb626-emmc-tools
           path: dist/
           if-no-files-found: error
