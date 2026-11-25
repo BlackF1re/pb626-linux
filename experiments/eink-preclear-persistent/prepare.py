@@ -21,8 +21,8 @@ bridge=change(bridge, '\t/* Start the persistent worker before expensive gray ta
 		return EXIT_FAILURE;
 	}
 	/* Start the persistent worker before expensive gray tables and X setup. */''')
-bridge=change(bridge, '\tDisplay *display = XOpenDisplay(NULL);', '''	/* The wrapper launches us before xinit. Wait for clients to be spawned
-	 * so we cannot capture the bare root during Xorg initialization. */
+bridge=change(bridge, '\tDisplay *display = XOpenDisplay(NULL);', '''	/* The wrapper launches us before xinit. Wait for the X session handoff,
+	 * not for any particular GUI application or window to become ready. */
 	const char *marker = getenv("PB626_EPD_SESSION_STARTED");
 	uint64_t deadline = now_us() + 15000000ULL;
 	if (!marker) {
@@ -50,11 +50,7 @@ export PB626_EPD_BRIDGE_PID="$bridge_pid"
 xinit /usr/bin/pb626-xsession-preclear-persistent "$waveform" "$work/ready" --''')
 session=(v2/'xsession.original').read_text()
 session=change(session,'pb626-x11-epd "$1" "$2" &\nscreen=$!\n','')
-start=session.index('matchbox-desktop --bg')
-end=session.index('desktop=$!',start)+len('desktop=$!\n')
-desktop_launch=session[start:end]
-session=session[:start]+session[end:]
-session=change(session,'wm=$!\n','wm=$!\n'+desktop_launch)
+# Preserve the original GUI client launch order; only move EPD ownership.
 session=change(session,'''trap 'kill "$wm" "$keyboard" "$screen" "$desktop" ${panel:+"$panel"} 2>/dev/null || true' EXIT
 wait -n "$desktop" "$screen"'''.replace('\\$','$'),'''watcher=
 trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${watcher:+"$watcher"} 2>/dev/null || true' EXIT
