@@ -41,8 +41,7 @@ A non-persistent attempt to run a temporary `/tmp/calibrate` script via
 **not reproduced on this firmware**. This does not establish that other
 root-access approaches work or fail.
 
-Privileged access remains unverified. Do not attempt raw-device backup or
-firmware changes until the privilege and recovery paths are understood.
+These observations describe the original unprivileged stock session. A separate FEL RAM recovery path was subsequently established; no stock privilege escalation is needed to back up the reader.
 The kernel reports `force_ro=1` on both eMMC hardware boot devices. This is a software read-only safeguard, not evidence
 that the contents are immutable or that the active boot source is known.
 
@@ -59,78 +58,74 @@ The stock firmware uses a vendor framebuffer; no `/dev/eink-panel` node was
 observed. This says nothing about whether a replacement kernel can expose the
 out-of-tree E Ink API.
 
-## Revision and mainline compatibility
 
-- The upstream PocketBook Touch Lux 3 device tree enables a non-removable
-  `mmc2` and marks I2C2 as containing the touchscreen, but **does not**
-  instantiate a touchscreen child device:
-  https://code.googlesource.com/linux/torvalds/linux/+/refs/heads/master/arch/arm/boot/dts/allwinner/sun5i-a13-pocketbook-touch-lux-3.dts
-- Community evidence associates ELAN KTF2K with later PB626 revisions
-  (v1.9/v2.1), in contrast with early Cypress/FocalTech boards. This is a
-  useful hypothesis, **not a verified PCB version**:
-  https://www.mobileread.com/forums/showthread.php?p=4526183
-- The generic upstream `elants_i2c` driver exists, but compatibility with
-  this vendor `elan-ktf2k` controller, power sequencing, GPIO reset/IRQ,
-  calibration and runtime suspend remains unverified:
-  https://github.com/torvalds/linux/blob/master/drivers/input/touchscreen/elants_i2c.c
+## Board wiring and revisions
 
-Do not silently select early-revision Cypress-specific configuration for
-this hardware. First obtain a board revision, touchscreen pinout and a boot
-log from the replacement kernel when non-destructive booting becomes possible.
+The vendor image (kernel 3.0.8) has a single FEX covering several hardware
+revisions. Its ctp_name=ft5x_ts at I2C2 0x24 is NOT the actual touchscreen on
+every unit: p7/etc/init.d/rcS chooses a driver by hwconfig.app device_touchpanel.
 
-## Additional non-privileged storage findings
+| Stock touch type | Factory module | FEL board variant | New kernel status |
+| --- | --- | --- | --- |
+| 8: ELAN eKTF2227, I2C2 0x15 (observed late eMMC board) | ektf2k_elan.ko | elan-display / elan-emmc-native | Native port uses patched eKTF2227 protocol; hardware touch verified |
+| 18: FocalTech FT5X / XC3 | ft5x_xc3.ko | not supported by current build | Experimental EDT FT5206 binding |
+| 19: Cypress TMA4 / XD4, 0x24 | cyttsp4.ko | not supported by current build | Megi's original early-board configuration |
+| unknown | none | not a separate build | Safe fallback with touch absent |
 
-On stock firmware, `/dev/mmcblk0` is a block node owned by `root:disk`
-with mode `0660`. The KOReader SSH account `reader` does not have that
-group, so the available `/bin/dd` cannot normally read the entire eMMC
-through this account.
+Common hardware from Megi DTS and the factory FEX:
 
-The kernel reports `mmcblk0boot0` and `mmcblk0boot1` under sysfs and
-`force_ro=1` for both, but their `/dev` nodes are absent. This is an
-incomplete userspace device-node setup, not evidence that the two eMMC
-hardware boot areas are missing. A complete backup will need to account
-for both areas after obtaining controlled privileged access.
+| Device | Interface / GPIO | Linux support target |
+| --- | --- | --- |
+| Allwinner A13, 256 MiB | sun5i | CPU, DMA, CCU, regulators |
+| External microSD | MMC0 PF0–PF5, PG0 card detect, PE4 active-low power | MMC sunxi; clock capped 12 MHz due to observed I/O stalls |
+| Internal eMMC (late), internal SD (early) | MMC2 PC6–PC11 | disabled in display RAM; enabled read-only in recovery; native root on MMC2 |
+| ED060XD4-family 1024x758 E Ink | DEBE/TCON0 and PD GPIOs | Megi sun5i-eink V4L2 /dev/video0 |
+| Panel power | TPS65185 I2C1 0x68, PD18 wake, PD19 VCOM, PE7 power, PE6 good | TPS65185 regulator |
+| Panel waveform storage | SPI2 MX25U4033, PE0–PE3; vendor /boot/*.wbf | factory default.wbf supplied offline; no SPI writes |
+| Touch input | I2C2 PB17/PB18, IRQ PG11, reset PB3, enable PE5 | patched ELAN eKTF2227 |
+| Frontlight | PB2 PWM0, PB4 enable | pwm-backlight |
+| Keys | GPIO PG9/PG10, LRADC Home/Menu | gpio-keys, sun4i-lradc-keys |
+| Power LED | PE8 | gpio-leds |
+| Main PMIC | AXP209 I2C0 0x34 | axp20x, battery and charging |
+| RTC | PCF8563 I2C1 0x51 | rtc-pcf8563 |
+| Wi-Fi | RTL8188EUS, internal USB host (VID 0bda PID 8179 on early board) | EHCI/OHCI, rtl8xxxu; firmware loading observed |
+| USB gadget | OTG MUSB, serial CDC ACM | FEL RAM rescue and COM |
 
-No UART or case disassembly is permitted for this device. Alternative
-recovery via USB/FEL must be verified on the specific unit before any
-storage or bootloader write. FEL access does not on its own guarantee
-recovery of all eMMC areas.
+ELAN VCOM: factory /boot/vcom of this specific unit is -2440 mV.
+The Megi TPS65185 driver takes a positive magnitude, so only the ELAN
+variant overrides its voltage to 2440000 microvolts. Other revisions MUST
+use their own measured panel values. Incorrect panel voltage or waveforms
+can damage the display. Never embed factory waveform files, host SSH keys,
+MMC IDs or user settings in the public repository.
 
-The `ezdiy/pbjb` v8 maintainer lists PB626 Touch Lux 3 as tested. Its
-`@Jailbreak` option provides a route to root on compatible firmware
-without installing the optional services bundle, but modifies persistent
-`/mnt/secure` state and has **not been run on this device**:
-https://www.mobileread.com/forums/showthread.php?t=325185
 
-## Firmware downgrade decision
+Stock firmware version U626.5.20.1157. The older sudo calibrate proof did
+not work on this unit. PBJB v8 compatibility was reported by other users,
+not verified here. No downgrade or stock jailbreak is required for our FEL
+recovery workflow. Stock firmware signed updates and revision gating are
+independent of the modern Linux port. See [factory boot chain](STOCK-BOOT-CHAIN.md).
 
-A downgrade to an older stock release is not an acceptable first root-access
-step while no complete recovery image exists. Later 626 board revisions
-(including ELAN touch/eMMC variants) may be incompatible with older images.
-A documented 2018 attempt on PCB 2.1 was rejected with
-`Downgrade to 5.14.1226 for PCB 2.1 disabled`:
-https://4pda.to/forum/index.php?showtopic=538665&st=6620
+## Current hardware validation
 
-Stock firmware packages are signed, and both revision gating and touchscreen
-support must be established for the exact board before any update attempt:
-https://www.synacktiv.com/en/publications/e-ink-maiden-bring-your-reader-to-the-reverser.html
+- Late ELAN/eMMC: autonomous native Linux boot and USB ACM console verified.
+- ED060XD4: monochrome, grayscale and partial updates verified with the
+  original waveform and 2440000 uV VCOM magnitude. Manual refresh and touch
+  verified on Preclear v1; final consolidated build still needs its own test.
+- Frontlight: off and two brightness levels verified. PB4 enable is active
+  high; keep PB2 disconnected from PWM while off. Stock PG1 VBUS sensing
+  works under vendor Linux; modern MUSB enumerated after removing that GPIO
+  from the peripheral-only DTB. This does not establish that PG1 is miswired.
+- Wi-Fi: RTL8188EU VID:PID 0bda:8179; rtl8xxxu loaded uncompressed
+  rtl8188eufw.bin revision 28.0 and created wlan0. Full networking and
+  suspend/resume acceptance is incomplete.
+- AXP209 battery/USB voltage/current and capacity exported; charger-only
+  boot and suspend/resume not validated.
+- External microSD I/O previously stalled; independent SD recovery failed.
+  Current build disables MMC0. No independent recovery if SPL cannot enter FEL.
+- GPU/Lima remains disabled in userspace; a separate experimental session
+  had display/touch failures without established cause.
 
-The 2018 temporary `calibrate` sudo proof of concept was already attempted
-on this device and denied by sudoers. Rolling back for that particular proof
-of concept is speculative; do not use it as a recovery or root plan.
-
-Preferred next step: preserve user-accessible data, confirm firmware version,
-inspect the PBJB v8 release and installer source, and assess its persistent
-`/mnt/secure/runonce` changes before any on-device installation. The PBJB
-maintainer lists Touch Lux 3 as supported, but has not verified this unit:
-https://www.mobileread.com/forums/showthread.php?t=325185
-
-## Next inspection (read-only)
-
-Via the established KOReader SSH connection, check the account privilege
-level, MMC media type, boot-area config and which volumes are mounted.
-Do not dump MMC CID/CSD, serials, MAC addresses, authentication data or
-complete kernel logs into a public repository.
-
-No image should be flashed until the boot chain and a verified recovery path
-are documented. Restoring only `mmcblk0p1` is not an adequate factory backup.
+Sources: https://linux-sunxi.org/PocketBook_Touch_Lux_3 ,
+https://github.com/pocketbook/Platform_A13 ,
+Megi board DTS pinned in the build workflow. The old Megi 5.9 tree
+e98db7f114d7602c6b847d76e183787f0c97cf5b is historical, not a build input.
