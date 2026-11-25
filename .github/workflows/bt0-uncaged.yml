@@ -7,10 +7,6 @@ on:
         description: "Exact original 24576-byte PB626 SPL (base64, no line breaks)"
         required: true
         type: string
-      draft_release:
-        description: "Create a draft release (manual publication only)"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -39,38 +35,12 @@ jobs:
           mkdir -p dist
           python3 BT0-uncaged/build.py "$RUNNER_TEMP/base-spl.bin" dist/BT0-uncaged.bin
           python3 BT0-uncaged/test_hook.py dist/BT0-uncaged.bin
-          sh -n BT0-uncaged/stage.sh
-          cp BT0-uncaged/{stage.sh,Install-BT0.ps1,transport.ps1,README.md} dist/
+          cp BT0-uncaged/README.md dist/
           cp BT0-uncaged/{build.py,early-menu.S,test_hook.py,pack-kernel.py,kernel-entry.S} dist/
-          (cd dist && sha256sum BT0-uncaged.bin stage.sh Install-BT0.ps1 transport.ps1 README.md build.py early-menu.S test_hook.py pack-kernel.py kernel-entry.S > SHA256SUMS)
+          (cd dist && sha256sum BT0-uncaged.bin README.md build.py early-menu.S test_hook.py pack-kernel.py kernel-entry.S > SHA256SUMS)
           (cd dist && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: BT0-uncaged
           path: dist/
           if-no-files-found: error
-  draft-release:
-    if: inputs.draft_release && github.ref == 'refs/heads/main'
-    needs: build
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: BT0-uncaged
-          path: dist/
-      - name: Prepare fixed-name draft release (never overwrite existing release)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          (cd dist && sha256sum -c SHA256SUMS && zip -q ../BT0-uncaged.zip *)
-          if gh release view BT0-uncaged >/dev/null 2>&1; then
-            echo "Release already exists; refusing to replace its assets. Use the build artifact."
-            exit 1
-          fi
-          gh release create BT0-uncaged BT0-uncaged.zip \
-            --target "$GITHUB_SHA" --title BT0-uncaged --draft --latest=false \
-            --notes "Hardware-validated primary SPL. Before publishing, supply corresponding U-Boot source and build information and retain the documented hardware validation and recovery limitations. See included README."

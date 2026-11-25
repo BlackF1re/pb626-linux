@@ -34,14 +34,13 @@ test -s "$firmware"
 echo "RTL8188EU uncompressed firmware staged: $(stat -c '%s' "$firmware") bytes"
 
 sudo install -d rootfs/sbin rootfs/usr/sbin rootfs/etc
-sudo install -m 755 boot/pb626-init-megi rootfs/sbin/pb626-init
 sudo install -m 755 scripts/inspect-live.sh rootfs/usr/sbin/inspect-pb626
 sudo install -m 755 scripts/pb626-network.sh rootfs/usr/sbin/pb626-network
 sudo install -m 755 pb626-epd rootfs/usr/bin/pb626-epd
-printf 'pb626-external-alpine-v1\n' | sudo tee rootfs/etc/pb626-image-id > /dev/null
+printf 'pb626-ram-alpine-v1\n' | sudo tee rootfs/etc/pb626-image-id > /dev/null
 
 sudo cp -a rootfs/. initramfs/
-sudo install -d initramfs/usr/sbin initramfs/newroot initramfs/sys/kernel/config
+sudo install -d initramfs/usr/sbin initramfs/sys/kernel/config
 sudo install -m 755 boot/init-megi initramfs/init
 sudo install -m 755 scripts/inspect-live.sh initramfs/usr/sbin/inspect-pb626
 sudo install -m 755 scripts/probe-device.sh initramfs/usr/sbin/probe-pb626
@@ -87,8 +86,6 @@ for dtb in dist/pb626-*.dtb; do
   test "$(fdtget -t x "$dtb" /backlight default-brightness-level)" = 0
 done
 
-sudo tar --numeric-owner -C rootfs -czf dist/pb626-megi-rootfs.tar.gz .
-cp kernel-stage/kernel-modules.tar.gz dist/pb626-megi-modules.tar.gz
 sudo chown -R "$USER:$USER" dist
 gzip -t dist/pb626-megi-initramfs.cpio.gz
 gzip -cd dist/pb626-megi-initramfs.cpio.gz | cpio -t > dist/INITRAMFS-CONTENTS.txt 2>/dev/null
@@ -104,7 +101,8 @@ grep -F '/rtl8xxxu.ko' dist/INITRAMFS-CONTENTS.txt >/dev/null
 grep -F 'lib/modules/' dist/INITRAMFS-CONTENTS.txt >/dev/null
 rm dist/INITRAMFS-CONTENTS.txt
 
-(cd dist && sha256sum pb626-megi-zImage pb626-native-zImage *.dtb *.gz *.config uapi/linux/sun5i-eink.h > SHA256SUMS)
+cp scripts/{Start-PB626.ps1,fel-boot.sh} dist/
+(cd dist && sha256sum pb626-megi-zImage pb626-native-zImage *.dtb *.gz *.config KERNELRELEASE KERNEL-SOURCE.txt uapi/linux/sun5i-eink.h Start-PB626.ps1 fel-boot.sh > SHA256SUMS)
 cat > dist/README.txt <<'NOTE'
 PB626 ELAN/eMMC: elan-display is RAM-only; elan-emmc-backup is read-only recovery.
 elan-emmc-native is for offline native image construction ONLY, never FEL RAM.
@@ -112,6 +110,5 @@ Use matching kernel, modules, DTB and checksums. See repository README.
 NOTE
 test -s dist/pb626-megi-zImage
 test -s dist/pb626-megi-initramfs.cpio.gz
-test -s dist/pb626-megi-rootfs.tar.gz
 test -s dist/KERNEL-SOURCE.txt
 echo 'FULL RAM BUNDLE VERIFIED'

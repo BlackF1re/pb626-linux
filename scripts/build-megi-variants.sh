@@ -19,7 +19,7 @@ trap 'cp "$original" "$src"; rm -f "$original"' EXIT
 mkdir -p "$out"
 for variant in elan-display elan-emmc-backup elan-emmc-native; do
   cp "$original" "$src"
-  cat "$repo/board/megi/common-sd.fragment" >> "$src"
+  cat "$repo/board/megi/common.fragment" >> "$src"
   case "$variant" in
     elan-display|elan-emmc-native)
       for fragment in elan elan-display elan-ektf2227; do
@@ -28,12 +28,12 @@ for variant in elan-display elan-emmc-backup elan-emmc-native; do
       if [[ $variant == elan-emmc-native ]]; then cat "$repo/board/megi/elan-emmc-native.fragment" >> "$src"; fi
       ;;
     elan-emmc-backup)
-      for fragment in elan elan-usbtest elan-emmc-backup; do
+      for fragment in elan elan-emmc-backup; do
         cat "$repo/board/megi/$fragment.fragment" >> "$src"
       done
       ;;
     *)
-      cat "$repo/board/megi/$variant.fragment" >> "$src"
+      exit 2
       ;;
   esac
   # Built-in driver must not probe non-display RAM or recovery variants.
@@ -57,7 +57,7 @@ for dtb in "$out"/pb626-*.dtb; do
       ;;
     pb626-elan-display.dtb) sd_status=disabled ;;
     pb626-elan-emmc-native.dtb) emmc_status=okay; sd_status=disabled; fdtget "$dtb" /chosen pb626,emmc-root >/dev/null ;;
-    *) sd_status=okay ;;
+    *) exit 2 ;;
   esac
   test "$(fdtget -t s "$dtb" '/soc/mmc@1c11000' status)" = "$emmc_status"
   test "$(fdtget -t s "$dtb" '/soc/mmc@1c0f000' status)" = "$sd_status"

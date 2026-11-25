@@ -1,4 +1,4 @@
-/* Development boot via FEL into RAM. Never enumerate factory eMMC/MMC2. */
+/* Common memory and safe storage defaults; native/recovery explicitly enable MMC2. */
 
 /*
  * The Megi board DTS does not declare system RAM. U-Boot normally patches
@@ -13,7 +13,7 @@
   };
 };
 
-&mmc0 { max-frequency = <12000000>; };
+&mmc0 { status = "disabled"; };
 &mmc2 { status = "disabled"; };
 /* Do not illuminate the panel at first boot. */
 &{/backlight} {

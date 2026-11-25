@@ -1,12 +1,12 @@
 #!/bin/sh
-# Alpine userspace for FEL and installed Linux.
+# Alpine RAM userspace for FEL desktop and recovery.
 set -u
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin HOME=/root TERM=vt100
 # The RAM PID 1 enters BusyBox ash directly, without a login session.
 # Set a clear interactive prompt and board identity for the USB shell.
 hostname pb626 2>/dev/null || true
 export PS1='\u@\h:\w\$ '
-mkdir -p /dev /proc /sys /run /newroot
+mkdir -p /dev /proc /sys /run
 mount -t proc proc /proc || exit 1
 grep -q ' /dev devtmpfs ' /proc/mounts || mount -t devtmpfs devtmpfs /dev || exit 1
 mount -t sysfs sysfs /sys || exit 1
@@ -20,7 +20,7 @@ log() {
 }
 chosen=/sys/firmware/devicetree/base/chosen
 boot_source=RAM
-[ ! -f "$chosen/pb626,emmc-root" ] || boot_source=eMMC
+[ ! -f "$chosen/pb626,emmc-root" ] || exit 1
 log "$boot_source Linux reached PID 1, kernel $(uname -r)"
 # PE8 LED gives read-only boot status without UART/USB. Do not touch
 # other GPIOs or eMMC. Linux triggers are implemented by the kernel.
@@ -51,7 +51,6 @@ for bl in /sys/class/backlight/*; do
   fi
   log "frontlight-off attempted: $bl brightness=$(cat "$bl/brightness" 2>/dev/null) power=$(cat "$bl/bl_power" 2>/dev/null)"
 done
-unsafe=0
 emmc_backup=0
 if [ -f "$chosen/pb626,emmc-backup" ]; then
   emmc_backup=1
@@ -76,25 +75,22 @@ if [ -f "$chosen/pb626,emmc-backup" ]; then
     log "eMMC backup: /dev/$emmc and its block partitions are read-only"
   else
     log "eMMC backup: MMC2 card did not enumerate"
+    exit 1
   fi
 elif [ "$boot_source" = RAM ]; then
   for type in /sys/block/mmcblk*/device/type; do
     [ -r "$type" ] || continue
     if [ "$(cat "$type")" = MMC ]; then
-      unsafe=1
       log "SAFETY ERROR: MMC-type device visible: $type"
+      exit 1
     fi
   done
 fi
 # Modules are included in RAM, so no SD card is required for any driver.
 if [ -d "/lib/modules/$(uname -r)" ]; then
-  for module in rtl8xxxu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
+  for module in rtl8xxxu elants_i2c; do
     modprobe "$module" 2>/dev/null || true
   done
-  if [ -f /sys/firmware/devicetree/base/chosen/pb626,display-bringup ]; then
-    # E Ink is built in; its probe is controlled by the DTB status.
-    (modprobe lima || log "failed to load lima") &
-  fi
 fi
 # Distinct PE8 patterns after the first 30 seconds:
 # 100ms on / 900ms off: no UDC controller registered.
@@ -178,50 +174,6 @@ if mount -t configfs configfs /sys/kernel/config 2>/dev/null ||
 else
   log "CONFIGFS mounting FAILED"
   led_pattern 300 700
-fi
-# Never auto-probe removable storage. A future persistent rootfs can be
-# selected by the explicit pb626.root=sd kernel command-line argument.
-external=0
-for arg in $(cat /proc/cmdline); do
-  [ "$arg" = pb626.root=sd ] && external=1
-done
-if [ "$external" = 1 ] && [ "$unsafe" = 0 ] && [ "$emmc_backup" = 0 ]; then
-  log "Opt-in external removable SD root requested"
-  (
-    n=0
-    while [ "$n" -lt 10 ]; do
-      for sysdev in /sys/block/mmcblk*; do
-        [ -r "$sysdev/device/type" ] || continue
-        [ "$(cat "$sysdev/device/type")" = SD ] || continue
-        [ "$(cat "$sysdev/removable" 2>/dev/null)" = 1 ] || continue
-        dev=/dev/${sysdev##*/}p1
-        [ -b "$dev" ] || continue
-        if mount -t ext4 -o ro,noload "$dev" /newroot; then
-          if [ "$(cat /newroot/etc/pb626-image-id 2>/dev/null)" = pb626-external-alpine-v1 ] &&
-             [ -x /newroot/sbin/pb626-init ]; then
-            touch /run/pb626-root-ready
-            exit 0
-          fi
-          umount /newroot || true
-        fi
-      done
-      n=$((n + 1))
-      sleep 1
-    done
-  ) >/run/pb626-sd.log 2>&1 &
-  n=0
-  while [ "$n" -lt 15 ]; do
-    [ -f /run/pb626-root-ready ] && break
-    n=$((n + 1))
-    sleep 1
-  done
-  if [ -f /run/pb626-root-ready ]; then
-    log "Switching to verified read-only removable rootfs"
-    for fs in dev proc sys; do mount -o move "/$fs" "/newroot/$fs"; done
-    mount -o move /run /newroot/run
-    exec switch_root /newroot /sbin/pb626-init
-  fi
-  log "External root not available; retaining full RAM root"
 fi
 log "$boot_source Linux userspace initialized; waiting for gadget UDC"
 # Optional per-boot private WLAN configuration. No Wi-Fi credentials
