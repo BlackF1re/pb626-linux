@@ -7,3 +7,15 @@ Original archive payload SHA256: `4241d9b535068bceeed59d73bd5e78d2d0a7a3d545f2c1
 Extract kernel from original payload at offset 0x418 up to 0x740724, DTB from 0x740724 to EOF. SHA256 of padded kernel: `f7bf4f5aa3b260892d4dd84bb480a9c57c8b58886fa37df0ce9bbe7ad322f376`; padded DTB: `351d15522cb4bdbca2b2edc14a64e2c48396810cf882279fa51eff302a75e958`. Build in a directory containing source, payload-check.inc, kernel.bin, board.dtb using `clang --target=armv7a-none-eabi -c pb626-native-entry-v3.S -o entry.o` and `ld.lld -Ttext=0x40008000 --oformat=binary entry.o -o pb626v3.bin`. Exact reproduction verified locally. Do not commit proprietary factory dumps.
 
 DTB currently requests init=/sbin/init; prior direct FEL test used /sbin/pb626-emmc-init. Verify installed p1 before changing. Read AXP209 register 0x0e before resetting marker. Keep BT0/BT1, boot.axf and partition geometry untouched.
+
+## Hardware readback, 2026-11-25
+
+Active v3 matches SHA256. AXP209 0x0e remains 0x80; no USB enumeration. Installed p1 uses BusyBox /sbin/init with /etc/inittab and pb626-native-setup, -desktop and -console. /sbin/pb626-emmc-init does NOT exist. Keep DTB init=/sbin/init; do not use the older init-path experiment.
+
+## v4 experiments
+
+Run `python3 scripts/build-native-v4.py pb626-v3-diagnostic.zip out` with clang/ld.lld. Both retain exact v3 kernel and DTB on disk. Clean has no TWI or kernel probe; 3+5 pulses occur before entering original zImage. Stages patches six verified instructions after RAM copy, uses GPIO-only relocated code at 0x45fff000, with separate pulse groups 3 (wrapper), 4 (head), 5 (before cache), 6 (after cache call), 7 (before decompress), 8 (after decompress), 9 (before Image handoff). Hooked variant is diagnostic only; possible perturbation remains. Test exact v3 then clean via FEL before any cold test. Confirm final rootfs with mountinfo and USB. Preserve factory data.
+
+Gapped build hashes (local Clang/LLD):
+- clean: c63321916c2640dbea9f101bb9f94e79d777cbb2841a4e7997a76d78a71e805e
+- stages: 36f07592570a6eec37ef7aaad63d8f21b39a638decac25a85d0b22805e1166fb
