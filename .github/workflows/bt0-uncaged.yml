@@ -73,4 +73,4 @@ jobs:
           fi
           gh release create BT0-uncaged BT0-uncaged.zip \
             --target "$GITHUB_SHA" --title BT0-uncaged --draft --latest=false \
-            --notes "Hardware-validated primary SPL. Before publishing, supply corresponding U-Boot source and build information and verify cold eMMC boot of the fast kernel wrapper. See included README."
+            --notes "Hardware-validated primary SPL. Before publishing, supply corresponding U-Boot source and build information and retain the documented hardware validation and recovery limitations. See included README."

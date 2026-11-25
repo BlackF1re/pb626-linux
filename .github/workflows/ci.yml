@@ -51,3 +51,23 @@ jobs:
           shellcheck -s bash scripts/fel-boot.sh
       - name: Test hardware inventory
         run: sh tests/probe-smoke.sh
+
+  bt0-hook:
+    name: BT0-uncaged hook build and model tests (no base SPL)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM assembly tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm
+      - name: Assemble exact early Menu hook
+        run: |
+          set -euo pipefail
+          clang --target=armv7a-none-eabi -c BT0-uncaged/early-menu.S -o /tmp/menu.o
+          ld.lld -Ttext=0x5000 -e _start /tmp/menu.o -o /tmp/menu.elf
+          llvm-objcopy -O binary -j .text /tmp/menu.elf /tmp/menu.raw
+          python3 BT0-uncaged/test_hook.py --hook-only /tmp/menu.raw
+          sh -n BT0-uncaged/stage.sh
+          python3 -m py_compile BT0-uncaged/build.py BT0-uncaged/pack-kernel.py

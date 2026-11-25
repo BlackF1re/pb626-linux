@@ -7,8 +7,18 @@ from pathlib import Path
 import struct, sys, hashlib
 from itertools import product
 P=Path(__file__).resolve().parent
-BIN=Path(sys.argv[1] if len(sys.argv)>1 else P/'BT0-uncaged.bin').read_bytes()
-assert hashlib.sha256(BIN).hexdigest()=='39e4a51962e7288ddbef7dcecfbf508d43e23d3e59b2e970896dd2393f9824ae'
+# PR CI can test the exact assembled hook without the unavailable base SPL.
+if len(sys.argv)==3 and sys.argv[1]=='--hook-only':
+    hook=Path(sys.argv[2]).read_bytes()
+    assert len(hook)==0x458 and hashlib.sha256(hook).hexdigest()=='67c152443fc89a48b65b535c3e8bdb21752b8fe3a96ab106bf948dacab2a96da'
+    fixture=bytearray(0x6000)
+    struct.pack_into('<I',fixture,0xa4,0xea0013d5)
+    fixture[0x5000:0x5458]=hook
+    BIN=bytes(fixture)
+else:
+    BIN=Path(sys.argv[1] if len(sys.argv)>1 else P/'BT0-uncaged.bin').read_bytes()
+    assert hashlib.sha256(BIN).hexdigest()=='1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6'
+assert struct.unpack_from('<I',BIN,0x5060)[0]==0xe3a08702
 ADC=0x01c22800; REPORT=0x5400; MASK=0xffffffff
 
 def run(samples, *, fel=False, high=True, lr=None, events=0):
@@ -92,7 +102,7 @@ def run(samples, *, fel=False, high=True, lr=None, events=0):
             else:raise AssertionError(hex(w))
             if op not in (8,10):r[d]=val&MASK
             if w&0x00100000 or op in (8,10):flags(val,a,b) if op in (2,10) else flags(val)
-            if pc==0x5060:r[8]=3 # model shortcut, real image has 0x800000
+            if pc==0x5060:r[8]=3 # model shortcut, real image has 0x80000
         else:raise AssertionError(hex(w))
         r[15]=nxt&MASK
     assert (ctrl,intc)==old and r[4:10]==original[4:10] and r[13]==original[13] and (cpsr&255)==(old_cpsr&255)

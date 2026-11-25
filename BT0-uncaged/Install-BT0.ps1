@@ -39,12 +39,13 @@ foreach ($name in $files) {
     if ((Get-Sha256 $bytes) -cne $expected[$name]) {throw "Hash mismatch: $name"}
     $data[$name]=$bytes
 }
-if ((Get-Sha256 $data['BT0-uncaged.bin']) -cne '39e4a51962e7288ddbef7dcecfbf508d43e23d3e59b2e970896dd2393f9824ae') {throw 'Not the physically validated SPL'}
+if ((Get-Sha256 $data['BT0-uncaged.bin']) -cne '1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6') {throw 'Not the physically validated SPL'}
 $serial=[IO.Ports.SerialPort]::new($Port,115200)
 $serial.ReadTimeout=1000
 $serial.WriteTimeout=15000
 $serial.DtrEnable=$true
 $serial.RtsEnable=$true
+if ([IO.Ports.SerialPort]::GetPortNames() -notcontains $Port) {throw "Port $Port unavailable. Check USB ACM before retrying."}
 $serial.Open()
 try {
     $serial.Write([string][char]3+[string][char]10)
@@ -62,7 +63,7 @@ try {
     }
     $marker=switch ($Mode) {
         'Status' {'PRIMARY_PREFLIGHT_OK'}
-        'Install' {'PRIMARY_V2_INSTALLED_VERIFIED'}
+        'Install' {'MENU_FAST_INSTALLED_VERIFIED'}
         'Rollback' {'FACTORY_BT0_RESTORED_VERIFIED'}
     }
     $flag=if ($Mode -eq 'Install') {' --accept-no-recovery'} else {''}

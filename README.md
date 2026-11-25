@@ -55,8 +55,10 @@ and intermediate U-Boot experiments are retired; see Git history only.
 installing BT0-uncaged on the tested device (2026-11-25). FEL version and SRAM
 reads worked; a subsequent cold FEL session with the known MMC2-safe SPL
 booted native Alpine. The fast kernel handoff (steady LED, no diagnostic delays
-or repeated hashes) also booted Alpine in a separate RAM/FEL test. It has not
-yet been installed to eMMC. The microSD recovery attempt did not work. Keep the original full eMMC
+or repeated hashes) booted Alpine in RAM/FEL and was subsequently installed and readback-verified on eMMC.
+The LRADC polling limit was reduced 16-fold; the installed revision booted to
+the desktop in about 22 seconds (previously about 69 seconds) and cold Menu FEL
+still worked on the tested board. The microSD recovery attempt did not work. Keep the original full eMMC
 and boot-region backup; a backup alone does not guarantee recovery if SPL fails.
 
 ## Verified on the physical reader

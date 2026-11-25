@@ -12,17 +12,19 @@ test "${#CID}" -eq 32
 case "$MODE" in status|install|rollback) ;; *) exit 2;; esac
 if [ "$MODE" = install ]; then test "${3:-}" = --accept-no-recovery; fi
 OLD=6a3fcb2ed0c95d01799df6c9c3e7a3e6ed1045e4028fe1164a9ba44a81b56f4f
-NEW=f1ddc645769b6db0d3da88d3510d17acd449184310a07084c23ec499bb2eabf6
-RAW=6b73744d7e3962758b93ac94030fc5910b3dcbd08b1c54d684687bcc7e4e3605
+V2=f1ddc645769b6db0d3da88d3510d17acd449184310a07084c23ec499bb2eabf6
+NEW=2673c7b186a731b8b429812f4d55340c054fbbd5c42e0582b3a06794e12e8b63
+RAW_ORIGINAL=6b73744d7e3962758b93ac94030fc5910b3dcbd08b1c54d684687bcc7e4e3605
+RAW_FAST=ff11503fa46198e1175fac659fcfaa354bc2f01fbe1861677468fc6440b9de7c
 BT1=3698c3aa4e809898bdbebd172a66b9214872235d8dc6680363335cdf29c30227
-SPL=39e4a51962e7288ddbef7dcecfbf508d43e23d3e59b2e970896dd2393f9824ae
+SPL=1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6
 check() { printf '%s  %s\n' "$1" "$2" | sha256sum -c -; }
 read_extent() {
   dd if="$DEV" of="$3" bs=512 skip="$1" count="$2"
   test "$(wc -c < "$3")" -eq "$((512 * $2))"
 }
 verify_other() {
-  read_extent 80 14894 other.bin; check "$RAW" other.bin
+  read_extent 80 14894 other.bin; check "$raw_before" other.bin
   read_extent 38192 448 other.bin; check "$BT1" other.bin
   read_extent 38704 448 other.bin; check "$BT1" other.bin
   rm -f other.bin
@@ -50,15 +52,21 @@ read_extent 0 80 live-prefix.bin
 live=$(sha256sum live-prefix.bin | cut -d' ' -f1)
 case "$live" in
   "$OLD") state=FACTORY;;
-  "$NEW") state=PRIMARY_V2;;
+  "$V2") state=PRIMARY_V2;;
+  "$NEW") state=MENU_FAST;;
   *) echo "UNEXPECTED_PREFIX $live"; exit 1;;
 esac
+read_extent 80 14894 other.bin
+raw_before=$(sha256sum other.bin | cut -d' ' -f1)
+case "$raw_before" in "$RAW_ORIGINAL"|"$RAW_FAST") ;; *) echo "UNEXPECTED_RAW $raw_before"; exit 1;; esac
 verify_other
 echo "CURRENT_BOOT_PREFIX=$state"
 if [ "$MODE" = status ]; then echo PRIMARY_PREFLIGHT_OK; exit 0; fi
 case "$MODE:$state" in
   install:FACTORY) target=BT0-uncaged.bin; want=$NEW; before=$OLD;;
-  rollback:PRIMARY_V2) target=factory-extent.bin; want=$OLD; before=$NEW;;
+  install:PRIMARY_V2) target=BT0-uncaged.bin; want=$NEW; before=$V2;;
+  rollback:PRIMARY_V2) target=factory-extent.bin; want=$OLD; before=$V2;;
+  rollback:MENU_FAST) target=factory-extent.bin; want=$OLD; before=$NEW;;
   *) echo 'Wrong starting state; nothing written'; exit 1;;
 esac
 dd if=live-prefix.bin of=before-extent.bin bs=512 skip=16 count=48
@@ -67,6 +75,7 @@ modified=0
 cleanup() {
   rc=$?
   trap - EXIT
+  trap '' HUP INT TERM
   if [ "$modified" = 1 ]; then
     echo 'WRITE_OR_VERIFY_FAILED: attempting to restore prior extent; DO NOT REBOOT'
     if dd if=before-extent.bin of="$DEV" bs=512 seek=16 count=48 conv=notrunc && sync && read_extent 0 80 restored.bin && check "$before" restored.bin; then
@@ -90,4 +99,4 @@ verify_other
 sync
 modified=0
 trap - EXIT HUP INT TERM
-if [ "$MODE" = install ]; then echo PRIMARY_V2_INSTALLED_VERIFIED; else echo FACTORY_BT0_RESTORED_VERIFIED; fi
+if [ "$MODE" = install ]; then echo MENU_FAST_INSTALLED_VERIFIED; else echo FACTORY_BT0_RESTORED_VERIFIED; fi

@@ -37,7 +37,7 @@ _start:
     mov r6,#0
     mov r7,#1
 sample:
-    mov r8,#0x800000
+    mov r8,#0x80000
 poll:
     ldr r1,[r0,#8]
     tst r1,#1

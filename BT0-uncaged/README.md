@@ -17,12 +17,14 @@ The base is U-Boot SPL, not factory BT0. Its exact upstream build tree, compiler
     python3 BT0-uncaged/build.py /path/to/pb626-spl.bin BT0-uncaged.bin
     python3 BT0-uncaged/test_hook.py BT0-uncaged.bin
 
-Output: 24576 bytes, SHA-256 39e4a51962e7288ddbef7dcecfbf508d43e23d3e59b2e970896dd2393f9824ae.
-The build verifies original patch bytes, intermediate safe SPL, eGON header/checksum and final hash. The 5249 mocked instruction tests exercise the early LRADC hook, not the entire SoC. No-event idle boot, key/partial-sample recovery, and FEL-thunk return are covered. Cold Menu-triggered FEL communication was subsequently demonstrated on hardware; the modeled paths alone do not establish why the ROM preserved or changed SRAM.
+Output: 24576 bytes, SHA-256 1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6.
+The build verifies original patch bytes, intermediate safe SPL, eGON header/checksum and final hash. The LRADC polling bound is 0x80000 per conversion, reduced from 0x800000. The ADC setup, five conversions (first discarded), decision logic, and FEL return path are unchanged. The 5249 mocked instruction tests exercise the early LRADC hook, not the entire SoC. No-event idle boot, key/partial-sample recovery, and FEL-thunk return are covered. Cold Menu-triggered FEL communication was subsequently demonstrated on hardware; the modeled paths alone do not establish why the ROM preserved or changed SRAM.
 
 The BT0-uncaged Action is manually dispatched with the exact base encoded as a single base64 string. Example with GitHub CLI on Linux/WSL, from the repository:
 
     python3 -c 'import base64,json,sys; print(json.dumps({"base_spl_b64":base64.b64encode(open(sys.argv[1],"rb").read()).decode(),"draft_release":False}))' /root/pb626-lab/pb626-spl.bin | gh workflow run bt0-uncaged.yml --json
+
+Pull-request CI independently assembles the hook and verifies its exact hash and modeled behavior without using the missing base. The complete SPL build still requires the original base input.
 
 The artifact contains the binary, installation scripts, hashes and custom source. From the extracted artifact directory, omit the BT0-uncaged/ path prefix for the Python scripts. Verify SHA256SUMS before executing any installer. Optional draft release on main uses one fixed tag BT0-uncaged; no automatic publication or overwrite, no semantic version counter. Only publish after the missing upstream source has been supplied and recovery verified.
 
@@ -32,7 +34,7 @@ SPL uses MMC2, 25 MHz, max 4096 sectors per request; reads a legacy uImage at LB
 
     python3 BT0-uncaged/pack-kernel.py zImage native.dtb raw-linux.img
 
-The exact tested kernel SHA-256 is f7bf4f5aa3b260892d4dd84bb480a9c57c8b58886fa37df0ce9bbe7ad322f376; DTB 351d15522cb4bdbca2b2edc14a64e2c48396810cf882279fa51eff302a75e958. Rebuilding the fast wrapper with these inputs yields 7625728 bytes (14894 sectors), SHA-256 ff11503fa46198e1175fac659fcfaa354bc2f01fbe1861677468fc6440b9de7c. This exact image was verified in RAM and booted Alpine Desktop on 2026-11-25. Cold eMMC boot of the fast wrapper remains to be tested. The previous diagnostic raw image, SHA-256 6b73744d7e3962758b93ac94030fc5910b3dcbd08b1c54d684687bcc7e4e3605, remains installed on the tested reader and is still required by the strict BT0 installer. A separate guarded raw-kernel updater is needed before changing that extent. This command only packs files; it does not flash a kernel or install Alpine. The full native system installer is separate unfinished work.
+The exact tested kernel SHA-256 is f7bf4f5aa3b260892d4dd84bb480a9c57c8b58886fa37df0ce9bbe7ad322f376; DTB 351d15522cb4bdbca2b2edc14a64e2c48396810cf882279fa51eff302a75e958. Rebuilding the fast wrapper with these inputs yields 7625728 bytes (14894 sectors), SHA-256 ff11503fa46198e1175fac659fcfaa354bc2f01fbe1861677468fc6440b9de7c. This exact image was verified in RAM and booted Alpine Desktop on 2026-11-25. The fast image was subsequently installed with readback verification and cold boot succeeded. The strict BT0 installer accepts only this exact raw image or the previously validated diagnostic raw image, SHA-256 6b73744d7e3962758b93ac94030fc5910b3dcbd08b1c54d684687bcc7e4e3605, and requires the raw extent to remain unchanged across the BT0 operation. This command only packs files; it does not flash a kernel or install Alpine. The full native system installer is separate unfinished work.
 
 ## Install on the previously prepared, validated board
 
@@ -44,9 +46,9 @@ Extract the verified Action artifact. From Windows PowerShell (5.1 or later) wit
     .\Install-BT0.ps1 -Mode Install -Port COM13 -ExpectedCid <CID> -FactoryBackup <original-dump> -AcceptNoRecovery
     .\Install-BT0.ps1 -Mode Status -Port COM13 -ExpectedCid <CID> -FactoryBackup <original-dump>
 
-Status is read-only for eMMC. Install requires FACTORY state, validates CID, root mount, sector/partition geometry, original prefix, exact SPL, raw kernel and both BT1 copies. It replaces only LBA 16–63 (offset 8192, 24576 bytes) in the user area, syncs and verifies all 80 prefix sectors and other protected extents. It attempts rollback on detected failure while Linux is running. Rollback cannot protect against power loss or an unbootable device.
+Status is read-only for eMMC. Install requires FACTORY or PRIMARY_V2 state, validates CID, root mount, sector/partition geometry, original prefix, exact SPL, raw kernel and both BT1 copies. It replaces only LBA 16–63 (offset 8192, 24576 bytes) in the user area, syncs and verifies all 80 prefix sectors and other protected extents. It attempts rollback on detected failure while Linux is running. Rollback cannot protect against power loss or an unbootable device.
 
-Expected success marker PRIMARY_V2_INSTALLED_VERIFIED. Recheck Status (PRIMARY_V2), then sync and power off normally. If anything fails, do not reboot or disconnect until checked.
+Expected success marker MENU_FAST_INSTALLED_VERIFIED. Recheck Status (MENU_FAST), then sync and power off normally. If anything fails, do not reboot or disconnect until checked.
 
 To restore original BT0 while Linux still runs, use -Mode Rollback with the same original backup. This restores only the bootloader, not factory Linux or original user data. It is not a full stock recovery. Do not use rollback as a routine action after a successful native boot.
 
@@ -57,6 +59,7 @@ To restore original BT0 while Linux still runs, use -Mode Rollback with the same
 - Primary v2 with Menu released booted Linux via FEL.
 - Install recorded PRIMARY_V2_INSTALLED_VERIFIED; subsequent cold Power start reached Alpine Desktop with no host upload.
 - 2026-11-25: cold Menu entry after installing primary v2 enumerated as 1f3a:efe8. sunxi-fel version returned AWUSBFEX soc=00001625(A13), and a 40-byte hexdump at 0x5400 succeeded. The SRAM report no longer contained PB26; the reason is unknown, so it is not proof of the exact internal branch taken. The operational FEL interface is confirmed.
-- 2026-11-25: cold Menu FEL followed by execution of the known MMC2-safe SPL successfully started native Alpine Desktop from the original raw eMMC image. A separate cold FEL session initialized DRAM, transferred and read back all 7625340 payload bytes of the fast wrapper image, then executed it at 0x40008000; Alpine Desktop appeared quickly. No measured boot duration was supplied. Neither test replaced eMMC boot sectors. The fast wrapper still requires a cold eMMC boot test. Independent recovery if the primary SPL itself fails remains unverified.
+- 2026-11-25: cold Menu FEL followed by execution of the known MMC2-safe SPL successfully started native Alpine Desktop from the original raw eMMC image. A separate cold FEL session initialized DRAM, transferred and read back all 7625340 payload bytes of the fast wrapper image, then executed it at 0x40008000; Alpine Desktop appeared quickly. No measured boot duration was supplied. Neither test replaced eMMC boot sectors. The fast wrapper was subsequently installed and verified on eMMC. With the original timeout the complete boot took approximately 69 seconds.
+- Shortened LRADC timeout: both FEL-uploaded button branches passed. Held Menu produced PB26, reason 2, four samples of 0x29. Released Menu booted Alpine quickly. The new SPL was installed with full prefix and protected extents verified; cold normal boot reached the desktop in about 22 seconds, and cold Menu FEL worked (operator report). Recovery upload after the final revision was not separately reported. Independent recovery if the primary SPL itself fails remains unverified.
 
 Earlier stock-chain experiments remain in Git history; they are not supported boot paths.

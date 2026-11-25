@@ -5,7 +5,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BASE = '7543ab1379d19cd07cd01e7ea3ff7d257aada22f770d0e937a6ae0605732a38f'
 SAFE = '42a557fc000d09dd8d5c6d24b8914dd0ca1af42cbf121ff4a034de5b3d2850ed'
-FINAL = '39e4a51962e7288ddbef7dcecfbf508d43e23d3e59b2e970896dd2393f9824ae'
+FINAL = '1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6'
 def sha(b): return hashlib.sha256(b).hexdigest()
 def check(ok, msg):
     if not ok: raise SystemExit(msg)
