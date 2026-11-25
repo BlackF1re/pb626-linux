@@ -12,7 +12,7 @@ for sysdev in /sys/block/mmcblk*; do
   mount -t vfat -o ro "/dev/${sysdev##*/}p2" /media/pb626-config 2>/dev/null && break
 done
 # Probing a driver is not equivalent to rendering an E Ink waveform.
-for module in sun5i-eink rtl8xxxu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
+for module in rtl8xxxu cyttsp4_core cyttsp4_i2c elants_i2c edt_ft5x06; do
   modprobe "$module" >/dev/null 2>&1 || true
 done
 if [ -s /media/pb626-config/wifi.conf ]; then

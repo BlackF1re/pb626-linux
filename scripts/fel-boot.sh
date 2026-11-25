@@ -30,15 +30,12 @@ imgs=${1%/}
 variant=$2
 profile=$3
 option=${4:-}
-case "$variant" in elan|elan-lightoff|elan-usbtest|elan-display|elan-emmc-backup|elan-emmc-install|elan-emmc-native|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
+case "$variant" in elan|elan-lightoff|elan-usbtest|elan-display|elan-emmc-backup|cypress|focaltech|no-touch) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
 case "$profile" in
   standard) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
   diagnostic) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
   *) echo "Invalid profile: $profile" >&2; exit 2 ;;
 esac
-if [[ $variant == elan-emmc-install ]]; then
-    initrd=pb626-emmc-installer.cpio.gz
-fi
 if [[ -n $option && $option != --no-execute ]]; then
     echo "Invalid option: $option" >&2; exit 2
 fi
@@ -77,14 +74,10 @@ check_sha "$kernel"
 check_sha "$fdt"
 check_sha "$ramfs"
 command -v fdtget >/dev/null || { echo 'Missing fdtget (device-tree-compiler)' >&2; exit 10; }
-if [[ $variant == elan-emmc-backup || $variant == elan-emmc-install || $variant == elan-emmc-native ]]; then
+if [[ $variant == elan-emmc-backup ]]; then
     [[ $profile == diagnostic ]] || { echo "$variant requires the diagnostic profile" >&2; exit 13; }
     [[ $(fdtget -t s "$fdt" /soc/mmc@1c11000 status) == okay ]] || { echo "$variant requires MMC2" >&2; exit 13; }
-    if [[ $variant == elan-emmc-native ]]; then
-        fdtget "$fdt" /chosen pb626,emmc-root >/dev/null
-    else
-        fdtget "$fdt" /chosen pb626,emmc-backup >/dev/null
-    fi
+    fdtget "$fdt" /chosen pb626,emmc-backup >/dev/null
     [[ $(fdtget -t s "$fdt" /soc/mmc@1c0f000 status) == disabled ]] || { echo "UNSAFE: MMC0 enabled" >&2; exit 13; }
 else
     [[ $(fdtget -t s "$fdt" /soc/mmc@1c11000 status) == disabled ]] || { echo "UNSAFE: MMC2 enabled" >&2; exit 13; }

@@ -17,7 +17,6 @@ on:
       - 'scripts/assemble-megi-ram.sh'
       - 'scripts/probe-device.sh'
       - 'scripts/inspect-live.sh'
-      - 'scripts/install-pb626-emmc.sh'
   pull_request:
     paths:
       - '.github/workflows/megi-fel.yml'
@@ -33,7 +32,6 @@ on:
       - 'scripts/assemble-megi-ram.sh'
       - 'scripts/probe-device.sh'
       - 'scripts/inspect-live.sh'
-      - 'scripts/install-pb626-emmc.sh'
   workflow_dispatch:
 
 concurrency:
@@ -202,6 +200,12 @@ jobs:
           grep -qx 'CONFIG_CMA_SIZE_MBYTES=32' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_REGULATOR_TPS65185=y' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_DRM_LIMA=m' kernel-cache/pb626-megi.config
+          for key in AUTO_ZRELADDR FB_SUN5I_EINK VIDEOBUF2_CORE VIDEOBUF2_V4L2 VIDEOBUF2_MEMOPS VIDEOBUF2_DMA_CONTIG; do
+            grep -qx "CONFIG_$key=y" kernel-cache/pb626-megi.config
+          done
+          grep -Fq -- '-pb626-eink-builtin' kernel-cache/KERNELRELEASE
+          tar -xOzf kernel-cache/kernel-modules.tar.gz "lib/modules/$(cat kernel-cache/KERNELRELEASE)/modules.builtin" > /tmp/pb626-modules.builtin
+          grep -Fxq 'kernel/drivers/video/fbdev/sun5i-eink.ko' /tmp/pb626-modules.builtin
           echo "Prebuilt kernel cache hit: ${{ steps.cache.outputs.cache-hit }}"
           echo "Rebuilt for Kconfig drift: ${{ steps.kconfig.outputs.rebuild }}"
       - name: Build current Device Trees
@@ -224,7 +228,14 @@ jobs:
           cp kernel-cache/* kernel-stage/
           cp dtb-stage/pb626-*.dtb kernel-stage/
           install -D -m 0644 linux/include/uapi/linux/sun5i-eink.h kernel-stage/uapi/linux/sun5i-eink.h
-          test "$(find kernel-stage -maxdepth 1 -name 'pb626-*.dtb' | wc -l)" -eq 9
+          # The retired factory eMMC installer DTB is no longer built.
+          expected=$(printf '%s\n' pb626-{cypress,elan,elan-display,elan-emmc-backup,elan-lightoff,elan-usbtest,focaltech,no-touch}.dtb | LC_ALL=C sort)
+          actual=$(find kernel-stage -maxdepth 1 -type f -name 'pb626-*.dtb' -printf '%f\n' | LC_ALL=C sort)
+          if [ "$actual" != "$expected" ]; then
+            echo '::error::Unexpected RAM DTB set'
+            diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") || true
+            exit 1
+          fi
       - name: Test and compile the E Ink utility with the existing ARM toolchain
         run: |
           set -euo pipefail
