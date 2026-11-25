@@ -113,6 +113,45 @@ operation=$1
 shift
 case "$operation" in
     probe) probe ;;
+    backup-info)
+        probe
+        card=$(basename "$(readlink "$sys/device")")
+        ext=/sys/kernel/debug/mmc2/$card/ext_csd
+        hex=$(tr -d '\r\n ' < "$ext")
+        test "${#hex}" -eq 1024 || fail "Unexpected EXT_CSD length"
+        case "$hex" in *[!0-9a-fA-F]*) fail "Invalid EXT_CSD" ;; esac
+        printf 'EXT_CSD=%s\n' "$hex"
+        ;;
+    backup-read)
+        select_region "$1"
+        number "$2"
+        test "$2" -lt "$blocks" || fail "Block index outside region"
+        unmounted
+        test "$(blockdev --getro "$device")" = 1 || fail "$device is writable"
+        work=$(mktemp -d /run/pb626-fast.XXXXXX)
+        tty_settings=
+        unlocked=0
+        trap cleanup EXIT
+        trap 'exit 1' HUP INT TERM
+        dd if="$device" of="$work/chunk" bs="$chunk" skip="$2" count=1 status=none
+        test "$(wc -c <"$work/chunk")" -eq "$chunk" || fail "Short read"
+        digest=$(sha256sum "$work/chunk")
+        tty_settings=$(stty -g)
+        stty raw -echo
+        printf '\nPB626_DATA %s %s\n' "$chunk" "${digest%% *}"
+        cat "$work/chunk"
+        stty "$tty_settings"
+        tty_settings=
+        printf '\nPB626_DATA_END\n'
+        ;;
+    backup-hash)
+        select_region "$1"
+        unmounted
+        test "$(blockdev --getro "$device")" = 1 || fail "$device is writable"
+        blockdev --flushbufs "$device"
+        digest=$(sha256sum "$device")
+        printf 'SHA256 %s\n' "${digest%% *}"
+        ;;
     load-scanner)
         receive "$1" "$2"
         check_hash "$work/payload"
