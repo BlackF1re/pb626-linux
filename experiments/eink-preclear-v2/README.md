@@ -26,3 +26,7 @@ Use the v2 artifact from CI, with install.ps1 -Mode Status / Install -Port COM13
 After cold boot read /run/pb626-desktop.log and ready mtime. Rollback mode
 restores /root/pb626-xsession.preclear-v1; if serial transport or graphics fail
 but console is reachable, restore this script directly with cp -p and sync.
+
+## Startup tracing
+
+When PB626_EPD_PROFILE is set, log the actual non-KEEP submitted pixel coordinates for non-RESET updates within two seconds of first ready. Bboxes use portrait coordinates with exclusive right/bottom, tiles are 32x32. Logging occurs after each ACK and may affect subsequent timing; use for localization, not performance benchmarking. The display policy and worker are unchanged. To move from the earlier v2 to this trace build, first run Rollback using the earlier artifact (no reboot needed), then install this artifact from v1.

@@ -41,6 +41,6 @@ jobs:
           printf '%s\n' c40c8f325f3095e9846920dbb08b02726fbebe81 > dist/SOURCE-COMMIT
       - uses: actions/upload-artifact@v4
         with:
-          name: pb626-preclear-v2-experiment
+          name: pb626-preclear-v2-trace
           path: dist/
           if-no-files-found: error
