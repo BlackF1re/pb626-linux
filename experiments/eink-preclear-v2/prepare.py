@@ -90,6 +90,67 @@ bridge = change(bridge, '\t\t\tacknowledge(command, worker.frame, frame, previou
 				trace_startup_pixels(command, worker.frame);
 			acknowledge(command, worker.frame, frame, previous);''')
 bridge = change(bridge, '\t\t\tif (!has_frame) {\n\t\t\t\tFILE *ready', '\t\t\tif (!has_frame) {\n\t\t\t\tstartup_ready = now_us();\n\t\t\t\tFILE *ready')
+# Async INIT: overlap bridge/X setup with the already-running physical reset.
+bridge = change(bridge, '''static int submit(const struct worker *worker, uint8_t command)
+{
+	ssize_t done;
+	do {
+		done = send(worker->socket, &command, 1, MSG_NOSIGNAL);
+	} while (done < 0 && errno == EINTR);
+	if (done != 1)
+		return -1;
+	uint8_t ack;''', '''static int send_command(const struct worker *worker, uint8_t command)
+{
+	ssize_t done;
+	do {
+		done = send(worker->socket, &command, 1, MSG_NOSIGNAL);
+	} while (done < 0 && errno == EINTR);
+	return done == 1 ? 0 : -1;
+}
+
+static int await_ack(const struct worker *worker, uint8_t command)
+{
+	ssize_t done;
+	uint8_t ack;''')
+bridge = change(bridge, '''	return done == 1 && ack == command ? 0 : -1;
+}
+''', '''	return done == 1 && ack == command ? 0 : -1;
+}
+
+static int submit(const struct worker *worker, uint8_t command)
+{
+	return send_command(worker, command) || await_ack(worker, command) ? -1 : 0;
+}
+''')
+bridge = change(bridge, '''	int precleared = submit(&worker, INIT_PANEL) == 0;
+	if (profile)
+		fprintf(stderr, "preclear-v2: %s mono_us=%llu\\n",
+			precleared ? "INIT_ACK" : "FALLBACK_RESET", (unsigned long long)now_us());
+	if (!precleared) {
+		stop_worker(&worker);
+		if (start_worker(&worker, argv[1]))
+			return EXIT_FAILURE;
+	}
+''', '''	int init_sent = send_command(&worker, INIT_PANEL) == 0;
+''')
+# The worker does not read the shared frame for INIT. Do not prepare any
+# frame until the ACK arrives. XDamage is already registered at this point.
+bridge = change(bridge, '''	setup_shm(display, &shm);
+''', '''	setup_shm(display, &shm);
+	if (profile)
+		fprintf(stderr, "preclear-async: X_SETUP_DONE mono_us=%llu\\n", (unsigned long long)now_us());
+	int precleared = init_sent && await_ack(&worker, INIT_PANEL) == 0;
+	if (profile)
+		fprintf(stderr, "preclear-async: %s mono_us=%llu\\n",
+			precleared ? "INIT_ACK" : "FALLBACK_RESET", (unsigned long long)now_us());
+	if (!precleared) {
+		stop_worker(&worker);
+		if (start_worker(&worker, argv[1]))
+			return EXIT_FAILURE;
+	}
+''')
+bridge = change(bridge, 'preclear-v2: INIT begin', 'preclear-async: INIT begin')
+bridge = change(bridge, 'preclear-v2: first wire=', 'preclear-async: first wire=')
 orig = read('pb626-xsession')
 script = change(orig, 'pb626-x11-epd "$1" "$2" &\nscreen=$!\n', '')
 script = change(script, 'matchbox-window-manager -theme PB626 -use_titlebar yes &', '''# One paired worker owns the panel for the entire X session.
