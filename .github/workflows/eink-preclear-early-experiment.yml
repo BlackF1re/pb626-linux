@@ -1,0 +1,33 @@
+name: E Ink early preclear experiment
+on:
+  pull_request:
+    paths:
+      - 'experiments/eink-preclear-early/**'
+      - '.github/workflows/eink-preclear-early-experiment.yml'
+      - 'BT0-uncaged/transport.ps1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate and verify scripts
+        run: |
+          set -euo pipefail
+          mkdir -p dist/out
+          python3 experiments/eink-preclear-early/prepare.py dist/out
+          for f in dist/out/*; do sh -n "$f"; done
+          sh -n experiments/eink-preclear-early/stage.sh
+          (cd dist/out; sha256sum native.original native.experimental desktop.original desktop.early xsession.early > SHA256SUMS; sha256sum -c SHA256SUMS)
+          cp experiments/eink-preclear-early/{install.ps1,stage.sh,README.md} dist/
+          cp BT0-uncaged/transport.ps1 dist/
+          git rev-parse HEAD > dist/BUILD-COMMIT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-preclear-early
+          path: dist/
+          if-no-files-found: error
