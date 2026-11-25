@@ -1,3 +1,5 @@
+> Historical audit, retained for CI cache and build context. The factory U-Boot workflow and p8/AXF installer described below were retired after successful autonomous cold boot on 2026-11-25. Current primary bootloader: [BT0-uncaged](../BT0-uncaged/README.md). This audit is not a current installation guide.
+
 # GitHub Actions audit — PocketBook 626
 
 Date: 2026-11-24. Scope: all six workflows under `.github/workflows/`.

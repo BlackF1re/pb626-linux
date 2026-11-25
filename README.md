@@ -1,9 +1,9 @@
 # PocketBook 626 Plus / Touch Lux 3 — Alpine Linux 3.24 / Megi 7.2
 
-**Hardware milestone: 2026-11-21 — interactive Alpine Linux shell reached on one
-PocketBook 626 Plus / Touch Lux 3 (Allwinner A13, ELAN revision) using RAM-only
-USB FEL boot.** This is an experimental Linux bring-up. RAM variants leave
-the factory eMMC untouched.
+**Hardware milestone: 2026-11-25 — autonomous cold boot into Alpine Desktop from
+internal eMMC was demonstrated on one late PocketBook 626 Plus / Touch Lux 3
+(Allwinner A13, ELAN/eMMC revision).** The factory boot chain is no longer
+used. RAM-only FEL builds remain available for development and rescue.
 
 ## E Ink desktop in RAM
 
@@ -32,38 +32,29 @@ can receive a local GC16 cleanup. The panel still scans all rows. For timing
 logs, pass `-ProfileDisplay` to the desktop launcher and read
 `/run/pb626-desktop.log` over USB. The USB console stays available.
 
-## Experimental installation to internal eMMC
+## Native boot: BT0-uncaged
 
-For the verified ELAN board with the factory Samsung 8WPD3R layout, save a
-full eMMC backup first. Boot the GitHub Actions bundle into RAM with
-`scripts/Start-PB626.ps1 -BundleDir <bundle> -Variant elan-emmc-install -Profile diagnostic`.
-In the USB serial shell, run `install-pb626-emmc` to see the target CID.
-Run it again with that CID to replace p8 with Alpine and configure the factory
-loader on p2. After it reports completion, run `sync; reboot -f` without
-holding the FEL button. Installation and read-back of the files have been
-verified. Cold boot into the installed Alpine system is still unresolved.
-The panel waveform is at `/lib/firmware/pb626/default.wbf`.
+The supported primary bootloader development path is [BT0-uncaged](BT0-uncaged/README.md):
+BootROM → custom 24 KiB SPL → MMC2 raw legacy image at LBA 80 → Linux → Alpine
+on ext4 p1. The factory BT0, BT1, boot.axf and FAT boot scripts are not executed.
 
-The BootROM reads `eGON.BT0` at byte offset `0x2000` in the eMMC user area.
-BT0 reads and checksums `eGON.BT1` from LBA 38192 (`0x012a6000`) and runs
-it at `0x42400000`. The dump also contains an identical copy at
-`0x012e6000`. BT1 loads `/boot.axf` from the FAT16 bootloader partition
-(p2, LBA 73728). The AXF reads `/linux/linux.ini` for normal boot or
-`/linux/recovery.ini` for recovery. The normal configuration loads up
-to 8 MiB of raw ARM code from `/linux/bImage` at `0x40008000`. BT1
-disables the MMU and caches before calling that address with ATAGs at
-`0x40000100`. The factory kernel uses p7 as its root.
+The [manual build workflow](.github/workflows/bt0-uncaged.yml) rebuilds the exact
+hardware-tested SPL using the known original lab SPL and the checked-in patches
+and assembly. The final hash must match before the installer can be packaged.
+Full original U-Boot source provenance remains to be recovered before public
+binary release. A single fixed-name draft release may be prepared manually.
 
-The installer keeps the 8 MiB single-segment layout. The ARM zImage
-reads its appended board DTB and mounts Alpine from p8 directly.
-The stock application also lives on p8, so
-restoring only the stock kernel can cause the factory OS to start
-its automatic updater.
+The installation script replaces only eMMC user-area LBA 16–63, after strict
+checks of the existing layout, kernel and original backup. It requires an
+already prepared native Alpine system and exact known raw image. **It is not a
+fresh-device Alpine installer.** The complete native OS packaging path will
+need to be adapted to the new raw image layout separately. Historical FAT/AXF
+and intermediate U-Boot experiments are retired; see Git history only.
 
-To restore the factory system, use the full backup or restore the original
-p8 and the boot files in p2's `linux/` directory from FEL. Rename
-`bImage.pb` to `bImage` and restore each `*.ini.factory` as its matching
-`*.ini` file.
+**Safety:** cold normal Power boot succeeded on the tested device. Menu
+recovery has been confirmed via the FEL upload wrapper, not yet after the cold
+eMMC replacement. The microSD recovery attempt did not work. Keep the original
+full eMMC and boot-region backup; a backup alone does not guarantee recovery.
 
 ## Verified on the physical reader
 
@@ -89,7 +80,7 @@ p8 and the boot files in p2's `linux/` directory from FEL. Rename
 
 **Not yet verified:** touch input, battery/power management, suspend, Wi-Fi,
 removable SD root, panel
-voltage safety on other units, or boot without the local FEL tools.
+voltage safety on other units, or cold Menu-to-FEL recovery after replacing BT0.
 
 ## RAM-only safety boundary
 

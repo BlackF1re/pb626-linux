@@ -1,0 +1,61 @@
+# BT0-uncaged
+
+A separate, deliberately small primary bootloader component for the late PocketBook 626 Plus / Touch Lux 3 ELAN + eMMC (Allwinner A13) board. On 2026-11-25 the installed SPL booted Alpine Desktop autonomously on one physical reader.
+
+BootROM → BT0-uncaged SPL → raw Linux image (MMC2, LBA 80) → Alpine on p1.
+No factory BT0, BT1, boot.axf or FAT boot file participates. BT1 and the FAT partition are preserved on disk for recovery. No SD boot was demonstrated.
+
+**Not a general installer.** The cold Menu → BootROM FEL path is not yet physically confirmed after replacing BT0. Both Menu and normal paths were tested through a FEL upload; normal cold boot was subsequently observed. The external SD recovery route did not work on the tested board. A failed cold boot may require hardware recovery. Do not flash another revision. Keep a verified full factory eMMC user-area and hardware boot-region backup.
+
+## Build
+
+Dependencies: Python 3, clang, ld.lld, llvm-objcopy. Exact base input is the original lab pb626-spl.bin, 24576 bytes, SHA-256:
+7543ab1379d19cd07cd01e7ea3ff7d257aada22f770d0e937a6ae0605732a38f.
+
+The base is U-Boot SPL, not factory BT0. Its exact upstream build tree, compiler and configuration have not yet been recovered. This repository does NOT claim a full source rebuild of the underlying U-Boot SPL. The patch source and early-menu assembly are complete and the binary reconstruction is reproducible; build.py refuses any different base or output. The corresponding U-Boot source/configuration and license obligations must be resolved before publishing a binary release. Do not substitute an arbitrary U-Boot build.
+
+    python3 BT0-uncaged/build.py /path/to/pb626-spl.bin BT0-uncaged.bin
+    python3 BT0-uncaged/test_hook.py BT0-uncaged.bin
+
+Output: 24576 bytes, SHA-256 39e4a51962e7288ddbef7dcecfbf508d43e23d3e59b2e970896dd2393f9824ae.
+The build verifies original patch bytes, intermediate safe SPL, eGON header/checksum and final hash. The 5249 mocked instruction tests exercise the early LRADC hook, not the entire SoC. No-event idle boot, key/partial-sample recovery, and FEL-thunk return are covered. Cold ROM return remains a hardware test.
+
+The BT0-uncaged Action is manually dispatched with the exact base encoded as a single base64 string. Example with GitHub CLI on Linux/WSL, from the repository:
+
+    python3 -c 'import base64,json,sys; print(json.dumps({"base_spl_b64":base64.b64encode(open(sys.argv[1],"rb").read()).decode(),"draft_release":False}))' /root/pb626-lab/pb626-spl.bin | gh workflow run bt0-uncaged.yml --json
+
+The artifact contains the binary, installation scripts, hashes and custom source. From the extracted artifact directory, omit the BT0-uncaged/ path prefix for the Python scripts. Verify SHA256SUMS before executing any installer. Optional draft release on main uses one fixed tag BT0-uncaged; no automatic publication or overwrite, no semantic version counter. Only publish after the missing upstream source has been supplied and recovery verified.
+
+## Native kernel contract
+
+SPL uses MMC2, 25 MHz, max 4096 sectors per request; reads a legacy uImage at LBA 80. Header load/entry 0x40008000; the wrapper copies zImage to 0x46000000 and DTB to 0x47000000, checks their word hashes and enters Linux. The native DTB must enable MMC2, disable removable MMC0 and specify root=/dev/mmcblk2p1 rootfstype=ext4 rootwait rw init=/sbin/init with the reader's own calibration. No native initrd. Do not pass a RAM-only DTB.
+
+    python3 BT0-uncaged/pack-kernel.py zImage native.dtb raw-linux.img
+
+The exact tested kernel SHA-256 is f7bf4f5aa3b260892d4dd84bb480a9c57c8b58886fa37df0ce9bbe7ad322f376; DTB 351d15522cb4bdbca2b2edc14a64e2c48396810cf882279fa51eff302a75e958. Rebuilding with these inputs yields 7625728 bytes, SHA-256 6b73744d7e3962758b93ac94030fc5910b3dcbd08b1c54d684687bcc7e4e3605. This command only packs files; it does not flash a kernel or install Alpine. The full native system installer is separate unfinished work.
+
+## Install on the previously prepared, validated board
+
+The installer operates on an already running native Alpine (including a FEL-launched native system). It is intentionally restricted to the exact previously prepared storage layout and Linux payload. Do not run on stock firmware or an unprepared device. Get the CID from /sys/class/block/mmcblk2/device/cid on the target. Use your **original** factory user-area backup, not the current installed eMMC image. The host only reads its first 40960 bytes; no factory dump or device CID is included in Git.
+
+Extract the verified Action artifact. From Windows PowerShell (5.1 or later) with the reader's root ACM console free:
+
+    .\Install-BT0.ps1 -Mode Status -Port COM13 -ExpectedCid <CID> -FactoryBackup <original-dump>
+    .\Install-BT0.ps1 -Mode Install -Port COM13 -ExpectedCid <CID> -FactoryBackup <original-dump> -AcceptNoRecovery
+    .\Install-BT0.ps1 -Mode Status -Port COM13 -ExpectedCid <CID> -FactoryBackup <original-dump>
+
+Status is read-only for eMMC. Install requires FACTORY state, validates CID, root mount, sector/partition geometry, original prefix, exact SPL, raw kernel and both BT1 copies. It replaces only LBA 16–63 (offset 8192, 24576 bytes) in the user area, syncs and verifies all 80 prefix sectors and other protected extents. It attempts rollback on detected failure while Linux is running. Rollback cannot protect against power loss or an unbootable device.
+
+Expected success marker PRIMARY_V2_INSTALLED_VERIFIED. Recheck Status (PRIMARY_V2), then sync and power off normally. If anything fails, do not reboot or disconnect until checked.
+
+To restore original BT0 while Linux still runs, use -Mode Rollback with the same original backup. This restores only the bootloader, not factory Linux or original user data. It is not a full stock recovery. Do not use rollback as a routine action after a successful native boot.
+
+## Physical validation record
+
+- 2026-11-25: MMC2-safe SPL read the already staged raw Linux image when started via USB FEL.
+- Primary v2 with Menu held returned to FEL through the USB thunk: PB26, reason 2, 4 samples of 0x29; version and SRAM reads successful.
+- Primary v2 with Menu released booted Linux via FEL.
+- Install recorded PRIMARY_V2_INSTALLED_VERIFIED; subsequent cold Power start reached Alpine Desktop with no host upload.
+- Cold Menu/FEL and independent hardware recovery remain unverified.
+
+Earlier stock-chain experiments remain in Git history; they are not supported boot paths.

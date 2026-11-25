@@ -17,7 +17,6 @@ on:
       - 'scripts/assemble-megi-ram.sh'
       - 'scripts/probe-device.sh'
       - 'scripts/inspect-live.sh'
-      - 'scripts/install-pb626-emmc.sh'
   pull_request:
     paths:
       - '.github/workflows/megi-fel.yml'
@@ -33,7 +32,6 @@ on:
       - 'scripts/assemble-megi-ram.sh'
       - 'scripts/probe-device.sh'
       - 'scripts/inspect-live.sh'
-      - 'scripts/install-pb626-emmc.sh'
   workflow_dispatch:
 
 concurrency:
