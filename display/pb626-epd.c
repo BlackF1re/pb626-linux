@@ -487,9 +487,7 @@ static void render(struct buffer *buffer, const struct renderer *renderer,
 			}
 			const uint16_t *pixels = renderer->transitions + y * SOURCES + 4 * row.first;
 			uint32_t staged[GROUPS];
-			/* Fall back directly to the scalar path when a complex
-			 * transition set exceeds the bounded group dictionary. */
-			uint32_t *dest = renderer->style == RENDER_STAGED || indexed ? staged : out;
+			uint32_t *dest = renderer->style == RENDER_SCALAR ? out : staged;
 			if (reset) {
 				for (unsigned int x = row.first; x < row.end; x++)
 					dest[x] = neutral[x] | uniform;
@@ -633,11 +631,6 @@ static void refresh(struct renderer *renderer, enum mode mode)
 			update->phases[0].scans, (unsigned long long)max_gap,
 			(unsigned long long)(now_us() - finished), renderer->wbf.interval, start_retries);
 	}
-}
-
-static bool auto_fast_enabled(const char *setting)
-{
-	return !setting || !strcmp(setting, "auto");
 }
 
 static enum mode select_a2_or_du(const struct renderer *renderer,
@@ -803,7 +796,7 @@ int main(int argc, char **argv)
         fail("IDX8 cannot losslessly encode all ED060XD4 control states; use pin32");
     }
     if (argc == 2 && !strcmp(argv[1], "--protocol")) {
-		puts("pb626-epd-shm-3");
+		puts("pb626-epd-shm-4");
 		return EXIT_SUCCESS;
 	}
 	if ((argc == 2 && !strcmp(argv[1], "--help")) || argc < 3 || argc > 4) {
@@ -841,19 +834,16 @@ int main(int argc, char **argv)
 	renderer.fd = fd;
 	renderer.profile = getenv("PB626_EPD_PROFILE") != NULL;
 	const char *style = getenv("PB626_EPD_RENDER");
-	/* A compact dictionary is lossless: it only reuses identical groups of
-	 * four physical transitions and still emits the original PIN32 bits. */
-	if (!style || !strcmp(style, "auto") || !strcmp(style, "indexed")) {
-		renderer.style = RENDER_INDEXED;
-		renderer.group_codes = malloc(GATES * GROUPS);
-		if (!renderer.group_codes)
-			fail("could not allocate lossless scanout group dictionary");
-	} else if (!strcmp(style, "scalar"))
+	if (!style || !strcmp(style, "scalar"))
 		renderer.style = RENDER_SCALAR;
 	else if (!strcmp(style, "staged"))
 		renderer.style = RENDER_STAGED;
-	else
-		fail("PB626_EPD_RENDER must be auto, scalar, staged or indexed");
+	else if (!strcmp(style, "indexed")) {
+		renderer.style = RENDER_INDEXED;
+		renderer.group_codes = malloc(GATES * GROUPS);
+	} else {
+		fail("PB626_EPD_RENDER must be scalar, staged or indexed");
+	}
 	const char *prefill = getenv("PB626_EPD_PREFILL");
 	if (prefill) {
 		char *end;
@@ -863,8 +853,7 @@ int main(int argc, char **argv)
 		renderer.prefill = n;
 	}
 	const char *fast = getenv("PB626_EPD_FAST_MODE");
-	/* By default choose the faster supported factory A2 or DU sequence. */
-	renderer.auto_fast = auto_fast_enabled(fast);
+	renderer.auto_fast = fast && !strcmp(fast, "auto");
 	load_waveform(&renderer.wbf, argv[1]);
 	/* The stock WBF targets 85 scans/s. The A13 clock tree supplies
 	 * 22.5 MHz here, giving 84.5 scans/s with Megi's porch settings.
@@ -896,6 +885,7 @@ int main(int argc, char **argv)
             case PREVIEW_A2: mode = A2; break;
             case PREVIEW_DU4: mode = DU4; break;
 			case SETTLE: mode = GL16; break;
+			case INIT_PANEL: mode = INIT; break;
 			case CLEAN: case RESET: mode = GC16; break;
 			default: fail("invalid update command");
 			}

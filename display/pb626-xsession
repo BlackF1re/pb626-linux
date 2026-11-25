@@ -23,10 +23,18 @@ if command -v matchbox-panel >/dev/null; then
 fi
 matchbox-keyboard --daemon us &
 keyboard=$!
-pb626-x11-epd "$1" "$2" &
-screen=$!
+screen=
+if [ -z "${PB626_EPD_BRIDGE_PID:-}" ]; then
+    pb626-x11-epd "$1" "$2" &
+    screen=$!
+fi
 matchbox-desktop --bg col-solid:white --font 'Sans bold 18px' \
     --fontcol black --no-outline --no-title --icon-size 112 --icon-padding 8 &
 desktop=$!
-trap 'kill "$wm" "$keyboard" "$screen" "$desktop" ${panel:+"$panel"} 2>/dev/null || true' EXIT
+trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} 2>/dev/null || true' EXIT
+if [ -n "${PB626_EPD_BRIDGE_PID:-}" ]; then
+    : > "${PB626_EPD_SESSION_STARTED:?}"
+    (while kill -0 "$PB626_EPD_BRIDGE_PID" 2>/dev/null; do sleep 0.2; done) &
+    screen=$!
+fi
 wait -n "$desktop" "$screen"
