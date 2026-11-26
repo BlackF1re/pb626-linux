@@ -28,11 +28,13 @@ param(
     [ValidateSet('standard','diagnostic')][string]$Profile='standard',
     [string]$Distro='Ubuntu',
     [string]$LabDir,
+    [switch]$SourceCandidate,
     [switch]$NoExecute
 )
 
 & {
     $ErrorActionPreference='Stop'
+    if ($SourceCandidate -and -not $LabDir) { throw '-SourceCandidate requires -LabDir pointing to the source CI artifact' }
 
     foreach ($cmd in @('wsl.exe','usbipd.exe')) {
         if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
@@ -93,7 +95,8 @@ param(
     Write-Host "Starting RAM-only Megi: variant=$Variant profile=$Profile"
     if ($LabDir) {
         $lab=ConvertTo-WslPath $LabDir
-        & wsl.exe -d $Distro -u root -- env "PB626_LAB_DIR=$lab" "PB626_FEL_TOOL=$lab/sunxi-fel" bash @argsLinux
+        $candidateFlag=[int]$SourceCandidate.IsPresent
+        & wsl.exe -d $Distro -u root -- env "PB626_LAB_DIR=$lab" "PB626_FEL_TOOL=$lab/sunxi-fel" "PB626_FEL_SOURCE_CANDIDATE=$candidateFlag" bash @argsLinux
     } else {
         & wsl.exe -d $Distro -u root -- bash @argsLinux
     }

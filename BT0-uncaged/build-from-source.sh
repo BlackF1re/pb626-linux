@@ -40,6 +40,16 @@ git ls-remote --heads https://codeberg.org/megi/u-boot.git | grep -Ei 'sunxi|poc
 # Native candidate: use the existing raw uImage position and the
 # existing LRADC hook linked by symbols. Full flash remains gated.
 python3 "$here/prepare-source-hook.py" "$PWD"
+# Native eMMC-only candidate: keep FEL magic detection, but choose MMC2
+# for cold native boot. Never apply this to the RAM FEL candidate above.
+python3 - <<'PY'
+from pathlib import Path
+p=Path("arch/arm/mach-sunxi/board.c")
+s=p.read_text()
+old="return readb(SPL_ADDR + 0x28);"
+assert s.count(old)==1
+p.write_text(s.replace(old,"return SUNXI_BOOTED_FROM_MMC2;"))
+PY
 # Megi's pinned tree is U-Boot 2021.04 and does not ship scripts/config.
 # Use the version's own Kconfig names and normalize with olddefconfig.
 python3 - <<'PY'
@@ -49,7 +59,8 @@ cfg={
     "SPL_LEGACY_IMAGE_SUPPORT":"y",
     "SPL_LEGACY_IMAGE_CRC_CHECK":"y",
     "SYS_MMCSD_RAW_MODE_U_BOOT_USE_SECTOR":"y",
-    "SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR":"0x50",
+    "SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR":"0x40",
+    "SYS_MMCSD_RAW_MODE_U_BOOT_DATA_PART_OFFSET":"0x10",
     "SYS_MMCSD_RAW_MODE_U_BOOT_USE_PARTITION":"n",
     "SPL_LOAD_FIT":"n",
     "MMC_SUNXI_SLOT_EXTRA":"2",
@@ -61,7 +72,8 @@ for k,v in cfg.items():
 p.write_text("\n".join(lines)+"\n")
 PY
 make olddefconfig
-grep -Fx 'CONFIG_SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR=0x50' .config
+grep -Fx 'CONFIG_SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR=0x40' .config
+grep -Fx 'CONFIG_SYS_MMCSD_RAW_MODE_U_BOOT_DATA_PART_OFFSET=0x10' .config
 grep -Fx 'CONFIG_SPL_LEGACY_IMAGE_SUPPORT=y' .config
 grep -Fx 'CONFIG_MMC_SUNXI_SLOT_EXTRA=2' .config
 cp .config "$out/native.config"
