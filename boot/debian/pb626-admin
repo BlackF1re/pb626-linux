@@ -276,7 +276,7 @@ lock-indicator)
 suspend)
     [ "$#" -eq 1 ] || exit 2
     [ -f /etc/pb626/suspend-qualified ] || { echo "Suspend not qualified on this board" >&2; exit 1; }
-    exec systemctl suspend
+    exec systemctl --no-block suspend
     ;;
 wifi-on)
     [ "$#" -eq 1 ] || exit 2

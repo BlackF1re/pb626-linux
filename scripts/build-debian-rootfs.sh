@@ -55,7 +55,7 @@ runtime=(
   xfonts-base xfonts-utils xbitmaps fonts-liberation xdotool xterm nedit
   matchbox-window-manager matchbox-desktop matchbox-keyboard matchbox-panel
   matchbox-common libmatchbox1 tk mupdf
-  libx11-6 libxext6 libxtst6 libxdamage1 libxfixes3
+  libx11-6 libxext6 libxtst6 libxdamage1 libxfixes3 libxrandr2
 )
 includes=$(IFS=,; echo "${runtime[*]}")
 sudo env DEBIAN_FRONTEND=noninteractive mmdebstrap \
@@ -108,10 +108,10 @@ in_build apt-get update
 in_build env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   build-essential autoconf automake libtool pkg-config gettext autopoint intltool \
   libx11-dev libxext-dev libxft-dev libxrender-dev libxcursor-dev libxfixes-dev \
-  libxtst-dev libxdamage-dev libpng-dev libjpeg-dev libexpat1-dev libfakekey-dev \
+  libxtst-dev libxdamage-dev libxrandr-dev libpng-dev libjpeg-dev libexpat1-dev libfakekey-dev \
   libmatchbox-dev libstartup-notification0-dev libcairo2-dev
 sudo install -d "$build/tmp/pb626-build" "$pkg/usr/bin" "$pkg/usr/libexec/pb626/bin"
-sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
+sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
 sudo cp -a "$kernel/uapi" "$build/tmp/pb626-build/uapi"
 sudo install -m 644 display/{matchbox-keyboard-eink.patch,matchbox-panel-power-supply.patch} "$build/tmp/pb626-build/"
 
@@ -130,9 +130,9 @@ fetch_source matchbox-panel 886605280c1032f76e382f68f9a1d2e57012f4db
 in_build /bin/bash -euc '
   cd /tmp/pb626-build
   cc -O3 -Wall -Wextra -Werror -I uapi pb626-epd.c -o pb626-epd
-  cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lm
+  cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
   cc -O2 -Wall -Wextra -Werror -I uapi test-pb626-epd.c -o test-pb626-epd
-  cc -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lm
+  cc -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
   ./test-pb626-epd
   ./test-pb626-x11-epd
   test "$(./pb626-epd --protocol)" = pb626-epd-shm-4
@@ -200,7 +200,7 @@ Package: pb626-runtime
 Version: $version
 Architecture: armhf
 Maintainer: BlackF1re <55582873+BlackF1re@users.noreply.github.com>
-Depends: libc6, bash, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, tk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
+Depends: libc6, bash, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, libxrandr2, tk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
 Description: PocketBook 626 native E Ink desktop and hardware integration
  Includes the scanout worker, X11 bridge, patched Matchbox clients and
  board-specific systemd services. Uses the paired PB626 kernel and DTB.

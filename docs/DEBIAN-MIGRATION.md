@@ -224,22 +224,44 @@ or repair any device until its MMC0 host identity is checked.
 
 ## Short power-key lock and sleep policy
 
-The native bridge reads axp20x-pek releases without another resident daemon.
-The default short press locks keyboard/pointer and physical navigation, then
-applies a lightening filter and a small lock glyph to the existing packed
-frame. This is an original visual approximation, not the proprietary stock
-filter or a password lock. The physical frame is frozen after ACK; the
-frontlight is temporarily disabled and PE8 uses a slow timer blink. A short
-press restores the screen and configured frontlight/LED policy. The normal
-LED default is heartbeat. A GPIO LED cannot provide a hardware breathing
-waveform and software blinking stops in actual suspend. Ignore and poweroff
-are also configurable. The s2idle choice is gated by /etc/pb626/suspend-qualified;
-never create this marker before physical wake testing. A failed sleep request
-leaves the reader locked but awake. Non-power wake leaves the visual lock in
-place until a short power press. The AXP209 emergency hold is unchanged.
-The bridge is an input convenience lock, not a security boundary against
-other X11 clients. Deep sleep is not enabled: SUN5I_PM requires a resume-aware
-SPL, while BT0-uncaged currently reconstructs a fixed cold-boot SPL.
+The native bridge reads axp20x-pek releases without another daemon.
+The default short press freezes the last physically acknowledged packed
+panel frame. The reconstructed stock effect is DimArea(WHITE), original
+nibble order, Gaussian blur 3x3 (sigma 5, reflect-101), and the original
+portrait/landscape sleeping-book bitmap. It writes into the existing IPC
+frame, never draws an X11 window, and sends one GC16 update (no INIT or
+same-level scrub). After unlock the bridge captures the actual X11 frame
+again and updates directly from known sleep-frame history.
+RandR rotation is mapped to panel coordinates for all four rotations.
+Rotated capture uses full logical damage instead of portrait dirty tiles.
+The current dummy Xorg configuration only advertises portrait; actual
+rotation availability and input mapping require hardware qualification.
+
+systemd-suspend.service requires pb626-sleep.service, which sends a
+root-only bounded IPC request, waits for the physical ACK, and permits
+the current kernel's 5-second delayed rail shutdown before suspend.
+Its stop-post requests a fresh desktop after resume or failure. Power
+key s2idle, xidle, Settings and normal systemctl suspend use this path.
+A pending system sleep suppresses additional power-key toggles; resume
+drains queued wake-key events, resets X idle time and restores the saved
+frontlight/LED policy after ACK. Convenience lock alone still unlocks
+with the next short press. Direct /sys/power/state writes bypass this.
+
+The stock Line.pbt is not distributed. The offline Debian installer
+extracts both resources from the private preserved stock p8 and checks
+the original theme and resource SHA-256 hashes. Existing installations
+can use scripts/pb626_sleep_theme.py with their own original Line.pbt
+and install the resulting files in /lib/firmware/pb626/. Missing
+resources yield blur only, with a log warning. The C filter matches the
+OpenCV 4.x reconstruction; exact 2.4.13 rounding is not yet qualified.
+
+The existing /etc/pb626/suspend-qualified gate remains for Settings,
+power key and idle timer; do not create it before real wake testing.
+Explicit root systemctl suspend requires the running bridge and its ACK.
+Verify key, timer, non-power wake, repeated cycles, suspend failures,
+panel power shutdown and actual s2idle current. This is a convenience
+lock, not authentication. Deep sleep needs a resume-aware SPL.
+The AXP209 emergency hold is unchanged.
 
 The published PocketBook Platform_A13 source (Kernel/arch/arm/mach-sun5i/pm/pm.c)
 maps factory pm_para standby_mode=1 to NORMAL_STANDBY for standby and

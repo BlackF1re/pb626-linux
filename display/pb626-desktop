@@ -92,6 +92,7 @@ if [ -f /proc/device-tree/chosen/pb626,emmc-root ]; then
     export XDG_RUNTIME_DIR="$work/session"
     export PB626_EPD_SESSION_STARTED="$work/session/clients.started"
     client=/usr/libexec/pb626-user-session
+    if [ -f /etc/debian_version ]; then export PB626_SYSTEM_SLEEP=1; fi
     # Only the hardware bridge/worker inherit modest OOM protection.
     (printf '%s\n' -500 >/proc/self/oom_score_adj || :; exec env DISPLAY=:0 /usr/bin/pb626-x11-epd "$waveform" "$work/ready") &
     bridge_pid=$!

@@ -13,6 +13,10 @@ import subprocess
 import tempfile
 import time
 import zlib
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pb626_sleep_theme import install_sleep_theme
 
 SECTOR = 512
 USER_SIZE = 15269888 * SECTOR
@@ -138,6 +142,7 @@ def main():
     p.add_argument("--system", type=Path, required=True, help="Verified pb626-native-system or pb626-native-debian13-armhf CI artifact")
     p.add_argument("--spl", type=Path, required=True, help="Exact verified BT0-uncaged.bin")
     p.add_argument("--waveform", type=Path, required=True, help="Owner's original default.wbf")
+    p.add_argument("--sleep-theme", type=Path, help="Optional original Line.pbt (default: preserved stock p8)")
     p.add_argument("--output", type=Path, required=True, help="New private directory")
     p.add_argument("--expected-cid", help="Original CID for a legacy backup")
     p.add_argument("--root-password-hash-file", type=Path, help="Private SHA-512 crypt hash file for noninteractive installation")
@@ -211,6 +216,10 @@ def main():
         wave.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(a.waveform,wave)
         wave.chmod(0o644)
+        if (root / "etc/pb626-image-id").read_text().strip() == "pb626-native-debian13-armhf-v1":
+            if a.sleep_theme is not None:
+                regular(a.sleep_theme, 770198)
+            install_sleep_theme(source, wave.parent, a.sleep_theme)
         fs=work/"p1.ext4"
         with fs.open("wb") as f:
             f.truncate(P1_SIZE*SECTOR)

@@ -192,6 +192,49 @@ static void test_x11_capture(void)
 	puts("X11 strip capture matches full-frame reference in the server visual");
 }
 
+static void test_stock_sleep(void)
+{
+	static uint8_t input[PACKED_PIXELS], output[PIXELS], seen[PIXELS], bitmap[500000];
+	for (int r = PB_ROT_0; r <= PB_ROT_270; r++) {
+		enum pb_rotation rotation = r;
+		int w = logical_width(rotation), h = logical_height(rotation);
+		unsigned int stride = (w / 2 + 3) & ~3u;
+		size_t size = 8 + (stride + (w + 7) / 8) * (size_t)h;
+		memset(bitmap, 0, sizeof(bitmap));
+		unsigned int fields[] = {(unsigned int)w, (unsigned int)h, 0x8004, stride};
+		for (unsigned int i = 0; i < 4; i++) {
+			bitmap[2*i] = fields[i] & 255;
+			bitmap[2*i+1] = fields[i] >> 8;
+		}
+		memset(seen, 0, sizeof(seen));
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++) {
+				size_t i = panel_index(rotation, x, y);
+				assert(i < PIXELS && !seen[i]);
+				seen[i] = 1;
+			}
+		assert(sleep_bitmap_valid(bitmap, size, rotation));
+		assert(!sleep_bitmap_valid(bitmap, size - 1, rotation));
+		memset(input, 0xff, sizeof(input));
+		sleep_compose(input, output, bitmap, size, rotation);
+		for (size_t i = 0; i < PIXELS; i++) assert(output[i] == WHITE);
+		memset(input, 0, sizeof(input));
+		sleep_compose(input, output, bitmap, size, rotation);
+		for (size_t i = 0; i < PIXELS; i++) assert(output[i] == 7);
+		bitmap[8] = 0x2d;
+		bitmap[8 + stride * h] = 0xc0;
+		sleep_compose(input, output, bitmap, size, rotation);
+		assert(output[panel_index(rotation, 0, 0)] == 2);
+		assert(output[panel_index(rotation, 1, 0)] == 13);
+		assert(output[panel_index(rotation, 2, 0)] == 7);
+		sleep_compose(input, output, bitmap, size - 1, rotation);
+		assert(output[panel_index(rotation, 0, 0)] == 7);
+	}
+	assert(panel_index(PB_ROT_90, 0, 0) == WIDTH - 1);
+	assert(panel_index(PB_ROT_270, 0, 0) == (HEIGHT - 1) * WIDTH);
+	puts("Stock sleep filter, overlay mask and all four rotations passed");
+}
+
 int main(void)
 {
 	if (getenv("PB626_TEST_X11")) {
@@ -202,10 +245,7 @@ int main(void)
 	test_worker_deadlines();
 	test_packed_rgb565();
 	test_gray();
-	for (unsigned int i = 0; i <= WHITE; i++)
-		assert(lock_level(i, 0, 0) == 8 + i / 2);
-	assert(lock_level(WHITE, WIDTH / 2 - 20, HEIGHT / 2 + 10) == 0);
-	assert(lock_level(0, WIDTH / 2, HEIGHT / 2 + 15) == WHITE);
+	test_stock_sleep();
 	static struct shared_frame frame;
 	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
 	const size_t pixel = 100 * WIDTH + 50;

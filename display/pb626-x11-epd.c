@@ -8,6 +8,7 @@
 #include <X11/extensions/Xfixes.h>
 #include <X11/extensions/XShm.h>
 #include <X11/extensions/XTest.h>
+#include <X11/extensions/Xrandr.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
@@ -18,6 +19,8 @@
 #include <sys/file.h>
 #include <sys/shm.h>
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/stat.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +31,7 @@
 #include <unistd.h>
 
 #include "pb626-epd.h"
+#include "pb626-sleep.h"
 
 enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 180000, QUIET_US = 300000,
        MAX_PENDING_US = 850000,
@@ -38,15 +42,47 @@ enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 /* Native power-key lock is an accidental-input lock, not authentication. */
 static int screen_locked;
 
-static uint8_t lock_level(uint8_t level, int x, int y)
+static enum pb_rotation capture_rotation;
+static int capture_y_offset;
+
+static int screen_geometry(Display *display, Window root, int *offset)
 {
-	int dx = x - WIDTH / 2, dy = y - HEIGHT / 2;
-	if (dx >= -24 && dx < 24 && dy >= 0 && dy < 36)
-		return (dx >= -3 && dx < 3 && dy >= 10 && dy < 24) ? WHITE : 0;
-	if (dx >= -17 && dx < 17 && dy >= -26 && dy < 0 &&
-	    (dy < -19 || dx < -10 || dx >= 10))
-		return 0;
-	return (uint8_t)(8 + level / 2);
+	XWindowAttributes a;
+	if (!XGetWindowAttributes(display, root, &a))
+		return -1;
+	Rotation rr = RR_Rotate_0;
+	int have_rotation = 0, major = 1, minor = 3;
+	if (XRRQueryVersion(display, &major, &minor) && (major > 1 || minor >= 3)) {
+		XRRScreenResources *res = XRRGetScreenResourcesCurrent(display, root);
+		if (res) {
+			for (int i = 0; i < res->ncrtc; i++) {
+				XRRCrtcInfo *ci = XRRGetCrtcInfo(display, res, res->crtcs[i]);
+				if (!ci) continue;
+				if (ci->mode != None && ci->noutput) {
+					rr = ci->rotation;
+					have_rotation = 1;
+					XRRFreeCrtcInfo(ci);
+					break;
+				}
+				XRRFreeCrtcInfo(ci);
+			}
+			XRRFreeScreenResources(res);
+		}
+	}
+	if (rr & (RR_Reflect_X | RR_Reflect_Y))
+		return -1;
+	enum pb_rotation r = PB_ROT_0;
+	if (rr & RR_Rotate_90) r = PB_ROT_90;
+	else if (rr & RR_Rotate_180) r = PB_ROT_180;
+	else if (rr & RR_Rotate_270) r = PB_ROT_270;
+	else if (!have_rotation && a.width > a.height) r = PB_ROT_90;
+	int w = logical_width(r), h = logical_height(r);
+	if (a.width < w || a.width > w + 2 || a.height < h || a.height > h + 2)
+		return -1;
+	capture_rotation = r;
+	*offset = (a.width - w) / 2;
+	capture_y_offset = (a.height - h) / 2;
+	return 0;
 }
 
 static int power_action(const char *action, const char *arg)
@@ -272,8 +308,9 @@ static struct rect clipped(struct rect r, int halo)
 {
 	r.left = r.left > halo ? r.left - halo : 0;
 	r.top = r.top > halo ? r.top - halo : 0;
-	r.right = r.right < WIDTH - halo ? r.right + halo : WIDTH;
-	r.bottom = r.bottom < HEIGHT - halo ? r.bottom + halo : HEIGHT;
+	int w = logical_width(capture_rotation), h = logical_height(capture_rotation);
+	r.right = r.right < w - halo ? r.right + halo : w;
+	r.bottom = r.bottom < h - halo ? r.bottom + halo : h;
 	return r;
 }
 
@@ -303,6 +340,7 @@ static struct rect pointer_rect(Display *display, Window root, int offset)
 			  &x, &y, &window_x, &window_y, &modifiers))
 		return (struct rect){0};
 	x -= offset;
+	y -= capture_y_offset;
 	return (struct rect){ x - 5, y - 5, x + 6, y + 6 };
 }
 
@@ -468,7 +506,7 @@ static void setup_shm(Display *display, XShmSegmentInfo *shm)
 	int screen = DefaultScreen(display);
 	XImage *image = XShmCreateImage(display, DefaultVisual(display, screen),
 				       DefaultDepth(display, screen), ZPixmap, NULL,
-				       shm, WIDTH, CAPTURE_READ_ROWS);
+				       shm, HEIGHT, CAPTURE_READ_ROWS);
 	if (!image)
 		return;
 	int id = shmget(IPC_PRIVATE, (size_t)image->bytes_per_line * CAPTURE_READ_ROWS, IPC_CREAT | 0600);
@@ -518,7 +556,8 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 		   uint8_t *frame, struct rect pointer, int vertical, struct capture_stats *stats,
 		   XShmSegmentInfo *shm)
 {
-	static uint8_t lightness[3][WIDTH];
+	static uint8_t lightness[3][HEIGHT];
+	const int w = logical_width(capture_rotation), h = logical_height(capture_rotation);
 	int uses_contrast = gray_profile != GRAY_UI;
 	int draw_pointer = nonempty(pointer);
 	struct rect area = clipped(dirty, uses_contrast);
@@ -530,7 +569,7 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 		strip.bottom = top + CAPTURE_ROWS < area.bottom ? top + CAPTURE_ROWS : area.bottom;
 		struct rect read_area = clipped(strip, uses_contrast);
 		uint64_t start = now_us();
-		XImage *image = read_image(display, root, read_area.left + offset, read_area.top,
+		XImage *image = read_image(display, root, read_area.left + offset, read_area.top + capture_y_offset,
 					  read_area.right - read_area.left, read_area.bottom - read_area.top,
 					  shm);
 		if (!image)
@@ -577,22 +616,21 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 					unsigned int contrast = 0;
 					if (uses_contrast) {
 						unsigned int lx = x > 0 ? pixel[-1] : value;
-						unsigned int rx = x + 1 < WIDTH ? pixel[1] : value;
+						unsigned int rx = x + 1 < w ? pixel[1] : value;
 						unsigned int ty = output_y > 0 ? lightness[(output_y - 1) % 3][x] : value;
-						unsigned int by = output_y + 1 < HEIGHT ? lightness[(output_y + 1) % 3][x] : value;
+						unsigned int by = output_y + 1 < h ? lightness[(output_y + 1) % 3][x] : value;
 						contrast = abs((int)value - (int)lx) + abs((int)value - (int)rx) +
 							   abs((int)value - (int)ty) + abs((int)value - (int)by);
 					}
-					next = quantize(value, contrast, x, output_y);
+					size_t i = panel_index(capture_rotation, x, output_y);
+					next = quantize(value, contrast, (int)(i % WIDTH), (int)(i / WIDTH));
 				}
-				size_t i = (size_t)output_y * WIDTH + x;
+				size_t i = panel_index(capture_rotation, x, output_y);
 				if (draw_pointer && !screen_locked)
 					next = pointer_level(pointer, vertical, x, output_y, next);
-				if (screen_locked)
-					next = lock_level(next, x, output_y);
 				if (nibble_get(frame, i) != next) {
 					stats->changed++;
-					dirty_tiles[output_y / TILE][x / TILE] = 1;
+					dirty_tiles[(i / WIDTH) / TILE][(i % WIDTH) / TILE] = 1;
 					nibble_set(frame, i, next);
 				}
 			}
@@ -968,8 +1006,95 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 		}
 }
 
+/* Root-only socket in the existing root-owned runtime directory. The
+ * same binary provides a bounded systemd client; no new resident daemon. */
+#define SLEEP_SOCKET "/run/pb626-desktop/sleep.sock"
+enum { SLEEP_IPC_MS = 110000 };
+static int sleep_listener(void)
+{
+	struct sockaddr_un address = { .sun_family = AF_UNIX, .sun_path = SLEEP_SOCKET };
+	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+	if (fd < 0) return -1;
+	unlink(SLEEP_SOCKET);
+	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) ||
+	    chmod(SLEEP_SOCKET, 0600) || listen(fd, 2)) {
+		close(fd);
+		unlink(SLEEP_SOCKET);
+		return -1;
+	}
+	return fd;
+}
+static int sleep_client(uint8_t request)
+{
+	struct sockaddr_un address = { .sun_family = AF_UNIX, .sun_path = SLEEP_SOCKET };
+	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+	if (fd < 0) return EXIT_FAILURE;
+	uint8_t reply = 0;
+	int result = connect(fd, (struct sockaddr *)&address, sizeof(address)) ||
+		     send(fd, &request, 1, MSG_NOSIGNAL) != 1 ||
+		     socket_ready(fd, POLLIN, now_us() + (uint64_t)SLEEP_IPC_MS * 1000) ||
+		     recv(fd, &reply, 1, MSG_DONTWAIT) != 1 || reply != request;
+	close(fd);
+	if (result) fprintf(stderr, "pb626: sleep IPC %c failed or timed out\n", request);
+	return result ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+static void sleep_reply(int *fd, uint8_t reply)
+{
+	if (*fd < 0) return;
+	(void)send(*fd, &reply, 1, MSG_NOSIGNAL | MSG_DONTWAIT);
+	close(*fd);
+	*fd = -1;
+}
+static int sleep_request(int listener, uint8_t *request)
+{
+	int fd = accept(listener, NULL, NULL);
+	if (fd < 0) return -1;
+	if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 ||
+	    socket_ready(fd, POLLIN, now_us() + 1000000ULL) ||
+	    recv(fd, request, 1, MSG_DONTWAIT) != 1) {
+		close(fd);
+		return -1;
+	}
+	return fd;
+}
+static void prepare_sleep_frame(struct shared_frame *frame, const uint8_t *panel,
+				enum pb_rotation rotation)
+{
+	const char *path = logical_width(rotation) > logical_height(rotation) ?
+		"/lib/firmware/pb626/sleep-landscape.pb" : "/lib/firmware/pb626/sleep-portrait.pb";
+	uint8_t *bitmap = NULL;
+	size_t size = 0;
+	FILE *f = fopen(path, "rb");
+	if (f) {
+		if (!fseek(f, 0, SEEK_END)) {
+			long length = ftell(f);
+			if (length > 0 && length <= 500000 && !fseek(f, 0, SEEK_SET)) {
+				bitmap = malloc((size_t)length);
+				if (bitmap && fread(bitmap, 1, (size_t)length, f) == (size_t)length)
+					size = (size_t)length;
+			}
+		}
+		fclose(f);
+	}
+	if (!sleep_bitmap_valid(bitmap, size, rotation))
+		fprintf(stderr, "pb626: stock sleep bitmap unavailable (%s); using blur only\n", path);
+	memset(frame->tiles, 1, sizeof(frame->tiles));
+	sleep_compose(panel, frame->pixels, bitmap, size, rotation);
+	free(bitmap);
+}
+static void acknowledge_sleep_frame(const struct shared_frame *frame, uint8_t *panel)
+{
+	for (size_t i = 0; i < PIXELS; i++)
+		nibble_set(panel, i, frame->pixels[i]);
+	memset(fast_changes, 0, sizeof(fast_changes));
+	memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+}
+
 int main(int argc, char **argv)
 {
+	if (argc == 2 && !strcmp(argv[1], "--sleep-prepare")) return sleep_client('P');
+	if (argc == 2 && !strcmp(argv[1], "--sleep-resume")) return sleep_client('R');
 	if (argc != 3) {
 		fprintf(stderr, "Usage: pb626-x11-epd DEFAULT.WBF READY\n");
 		return EXIT_FAILURE;
@@ -1051,16 +1176,20 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 	int screen = DefaultScreen(display);
-	int width = DisplayWidth(display, screen);
-	if (width < WIDTH || DisplayHeight(display, screen) != HEIGHT) {
-		fprintf(stderr, "pb626-x11-epd: unexpected Xorg screen dimensions\n");
+	Window root = RootWindow(display, screen);
+	int offset = 0;
+	if (screen_geometry(display, root, &offset)) {
+		fprintf(stderr, "pb626-x11-epd: unexpected Xorg dimensions or rotation\n");
 		stop_worker(&worker);
 		return EXIT_FAILURE;
 	}
-
-	Window root = RootWindow(display, screen);
+	enum pb_rotation panel_rotation = capture_rotation;
 	XSetErrorHandler(handle_x_error);
-	XSelectInput(display, root, PropertyChangeMask);
+	XSelectInput(display, root, PropertyChangeMask | StructureNotifyMask);
+	int randr_event, randr_error;
+	int randr = XRRQueryExtension(display, &randr_event, &randr_error);
+	if (randr)
+		XRRSelectInput(display, root, RRScreenChangeNotifyMask | RRCrtcChangeNotifyMask | RROutputChangeNotifyMask);
 	/* Matchbox excludes the input toolbar and panel from this property. */
 	Atom active = XInternAtom(display, "_MB_CURRENT_APP_WINDOW", False);
 	Atom keyboard = XInternAtom(display, "_MB_IM_INVOKER_COMMAND", False);
@@ -1083,7 +1212,7 @@ int main(int argc, char **argv)
 		.home_key = home && !strcmp(home, "home"),
 		.menu_escape = menu && !strcmp(menu, "escape"),
 	};
-	struct pollfd sources[4] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
+	struct pollfd sources[6] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
 	nfds_t source_count = 1;
 	const char *devices = getenv("PB626_BUTTON_DEVICES");
 	char *paths = devices ? strdup(devices) : NULL;
@@ -1104,9 +1233,17 @@ int main(int argc, char **argv)
 		}
 	}
 	uint64_t power_pressed = 0;
-	int lock_pending = 0, request_sleep = 0;
+	int lock_pending = 0, request_sleep = 0, system_sleep = 0;
+	int sleep_fd = -1, geometry_changed = 0;
+	nfds_t sleep_index = 0;
+	if (getenv("PB626_SYSTEM_SLEEP")) {
+		int fd = sleep_listener();
+		if (fd < 0) goto failed;
+		sleep_index = source_count;
+		sources[source_count++] = (struct pollfd){ .fd = fd, .events = POLLIN };
+	}
 	static uint8_t frame[PACKED_PIXELS], previous[PACKED_PIXELS];
-	const struct rect full = {0, 0, WIDTH, HEIGHT};
+	struct rect full = {0, 0, logical_width(capture_rotation), logical_height(capture_rotation)};
 	struct rect pointer = {0};
 	const char *halo = getenv("PB626_EPD_CLEAN_HALO");
 	clean_halo = !halo || strcmp(halo, "0");
@@ -1128,7 +1265,6 @@ int main(int argc, char **argv)
                 lightness ? "cie-lstar" : "srgb", gamma,
                 fast_mode == FAST_A2 ? "a2" : fast_mode == FAST_DU4 ? "du4" :
                 fast_mode == FAST_AUTO ? "auto" : "du");
-	int offset = (width - WIDTH) / 2;
 	unsigned int failures = 0;
 	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
 	unsigned int cleanup_count = 0;
@@ -1143,6 +1279,12 @@ int main(int argc, char **argv)
 				if (profile && !damage_seen)
 					damage_seen = now_us();
 				if (!screen_locked || lock_pending) dirty = 1;
+			} else if (event.type == ConfigureNotify ||
+				   (randr && (event.type == randr_event + RRScreenChangeNotify ||
+					      event.type == randr_event + RRNotify))) {
+				if (randr && event.type == randr_event + RRScreenChangeNotify)
+					XRRUpdateConfiguration(&event);
+				geometry_changed = 1;
 			} else if (event.type == PropertyNotify && event.xproperty.atom == active)
 				focus_changed = 1;
 			else if (!screen_locked && event.type == KeyPress && event.xkey.keycode == toggle) {
@@ -1154,15 +1296,57 @@ int main(int argc, char **argv)
 			keyboard_focus(display, root, active, keyboard, &previous_window, &controls);
 			focus_changed = 0;
 		}
+		if (sleep_index && sources[sleep_index].fd >= 0) {
+			uint8_t request = 0;
+			int client = sleep_request(sources[sleep_index].fd, &request);
+			if (client >= 0) {
+				if (sleep_fd >= 0) {
+					sleep_reply(&client, 0);
+				} else if (request == 'P' && has_frame &&
+					   (screen_locked || !grab_lock(display, root))) {
+					system_sleep = 1;
+					if (!screen_locked) {
+						screen_locked = 1;
+						lock_pending = 1;
+						controls.menu_pressed = 0;
+					}
+					if (lock_pending)
+						sleep_fd = client;
+					else
+						sleep_reply(&client, 'P');
+				} else if (request == 'R') {
+					if (system_sleep) {
+						system_sleep = 0;
+						screen_locked = 0;
+						release_lock(display);
+						XResetScreenSaver(display);
+						if (power_index && sources[power_index].fd >= 0)
+							(void)power_press(sources[power_index].fd, &power_pressed);
+						power_pressed = 0;
+						request_sleep = 0;
+						focus_changed = 1;
+						lock_pending = dirty = 1;
+						geometry_changed = 1;
+						next_capture = layout_until = 0;
+						sleep_fd = client;
+					} else {
+						sleep_reply(&client, 'R');
+					}
+				} else {
+					sleep_reply(&client, 0);
+				}
+			}
+		}
 		if (power_index && sources[power_index].fd >= 0) {
 			int presses = power_press(sources[power_index].fd, &power_pressed);
-			if (presses & 1) {
+			if ((presses & 1) && !system_sleep && has_frame) {
 				enum power_policy policy = power_policy();
 				if (screen_locked) {
 					screen_locked = 0;
 					release_lock(display);
 					request_sleep = 0;
-					(void)power_action("lock-indicator", "awake");
+					XResetScreenSaver(display);
+					geometry_changed = 1;
 					focus_changed = 1;
 					lock_pending = dirty = 1;
 				} else if (policy == POWER_OFF) {
@@ -1179,8 +1363,39 @@ int main(int argc, char **argv)
 		}
 		int pointer_changed = 0;
 		for (nfds_t i = 1; i < source_count; i++)
-			if (i != power_index && sources[i].fd >= 0)
+			if (i != power_index && i != sleep_index && sources[i].fd >= 0)
 				pointer_changed |= handle_buttons(display, root, keyboard, sources[i].fd, &controls);
+		if (screen_locked && lock_pending && has_frame) {
+			/* Filter the last acknowledged physical frame, not X11.
+			 * One GC16 update; RESET would run INIT. */
+			prepare_sleep_frame(worker.frame, previous, panel_rotation);
+			if (submit(&worker, CLEAN)) {
+				sleep_reply(&sleep_fd, 0);
+				goto failed;
+			}
+			acknowledge_sleep_frame(worker.frame, previous);
+			lock_pending = dirty = pending = cleanup_count = 0;
+			controls.clean_requested = 0;
+			(void)power_action("lock-indicator", "locked");
+			sleep_reply(&sleep_fd, 'P');
+			if (request_sleep) {
+				request_sleep = 0;
+				(void)power_action("suspend", NULL);
+			}
+		}
+		if (!screen_locked && geometry_changed) {
+			enum pb_rotation old = capture_rotation;
+			int old_x = offset, old_y = capture_y_offset;
+			if (screen_geometry(display, root, &offset))
+				goto failed;
+			full = (struct rect){0, 0, logical_width(capture_rotation), logical_height(capture_rotation)};
+			if (old != capture_rotation || old_x != offset || old_y != capture_y_offset) {
+				lock_pending = dirty = 1;
+				next_capture = layout_until = 0;
+				pointer = (struct rect){0};
+			}
+			geometry_changed = 0;
+		}
 		uint64_t now = now_us();
 		if (controls.keyboard_changed) {
 			XFlush(display);
@@ -1204,8 +1419,13 @@ int main(int argc, char **argv)
 		}
 		if ((dirty || !damage) && now >= next_capture && now >= layout_until) {
 			struct rect areas[MAX_REGIONS];
-			int count = damage ? damage_regions(display, damage, region, offset, areas) : 0;
-			if (!has_frame || !damage || controls.clean_requested || lock_pending) {
+			int count = 0;
+			if (damage && capture_rotation == PB_ROT_0 && !capture_y_offset)
+				count = damage_regions(display, damage, region, offset, areas);
+			else if (damage)
+				XDamageSubtract(display, damage, None, None);
+			if (!has_frame || !damage || controls.clean_requested || lock_pending ||
+			    capture_rotation != PB_ROT_0 || capture_y_offset) {
 				areas[0] = full;
 				count = 1;
 			}
@@ -1249,8 +1469,8 @@ int main(int argc, char **argv)
 			pending = 0;
 		}
 
-		uint8_t command = captured && (!has_frame || controls.clean_requested) ? RESET :
-            lock_pending && captured ? SETTLE : automatic_command(now - last_damage, dirty || now < layout_until,
+		uint8_t command = captured && (!has_frame || controls.clean_requested || lock_pending) ? RESET :
+            automatic_command(now - last_damage, dirty || now < layout_until,
                               captured, different, cleanup_count);
         if (command == PREVIEW && fast_mode == FAST_DU4)
             command = PREVIEW_DU4;
@@ -1272,12 +1492,19 @@ int main(int argc, char **argv)
         uint64_t submit_start = now_us();
 		if (changes) {
 			uint8_t wire = command;
+			if (lock_pending && has_frame && command == RESET && !controls.clean_requested) {
+				/* Rebuild actual X11 frame using known sleep history. */
+				wire = CLEAN;
+				for (size_t i = 0; i < PIXELS; i++)
+					worker.frame->pixels[i] &= WHITE;
+			}
 			if (precleared && !has_frame && command == RESET && !controls.clean_requested)
 				wire = CLEAN;
 			precleared = 0;
 			if (profile && !has_frame)
 				fprintf(stderr, "preclear: first wire=%c mono_us=%llu\n", wire, (unsigned long long)now_us());
 			if (submit(&worker, wire)) {
+				sleep_reply(&sleep_fd, 0);
 				unlink(argv[2]);
 				if (stop_worker(&worker))
 					return EXIT_FAILURE;
@@ -1293,6 +1520,7 @@ int main(int argc, char **argv)
 			if (profile)
 				ack = now_us();
 			acknowledge(command, worker.frame, frame, previous);
+			panel_rotation = capture_rotation;
 			if (!has_frame) {
 				FILE *ready = fopen(argv[2], "w");
 				if (!ready)
@@ -1307,17 +1535,10 @@ int main(int argc, char **argv)
 			/* Bound gray-only starvation from the last visible progress. */
 			pending_since = now_us();
 		}
-		if (lock_pending && captured && (command == SETTLE || command == RESET)) {
-			/* The worker has acknowledged the panel update, or the
-			 * target already matches the last acknowledged frame. */
+		if (lock_pending && captured && command == RESET && !screen_locked) {
 			lock_pending = 0;
-			if (screen_locked) {
-				(void)power_action("lock-indicator", "locked");
-				if (request_sleep) {
-					request_sleep = 0;
-					(void)power_action("suspend", NULL);
-				}
-			}
+			(void)power_action("lock-indicator", "awake");
+			sleep_reply(&sleep_fd, 'R');
 		}
 		if (profile && (captured || changes))
 			fprintf(stderr, "x11-epd: mode=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu ipc_update_us=%llu total_us=%llu capture_mono_us=%llu damage_wait_us=%llu ack_mono_us=%llu\n",
@@ -1365,6 +1586,8 @@ wait_input:
 	}
 
 failed:
+	sleep_reply(&sleep_fd, 0);
+	if (sleep_index) unlink(SLEEP_SOCKET);
 	unlink(argv[2]);
 	stop_worker(&worker);
 	return EXIT_FAILURE;

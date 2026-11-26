@@ -121,7 +121,7 @@ jobs:
       - name: Install X11 test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev xvfb xauth tk
+          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth tk
       - name: Fetch pinned kernel UAPI and test renderer
         run: |
           set -euo pipefail
@@ -129,7 +129,7 @@ jobs:
           curl -fsSL --retry 3 https://raw.githubusercontent.com/Arnavion/linux/facc87117511221bb61410e3f92ad8579697f736/include/uapi/linux/sun5i-eink.h -o /tmp/pb626-uapi/linux/sun5i-eink.h
           gcc -O2 -Wall -Wextra -Werror -I /tmp/pb626-uapi display/test-pb626-epd.c -o /tmp/test-pb626-epd
           /tmp/test-pb626-epd
-          gcc -O2 -Wall -Wextra -Werror display/test-pb626-x11-epd.c -o /tmp/test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lm
+          gcc -O2 -Wall -Wextra -Werror display/test-pb626-x11-epd.c -o /tmp/test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
           /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x24' /tmp/test-pb626-x11-epd
