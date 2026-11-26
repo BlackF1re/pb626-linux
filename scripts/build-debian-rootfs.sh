@@ -111,7 +111,7 @@ in_build env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-reco
   libxtst-dev libxdamage-dev libxrandr-dev libpng-dev libjpeg-dev libexpat1-dev libfakekey-dev \
   libmatchbox-dev libstartup-notification0-dev libcairo2-dev
 sudo install -d "$build/tmp/pb626-build" "$pkg/usr/bin" "$pkg/usr/libexec/pb626/bin"
-sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
+sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
 sudo cp -a "$kernel/uapi" "$build/tmp/pb626-build/uapi"
 sudo install -m 644 display/{matchbox-keyboard-eink.patch,matchbox-panel-power-supply.patch} "$build/tmp/pb626-build/"
 

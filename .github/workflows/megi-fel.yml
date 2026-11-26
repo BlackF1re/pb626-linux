@@ -365,7 +365,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: bridge-cache
-          key: pb626-display-binaries-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop-cache/SHA256SUMS', 'scripts/build-megi-desktop.sh', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/pb626-x11-epd.c', 'display/pb626-sleep.h', 'display/test-pb626-*.c', 'fel-bundle/uapi/linux/sun5i-eink.h') }}
+          key: pb626-display-binaries-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop-cache/SHA256SUMS', 'scripts/build-megi-desktop.sh', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/pb626-x11-epd.c', 'display/pb626-sleep.h', 'display/pb626-ddx-fb.h', 'display/test-pb626-*.c', 'fel-bundle/uapi/linux/sun5i-eink.h') }}
       - name: Assemble paired firmware from current FEL bundle and cached desktop
         run: bash scripts/build-megi-desktop.sh fel-bundle desktop-cache bridge-cache
       - uses: actions/upload-artifact@v4

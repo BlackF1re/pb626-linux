@@ -34,7 +34,7 @@ if [[ -f "$bridge/SHA256SUMS" ]]; then
   sudo install -m 755 "$bridge/pb626-x11-epd" desktop-root/usr/bin/pb626-x11-epd
   cp "$bridge/native-worker" ./native-worker
 else
-sudo install -m 644 display/{pb626-x11-epd.c,test-pb626-x11-epd.c,pb626-epd.c,test-pb626-epd.c,pb626-epd.h,pb626-sleep.h} desktop-root/tmp/
+sudo install -m 644 display/{pb626-x11-epd.c,test-pb626-x11-epd.c,pb626-epd.c,test-pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h} desktop-root/tmp/
 sudo cp -r "$bundle/uapi" desktop-root/tmp/uapi
 sudo cp /etc/resolv.conf desktop-root/etc/resolv.conf
 sudo chroot desktop-root /usr/bin/qemu-arm-static /sbin/apk add --no-cache --virtual .pb626-bridge-build \
@@ -68,7 +68,7 @@ fi
 sudo install -m 755 ./native-worker desktop-root/tmp/native-worker
 test "$(sudo chroot desktop-root /usr/bin/qemu-arm-static /tmp/native-worker --protocol)" = pb626-epd-shm-4
 sudo chroot desktop-root /usr/bin/qemu-arm-static /lib/ld-musl-armhf.so.1 --list /usr/bin/pb626-x11-epd
-sudo rm -rf desktop-root/tmp/{pb626-x11-epd.c,test-pb626-x11-epd.c,test-pb626-x11-epd,pb626-epd.c,test-pb626-epd.c,test-native-worker,native-worker,pb626-epd.h,pb626-sleep.h,uapi} desktop-root/usr/bin/qemu-arm-static
+sudo rm -rf desktop-root/tmp/{pb626-x11-epd.c,test-pb626-x11-epd.c,test-pb626-x11-epd,pb626-epd.c,test-pb626-epd.c,test-native-worker,native-worker,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h,uapi} desktop-root/usr/bin/qemu-arm-static
 printf 'nameserver 1.1.1.1\n' | sudo tee desktop-root/etc/resolv.conf >/dev/null
 
 sudo install -m 755 display/pb626-desktop display/pb626-xsession display/pb626-settings desktop-root/usr/bin/

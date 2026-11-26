@@ -179,6 +179,30 @@ static void test_power_press(void)
 	close(fds[0]);
 }
 
+static void test_ddx_layout(void)
+{
+	struct pb626_ddx_fb h = {
+		.magic = PB626_DDX_FB_MAGIC, .version = PB626_DDX_FB_VERSION,
+		.capacity = 760 * 1024 * 2, .width = 760, .height = 1024,
+		.stride = 760 * 2, .depth = 16, .bpp = 16,
+		.red = 0xf800, .green = 0x07e0, .blue = 0x001f,
+	};
+	size_t size = PB626_DDX_FB_OFFSET + h.capacity;
+	assert(ddx_layout(&h, size, 1, 0, 758, 1024));
+	assert(!ddx_layout(&h, size, -1, 0, 1, 1));
+	assert(!ddx_layout(&h, size, 759, 0, 2, 1));
+	assert(!ddx_layout(&h, size, 0, 1023, 1, 2));
+	assert(!ddx_layout(&h, size - 1, 0, 0, 1, 1));
+	h.stride = 16;
+	assert(!ddx_layout(&h, size, 0, 0, 1, 1));
+	h.stride = 760 * 2;
+	h.height = UINT32_MAX;
+	assert(!ddx_layout(&h, size, 0, 0, 1, 1));
+	h.height = 1024;
+	h.blue = 0xff;
+	assert(!ddx_layout(&h, size, 0, 0, 1, 1));
+}
+
 static void test_x11_capture(void)
 {
 	Display *display = XOpenDisplay(NULL);
@@ -203,6 +227,24 @@ static void test_x11_capture(void)
 	XShmSegmentInfo shm = {0}, fallback = {0};
 	setup_shm(display, &shm);
 	assert(shm.shmaddr);
+	/* Simulate an exported root pixmap and compare direct strided reads
+	 * (including nonzero x/y offsets) against the existing server path. */
+	XImage *root_image = XGetImage(display, root, 0, 0,
+				     DisplayWidth(display, screen), DisplayHeight(display, screen),
+				     AllPlanes, ZPixmap);
+	assert(root_image);
+	size_t capacity = (size_t)root_image->bytes_per_line * root_image->height;
+	struct pb626_ddx_fb *mapping = calloc(1, PB626_DDX_FB_OFFSET + capacity);
+	assert(mapping);
+	*mapping = (struct pb626_ddx_fb){
+		.magic = PB626_DDX_FB_MAGIC, .version = PB626_DDX_FB_VERSION,
+		.capacity = capacity, .width = root_image->width, .height = root_image->height,
+		.stride = root_image->bytes_per_line, .depth = root_image->depth,
+		.bpp = root_image->bits_per_pixel, .red = root_image->red_mask,
+		.green = root_image->green_mask, .blue = root_image->blue_mask,
+	};
+	memcpy((char *)mapping + PB626_DDX_FB_OFFSET, root_image->data, capacity);
+	XDestroyImage(root_image);
 	static uint8_t full_luma[PIXELS], reference[PACKED_PIXELS], candidate[PACKED_PIXELS];
 	struct rect full = {0, 0, WIDTH, HEIGHT};
 	struct rect pointer = {125, 125, 136, 136};
@@ -244,7 +286,24 @@ static void test_x11_capture(void)
 				assert(!capture(display, root, offset, area, candidate, pointer, 1, &stats, &fallback));
 			}
 		assert(!memcmp(reference, candidate, sizeof(reference)));
+		ddx_fb = mapping;
+		ddx_size = PB626_DDX_FB_OFFSET + capacity;
+		memset(candidate, 0, sizeof(candidate));
+		for (int top = 0; top < HEIGHT; top += 173)
+			for (int left = 0; left < WIDTH; left += 181) {
+				struct rect area = {left, top, left + 181 < WIDTH ? left + 181 : WIDTH,
+					top + 173 < HEIGHT ? top + 173 : HEIGHT};
+				assert(!capture(display, root, offset, area, candidate, pointer, 1, &stats, &fallback));
+			}
+		assert(!memcmp(reference, candidate, sizeof(reference)));
+		/* Prove direct path was eligible, not just the fallback. */
+		XImage *direct = ddx_image(display, offset, 17, 19, 23);
+		assert(direct);
+		finish_image(display, direct, 1);
+		ddx_fb = NULL;
+		ddx_size = 0;
 	}
+	free(mapping);
 	assert(!grab_lock(display, root));
 	release_lock(display);
 	XShmDetach(display, &shm);
@@ -353,6 +412,7 @@ int main(void)
 	test_worker_deadlines();
 	test_packed_rgb565();
 	test_gray_rows();
+	test_ddx_layout();
 	test_gray();
 	test_contrast_row();
 	test_stock_sleep();

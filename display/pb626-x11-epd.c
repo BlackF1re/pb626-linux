@@ -31,6 +31,7 @@
 #include <unistd.h>
 
 #include "pb626-epd.h"
+#include "pb626-ddx-fb.h"
 #include "pb626-sleep.h"
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -776,9 +777,105 @@ static void setup_shm(Display *display, XShmSegmentInfo *shm)
 	shmctl(id, IPC_RMID, NULL);
 }
 
-static XImage *read_image(Display *display, Window root, int x, int y, int width, int height,
-			  XShmSegmentInfo *shm)
+/* Read-only view of the private DDX's existing root framebuffer. No
+ * direct write, DMA ownership, or new full-screen buffer in the bridge. */
+static const struct pb626_ddx_fb *ddx_fb;
+static size_t ddx_size;
+
+static int ddx_layout(const struct pb626_ddx_fb *h, size_t size,
+		      int x, int y, int width, int height)
 {
+	if (size < PB626_DDX_FB_OFFSET ||
+	    h->magic != PB626_DDX_FB_MAGIC || h->version != PB626_DDX_FB_VERSION ||
+	    h->capacity > PB626_DDX_FB_MAX || h->capacity != size - PB626_DDX_FB_OFFSET ||
+	    !h->width || !h->height || !h->stride || (h->stride & 3) ||
+	    !((h->depth == 16 && h->bpp == 16 &&
+	       h->red == 0xf800 && h->green == 0x07e0 && h->blue == 0x001f) ||
+	      (h->depth == 24 && h->bpp == 32 &&
+	       h->red == 0xff0000 && h->green == 0xff00 && h->blue == 0xff)))
+		return 0;
+	if ((uint64_t)h->width * (h->bpp / 8) > h->stride ||
+	    (uint64_t)h->height * h->stride > h->capacity ||
+	    x < 0 || y < 0 || width <= 0 || height <= 0 ||
+	    (uint64_t)x + width > h->width || (uint64_t)y + height > h->height)
+		return 0;
+	return 1;
+}
+
+static void setup_ddx(void)
+{
+	const char *enabled = getenv("PB626_DDX_SHARED");
+	if (!enabled || strcmp(enabled, "1"))
+		return;
+	int fd = open(PB626_DDX_FB_PATH, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd < 0)
+		return;
+	struct stat st;
+	if (!fstat(fd, &st) && S_ISREG(st.st_mode) && st.st_uid == 0 &&
+	    !(st.st_mode & 077) && st.st_size > PB626_DDX_FB_OFFSET &&
+	    st.st_size <= PB626_DDX_FB_OFFSET + PB626_DDX_FB_MAX) {
+		void *map = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+		if (map != MAP_FAILED) {
+			ddx_fb = map;
+			ddx_size = st.st_size;
+		}
+	}
+	close(fd);
+}
+
+static XImage *ddx_image(Display *display, int x, int y, int width, int height)
+{
+	if (!ddx_fb || ImageByteOrder(display) != LSBFirst)
+		return NULL;
+	/* Serialize against software rendering and RandR resize; hold the
+	 * grab only for a bounded strip, never across scanout or worker IPC. */
+	XGrabServer(display);
+	XSync(display, False);
+	const struct pb626_ddx_fb *h = ddx_fb;
+	int screen = DefaultScreen(display);
+	Visual *visual = DefaultVisual(display, screen);
+	if (ddx_layout(h, ddx_size, x, y, width, height) &&
+	    h->width == (unsigned int)DisplayWidth(display, screen) &&
+	    h->height == (unsigned int)DisplayHeight(display, screen) &&
+	    h->depth == (unsigned int)DefaultDepth(display, screen) &&
+	    visual->red_mask == h->red && visual->green_mask == h->green &&
+	    visual->blue_mask == h->blue) {
+		const char *pixels = (const char *)h + PB626_DDX_FB_OFFSET;
+		XImage *image = XCreateImage(display, visual, h->depth, ZPixmap, 0,
+					    (char *)pixels + (size_t)y * h->stride + x * (h->bpp / 8),
+					    width, height, 32, h->stride);
+		if (image) {
+			if (image->bits_per_pixel == (int)h->bpp)
+				return image;
+			image->data = NULL;
+			XDestroyImage(image);
+		}
+	}
+	XUngrabServer(display);
+	XFlush(display);
+	return NULL;
+}
+
+static void finish_image(Display *display, XImage *image, int mapped)
+{
+	if (mapped)
+		image->data = NULL; /* Xlib must not free the mapped storage. */
+	XDestroyImage(image);
+	if (mapped) {
+		XUngrabServer(display);
+		XFlush(display);
+	}
+}
+
+static XImage *read_image(Display *display, Window root, int x, int y, int width, int height,
+			  XShmSegmentInfo *shm, int *mapped)
+{
+	*mapped = 0;
+	XImage *direct = ddx_image(display, x, y, width, height);
+	if (direct) {
+		*mapped = 1;
+		return direct;
+	}
 	if (shm->shmaddr) {
 		int screen = DefaultScreen(display);
 		XImage *image = XShmCreateImage(display, DefaultVisual(display, screen),
@@ -816,9 +913,10 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 		strip.bottom = top + CAPTURE_ROWS < area.bottom ? top + CAPTURE_ROWS : area.bottom;
 		struct rect read_area = clipped(strip, uses_contrast);
 		uint64_t start = now_us();
+		int mapped;
 		XImage *image = read_image(display, root, read_area.left + offset, read_area.top + capture_y_offset,
 					  read_area.right - read_area.left, read_area.bottom - read_area.top,
-					  shm);
+					  shm, &mapped);
 		if (!image)
 			return -1;
 		stats->read_us += now_us() - start;
@@ -878,7 +976,7 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 				}
 			}
 		}
-		XDestroyImage(image);
+		finish_image(display, image, mapped);
 		stats->quant_us += now_us() - start;
 	}
 	stats->pixels += (area.right - area.left) * (area.bottom - area.top);
@@ -1582,7 +1680,9 @@ int main(int argc, char **argv)
 		}
 	}
 	XShmSegmentInfo shm = {0};
-	setup_shm(display, &shm);
+	setup_ddx();
+	if (!ddx_fb)
+		setup_shm(display, &shm);
 	int precleared = init_sent && await_ack(&worker, INIT_PANEL) == 0;
 	if (marker && profile)
 		fprintf(stderr, "preclear: %s mono_us=%llu\n",
@@ -1595,6 +1695,7 @@ int main(int argc, char **argv)
 	}
 	if (profile)
 		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f fast=%s\n",
+                ddx_fb ? "DDX-map (with XGetImage fallback)" :
                 shm.shmaddr ? "MIT-SHM" : "XGetImage", profiles[selected],
                 lightness ? "cie-lstar" : "srgb", gamma,
                 fast_mode == FAST_A2 ? "a2" : fast_mode == FAST_DU4 ? "du4" :
