@@ -523,7 +523,7 @@ static unsigned int channel(unsigned long pixel, unsigned long mask)
 	return ((pixel & mask) >> shift) * 255 / (mask >> shift);
 }
 
-enum gray_profile { GRAY_BALANCED, GRAY_UI, GRAY_PHOTO, GRAY_LEGACY };
+enum gray_profile { GRAY_BALANCED, GRAY_UI, GRAY_PHOTO, GRAY_LEGACY, GRAY_MONO };
 enum { LUMA_STEPS = 4096 };
 static enum gray_profile gray_profile;
 static uint16_t linear_r[256], linear_g[256], linear_b[256];
@@ -607,6 +607,8 @@ static const uint8_t blue_noise[16][16] = {
 
 static inline uint8_t quantize_reference(unsigned int value, unsigned int contrast, int x, int y)
 {
+	if (gray_profile == GRAY_MONO)
+		return value >= 128 ? WHITE : 0;
 	if (gray_profile == GRAY_UI)
 		return (value * WHITE + 127) / 255;
 	if (gray_profile == GRAY_PHOTO && contrast < 48) {
@@ -631,7 +633,7 @@ static void setup_quantization(void)
 	int period = gray_profile == GRAY_PHOTO ? 16 : 4;
 	for (int v = 0; v < 256; v++) {
 		nearest_level[v] = quantize_reference(v, 48, 0, 0);
-		if (gray_profile != GRAY_UI)
+		if (gray_profile != GRAY_UI && gray_profile != GRAY_MONO)
 			for (int y = 0; y < period; y++)
 				for (int x = 0; x < period; x++)
 					quant_table[y][x][v] = quantize_reference(v, 0, x, y);
@@ -642,7 +644,7 @@ static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x,
 {
 	if (quant_reference)
 		return quantize_reference(value, contrast, x, y);
-	if (contrast >= 48 || gray_profile == GRAY_UI)
+	if (contrast >= 48 || gray_profile == GRAY_UI || gray_profile == GRAY_MONO)
 		return nearest_level[value];
 	unsigned int mask = gray_profile == GRAY_PHOTO ? 15 : 3;
 	return quant_table[y & mask][x & mask][value];
@@ -803,7 +805,7 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 	static uint8_t lightness[3][HEIGHT];
 	uint16_t contrast[HEIGHT];
 	const int w = logical_width(capture_rotation), h = logical_height(capture_rotation);
-	int uses_contrast = gray_profile != GRAY_UI;
+	int uses_contrast = gray_profile != GRAY_UI && gray_profile != GRAY_MONO;
 	int draw_pointer = nonempty(pointer);
 	struct rect area = clipped(dirty, uses_contrast);
 	if (!nonempty(area))
@@ -860,7 +862,9 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 				const uint8_t *pixel = lightness[output_y % 3] + x;
 				unsigned int value = *pixel;
 				uint8_t next = value / 17;
-				if (value != 17u * next) {
+				if (gray_profile == GRAY_MONO)
+					next = value >= 128 ? WHITE : 0;
+				else if (value != 17u * next) {
 					size_t i = panel_index(capture_rotation, x, output_y);
 					next = quantize(value, uses_contrast ? contrast[x] : 0, (int)(i % WIDTH), (int)(i / WIDTH));
 				}
@@ -1389,7 +1393,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Usage: pb626-x11-epd DEFAULT.WBF READY\n");
 		return EXIT_FAILURE;
 	}
-	static const char *const profiles[] = {"balanced", "ui", "photo", "legacy"};
+	static const char *const profiles[] = {"balanced", "ui", "photo", "legacy", "mono"};
 	const char *gray = getenv("PB626_EPD_GRAY_PROFILE");
 	enum gray_profile selected = GRAY_BALANCED;
 	if (gray) {
@@ -1427,7 +1431,7 @@ int main(int argc, char **argv)
         else if (!strcmp(fast, "auto"))
             fast_mode = FAST_AUTO;
         else {
-            fprintf(stderr, "pb626-x11-epd: fast mode must be du, a2, or du4\n");
+            fprintf(stderr, "pb626-x11-epd: fast mode must be du, auto, a2, or du4\n");
             return EXIT_FAILURE;
         }
     }

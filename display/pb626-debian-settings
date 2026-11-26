@@ -163,8 +163,8 @@ proc updateStatus {} {
     .tabs.system.info configure -state disabled
 }
 proc desktopApply {} {
-    global buttons home menu gray depth idle
-    if {[act desktop-settings $buttons $home $menu $gray $depth $idle]} {
+    global buttons home menu gray depth idle fast
+    if {[act desktop-settings $buttons $home $menu $gray $depth $idle $fast]} {
         tk_messageBox -title "Saved" -message "Settings saved. Restart the desktop or reboot to apply. Save open documents first."
     }
 }
@@ -177,6 +177,7 @@ set buttons arrows
 set home keyboard
 set menu menu
 set gray balanced
+set fast du
 set depth 16
 set idle 0
 if {![catch {query desktop-status} data]} {
@@ -187,6 +188,7 @@ if {![catch {query desktop-status} data]} {
             PB626_HOME_KEY {set home $value}
             PB626_MENU_KEY {set menu $value}
             PB626_EPD_GRAY_PROFILE {set gray $value}
+            PB626_EPD_FAST_MODE {set fast $value}
             PB626_XORG_DEPTH {set depth $value}
             PB626_IDLE_MINUTES {set idle $value}
         }
@@ -237,9 +239,10 @@ button $p.switch.on -text "Turn on" -command {lightSwitch light-on}
 button $p.switch.off -text "Turn off" -command {lightSwitch light-off}
 pack $p.switch.on $p.switch.off -side left -expand 1 -fill x -padx 3
 pack $p.switch -fill x -padx 12 -pady 4
-choose $p gray "Grayscale profile" gray {balanced ui photo legacy}
+choose $p gray "Grayscale profile" gray {balanced ui photo legacy mono}
+choose $p fast "Fast waveform" fast {du auto a2 du4}
 choose $p depth "X11 color depth" depth {16 24}
-label $p.note -text "16 panel gray levels in both X11 modes.\nDisplay profile changes apply after restart." -justify left
+label $p.note -text "Mono uses black and white only. Other profiles retain 16 gray levels.\nDisplay profile changes apply after restart." -justify left
 pack $p.note -pady 6
 button $p.save -text "Save display / desktop settings" -command desktopApply
 pack $p.save -fill x -padx 12 -pady 5

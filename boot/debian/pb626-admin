@@ -143,7 +143,7 @@ valid_desktop() {
     case "$1" in arrows|pages) ;; *) return 2 ;; esac
     case "$2" in keyboard|home) ;; *) return 2 ;; esac
     case "$3" in menu|escape) ;; *) return 2 ;; esac
-    case "$4" in balanced|ui|photo|legacy) ;; *) return 2 ;; esac
+    case "$4" in balanced|ui|photo|legacy|mono) ;; *) return 2 ;; esac
     case "$5" in 16|24) ;; *) return 2 ;; esac
     case "$6" in 0|5|10|15|30|60) ;; *) return 2 ;; esac
     [ "$6" = 0 ] || [ -f /etc/pb626/suspend-qualified ]
@@ -306,10 +306,12 @@ desktop-status)
     if [ -r "$state/desktop.conf" ]; then cat "$state/desktop.conf"; fi
     ;;
 desktop-settings)
-    [ "$#" -eq 7 ] && valid_desktop "$2" "$3" "$4" "$5" "$6" "$7" || exit 2
+    { [ "$#" -eq 7 ] || [ "$#" -eq 8 ]; } && valid_desktop "$2" "$3" "$4" "$5" "$6" "$7" || exit 2
+    fast_mode=${8-du}
+    case "$fast_mode" in du|auto|a2|du4) ;; *) exit 2 ;; esac
     lock_state
     atomic_save desktop.conf "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" \
-        "PB626_MENU_KEY=$4" "PB626_EPD_GRAY_PROFILE=$5" "PB626_XORG_DEPTH=$6" "PB626_IDLE_MINUTES=$7"
+        "PB626_MENU_KEY=$4" "PB626_EPD_GRAY_PROFILE=$5" "PB626_XORG_DEPTH=$6" "PB626_IDLE_MINUTES=$7" "PB626_EPD_FAST_MODE=$fast_mode"
     ;;
 restart-desktop)
     [ "$#" -eq 1 ] || exit 2

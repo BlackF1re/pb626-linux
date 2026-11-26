@@ -39,7 +39,7 @@ static void test_packed_rgb565(void)
 			nibble_set(packed, 1, j);
 			assert(nibble_get(packed, 0) == i && nibble_get(packed, 1) == j);
 		}
-	for (int profile = GRAY_BALANCED; profile <= GRAY_LEGACY; profile++) {
+	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++) {
 		setup_gray(profile, 0, 1.0);
 		for (unsigned int p = 0; p <= 65535; p++)
 			assert(rgb565_gray(p) == gray_value(channel(p, 0xf800),
@@ -61,7 +61,7 @@ static void test_gray_rows(void)
 		src32[4 * i + 2] = i < 16 ? src32[4 * i] : i * 71;
 		src32[4 * i + 3] = i * 83;
 	}
-	for (int profile = GRAY_BALANCED; profile <= GRAY_LEGACY; profile++)
+	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++)
 		for (int tone = 0; tone < 2; tone++)
 			for (int gamma = 0; gamma < 2; gamma++) {
 				setup_gray(profile, tone, gamma ? 1.2 : 1.0);
@@ -120,6 +120,9 @@ static void test_gray(void)
 	assert(gray_value(255, 255, 254) == 255);
 	setup_gray(GRAY_UI, 0, 1.0);
 	assert(quantize(127, 0, 0, 0) == 7 && quantize(127, 0, 1, 0) == 7);
+	setup_gray(GRAY_MONO, 0, 1.0);
+	for (unsigned int v = 0; v < 256; v++)
+		assert(quantize(v, 0, 0, 0) == (v >= 128 ? WHITE : 0));
 	setup_gray(GRAY_PHOTO, 0, 1.0);
 	int count = 0;
 	for (int y = 0; y < 16; y++)
@@ -142,7 +145,7 @@ static void test_gray(void)
 	assert(gray_value(255, 0, 0) == 56);
 	assert(quantize(127, 0, 0, 0) == paper_level(127, 0, 0, 0));
 	unsetenv("PB626_EPD_QUANT_REFERENCE");
-	for (int profile = GRAY_BALANCED; profile <= GRAY_LEGACY; profile++) {
+	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++) {
 		setup_gray(profile, 0, 1.0);
 		setup_quantization();
 		for (int y = 0; y < 16; y++)
@@ -203,7 +206,7 @@ static void test_x11_capture(void)
 	static uint8_t full_luma[PIXELS], reference[PACKED_PIXELS], candidate[PACKED_PIXELS];
 	struct rect full = {0, 0, WIDTH, HEIGHT};
 	struct rect pointer = {125, 125, 136, 136};
-	for (int profile = GRAY_BALANCED; profile <= GRAY_LEGACY; profile++) {
+	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++) {
 		setup_gray(profile, 0, 1.0);
 		setup_quantization();
 		XImage *image = XGetImage(display, root, offset, 0, WIDTH, HEIGHT, AllPlanes, ZPixmap);
@@ -219,13 +222,13 @@ static void test_x11_capture(void)
 			for (int x = 0; x < WIDTH; x++) {
 				size_t i = y * WIDTH + x;
 				unsigned int v = full_luma[i], contrast = 0;
-				if (profile != GRAY_UI) {
+				if (profile != GRAY_UI && profile != GRAY_MONO) {
 					contrast = abs((int)v - (int)(x ? full_luma[i - 1] : v)) +
 						abs((int)v - (int)(x + 1 < WIDTH ? full_luma[i + 1] : v)) +
 						abs((int)v - (int)(y ? full_luma[i - WIDTH] : v)) +
 						abs((int)v - (int)(y + 1 < HEIGHT ? full_luma[i + WIDTH] : v));
 				}
-				uint8_t level = v % 17 ? quantize_reference(v, contrast, x, y) : v / 17;
+				uint8_t level = (profile == GRAY_MONO || v % 17) ? quantize_reference(v, contrast, x, y) : v / 17;
 				nibble_set(reference, i, pointer_level(pointer, 1, x, y, level));
 			}
 		struct capture_stats stats = {0};
