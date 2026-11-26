@@ -1,8 +1,7 @@
 name: Build native Linux and FEL recovery
 
-# Main produces the shared caches and downloadable firmware. Use Run workflow
-# on a feature branch for a full pre-merge build. Workflow edits also validate
-# automatically on PRs; ordinary PRs run the lightweight CI instead.
+# Main produces release artifacts. Feature branches build only via Run workflow.
+# Lightweight CI still checks PR commits.
 on:
   push:
     branches: [main]
@@ -29,17 +28,6 @@ on:
       - 'patches/a13-mbus-dma-devlink.patch'
       - 'patches/ektf2227-pocketbook-touch.patch'
       - 'patches/pwm-backlight-disconnect-when-off.patch'
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/megi-fel.yml'
-      - 'scripts/build-native-rootfs.sh'
-      - 'scripts/build-debian-rootfs.sh'
-      - 'boot/debian/**'
-      - 'scripts/configure-megi-kernel.sh'
-      - 'scripts/build-megi-variants.sh'
-      - 'board/**'
-      - 'boot/native/zram-init'
   workflow_dispatch:
 
 concurrency:
