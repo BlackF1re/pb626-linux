@@ -1,4 +1,7 @@
 [Unit]
+Requires=pb626-boot-select.service
+After=pb626-boot-select.service
+ConditionPathExists=/run/pb626-normal-boot
 Description=Show a low battery warning in the active X11 session
 After=pb626-desktop.service
 ConditionPathExists=/run/pb626-desktop/ready

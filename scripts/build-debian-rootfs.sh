@@ -123,6 +123,7 @@ in_build env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-reco
 sudo install -d "$build/tmp/pb626-build" "$pkg/usr/bin" "$pkg/usr/libexec/pb626/bin"
 sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
 sudo cp -a "$kernel/uapi" "$build/tmp/pb626-build/uapi"
+sudo install -m 644 boot/debian/pb626-charge.c "$build/tmp/pb626-build/"
 sudo install -m 644 display/{matchbox-keyboard-eink.patch,matchbox-panel-power-supply.patch,xorg-dummy-pb626-shared.patch} "$build/tmp/pb626-build/"
 
 fetch_source() {
@@ -145,6 +146,9 @@ in_build /bin/bash -euc '
   cc -mfpu=neon -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
   ./test-pb626-epd
   ./test-pb626-x11-epd
+  cc -O2 -Wall -Wextra -Werror pb626-charge.c -o pb626-charge
+  ./pb626-charge --self-test
+  strip pb626-charge
   test "$(./pb626-epd --protocol)" = pb626-epd-shm-4
   strip pb626-epd pb626-x11-epd
   # Build against the actual target Xorg module ABI. The vendor package is
@@ -180,6 +184,7 @@ in_build /bin/bash -euc '
 '
 built="$build/tmp/pb626-build"
 sudo install -m 755 "$built"/{pb626-epd,pb626-x11-epd} "$pkg/usr/bin/"
+sudo install -D -m 755 "$built/pb626-charge" "$pkg/usr/libexec/pb626-charge"
 sudo install -D -m 644 "$built/xserver-xorg-video-dummy-0.4.0/src/.libs/dummy_drv.so" "$pkg/usr/lib/pb626/xorg/drivers/dummy_drv.so"
 sudo install -D -m 644 "$built/xserver-xorg-video-dummy-0.4.0/debian/copyright" "$pkg/usr/share/doc/pb626-runtime/xorg-dummy-copyright"
 sudo install -D -m 644 "$built/xserver-xorg-video-dummy-0.4.0/COPYING" "$pkg/usr/share/doc/pb626-runtime/xorg-dummy-COPYING"
@@ -278,8 +283,8 @@ sudo install -d "$root/var/log/journal"
 
 # Offline systemctl changes unit links, never runs a daemon in the chroot.
 ctl() { sudo systemctl --root="$root" "$@"; }
-ctl set-default multi-user.target
-ctl enable pb626-board.service pb626-desktop.service pb626-usb.service pb626-battery.timer pb626-poweroff-screen.service \
+ctl set-default pb626-boot.target
+ctl enable pb626-board.service pb626-desktop.service pb626-usb.service pb626-battery.timer pb626-poweroff-screen.service pb626-reboot-marker.service \
   systemd-resolved.service systemd-timesyncd.service
 # iwd starts on demand; user can enable it persistently from Settings.
 # D-Bus activation is permitted for the normal iwgtk/iwctl clients.
@@ -335,9 +340,11 @@ in_root /bin/bash -euc '
     fi
   done
   test -x /usr/bin/dbus-run-session
+  /usr/libexec/pb626-charge --self-test
   # Validate the installed target units/drop-ins with the target Debian
   # systemd version instead of the host version. No services are started.
   systemd-analyze --man=no --generators=no --recursive-errors=one verify \
+    pb626-boot.target pb626-boot-select.service pb626-charge.target pb626-charge.service pb626-charge-fallback.service pb626-reboot-marker.service \
     pb626.slice pb626-desktop.service pb626-board.service pb626-usb.service \
     pb626-battery.service pb626-battery.timer pb626-battery-confirm.timer \
     pb626-battery-warning.service pb626-poweroff-screen.service pb626-sleep.service \
@@ -345,7 +352,8 @@ in_root /bin/bash -euc '
     serial-getty@ttyGS0.service
   udevadm verify /usr/lib/udev/rules.d/7*-pb626-*.rules
 '
-for unit in pb626-board.service pb626-desktop.service pb626-usb.service systemd-resolved.service; do
+test "$(ctl get-default)" = pb626-boot.target
+for unit in pb626-board.service pb626-desktop.service pb626-usb.service systemd-resolved.service pb626-reboot-marker.service; do
   test "$(ctl is-enabled "$unit")" = enabled
 done
 for unit in iwd.service man-db.timer e2scrub_all.timer e2scrub_reap.service; do

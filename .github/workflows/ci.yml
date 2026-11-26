@@ -67,6 +67,8 @@ jobs:
           bash -n scripts/prepare-install.sh
           sh -n boot/recovery/init
           sh -n scripts/installer/pb626.sh
+          gcc -O2 -Wall -Wextra -Werror boot/debian/pb626-charge.c -o /tmp/test-pb626-charge
+          /tmp/test-pb626-charge --self-test
           sh -n boot/debian/pb626-admin
           sh -n boot/debian/pb626-user-session
           sh tests/test-native-services.sh

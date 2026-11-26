@@ -1,0 +1,5 @@
+[Unit]
+Description=PocketBook boot mode selection
+Requires=pb626-boot-select.service
+After=pb626-boot-select.service
+AllowIsolate=yes

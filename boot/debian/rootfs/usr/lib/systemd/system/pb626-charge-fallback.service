@@ -1,0 +1,7 @@
+[Unit]
+Description=Return to ordinary boot if charge-only mode fails
+ConditionPathExists=/run/pb626-charge-mode
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pb626-charge normal

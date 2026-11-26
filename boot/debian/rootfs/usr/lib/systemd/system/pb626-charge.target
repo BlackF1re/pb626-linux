@@ -1,0 +1,4 @@
+[Unit]
+Description=PocketBook offline charging mode
+Requires=pb626-boot-select.service pb626-charge.service
+After=pb626-boot-select.service pb626-charge.service

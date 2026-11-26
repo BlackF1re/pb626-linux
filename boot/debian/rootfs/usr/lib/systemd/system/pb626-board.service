@@ -1,4 +1,7 @@
 [Unit]
+Requires=pb626-boot-select.service
+After=pb626-boot-select.service
+ConditionPathExists=/run/pb626-normal-boot
 Description=PocketBook board state
 ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
 After=local-fs.target systemd-udev-trigger.service

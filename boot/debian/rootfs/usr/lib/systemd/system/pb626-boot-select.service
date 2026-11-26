@@ -1,0 +1,11 @@
+[Unit]
+Description=Select normal or charger-only PocketBook boot
+ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
+After=local-fs.target systemd-udev-trigger.service
+Before=pb626-desktop.service pb626-board.service pb626-battery.service pb626-usb.service pb626-charge.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pb626-charge select
+TimeoutStartSec=15s
