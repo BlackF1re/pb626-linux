@@ -30,7 +30,7 @@ imgs=${1%/}
 variant=$2
 profile=$3
 option=${4:-}
-case "$variant" in elan-display|elan-emmc-backup) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
+case "$variant" in elan-display|elan-emmc-backup|elan-emmc-sd-backup) ;; *) echo "Invalid variant: $variant" >&2; exit 2;; esac
 case "$profile" in
   standard) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
   diagnostic) dtb="pb626-$variant.dtb"; initrd=pb626-megi-initramfs.cpio.gz ;;
@@ -76,11 +76,20 @@ check_sha "$kernel"
 check_sha "$fdt"
 check_sha "$ramfs"
 command -v fdtget >/dev/null || { echo 'Missing fdtget (device-tree-compiler)' >&2; exit 10; }
-if [[ $variant == elan-emmc-backup ]]; then
+if [[ $variant == elan-emmc-backup || $variant == elan-emmc-sd-backup ]]; then
     [[ $profile == diagnostic ]] || { echo "$variant requires the diagnostic profile" >&2; exit 13; }
     [[ $(fdtget -t s "$fdt" /soc/mmc@1c11000 status) == okay ]] || { echo "$variant requires MMC2" >&2; exit 13; }
     fdtget "$fdt" /chosen pb626,emmc-backup >/dev/null
-    [[ $(fdtget -t s "$fdt" /soc/mmc@1c0f000 status) == disabled ]] || { echo "UNSAFE: MMC0 enabled" >&2; exit 13; }
+    if [[ $variant == elan-emmc-sd-backup ]]; then
+        fdtget "$fdt" /chosen pb626,sd-backup >/dev/null
+        [[ $(fdtget -t s "$fdt" /soc/mmc@1c0f000 status) == okay ]]
+        [[ $(fdtget -t u "$fdt" /soc/mmc@1c0f000 max-frequency) == 12500000 ]]
+        for prop in no-1-8-v disable-wp no-mmc no-sdio; do
+            fdtget "$fdt" /soc/mmc@1c0f000 "$prop" >/dev/null
+        done
+    else
+        [[ $(fdtget -t s "$fdt" /soc/mmc@1c0f000 status) == disabled ]] || { echo "UNSAFE: MMC0 enabled" >&2; exit 13; }
+    fi
 else
     [[ $(fdtget -t s "$fdt" /soc/mmc@1c11000 status) == disabled ]] || { echo "UNSAFE: MMC2 enabled" >&2; exit 13; }
 fi

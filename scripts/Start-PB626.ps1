@@ -24,7 +24,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$BundleDir,
-    [ValidateSet('elan-display','elan-emmc-backup')][string]$Variant='elan-display',
+    [ValidateSet('elan-display','elan-emmc-backup','elan-emmc-sd-backup')][string]$Variant='elan-display',
     [ValidateSet('standard','diagnostic')][string]$Profile='standard',
     [string]$Distro='Ubuntu',
     [string]$LabDir,

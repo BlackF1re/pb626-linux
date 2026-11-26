@@ -51,13 +51,31 @@ dtb="$out/recovery/pb626-elan-emmc-backup.dtb"
 fdtget "$dtb" /chosen pb626,emmc-backup >/dev/null
 test "$(fdtget -t s "$dtb" /soc/mmc@1c11000 status)" = okay
 test "$(fdtget -t s "$dtb" /soc/mmc@1c0f000 status)" = disabled
+# Keep the validated eMMC-only DTB untouched. The separate opt-in SD
+# profile uses the same conservative parameters as native SD experiments.
+sd_dtb="$out/recovery/pb626-elan-emmc-sd-backup.dtb"
+cp "$dtb" "$sd_dtb"
+sd_node=/soc/mmc@1c0f000
+fdtput -t s "$sd_dtb" "$sd_node" status okay
+fdtput -t u "$sd_dtb" "$sd_node" max-frequency 12500000
+fdtput -t u "$sd_dtb" /regulator-mmc0 startup-delay-us 20000
+for prop in no-1-8-v disable-wp no-mmc no-sdio; do
+    fdtput "$sd_dtb" "$sd_node" "$prop"
+done
+fdtput "$sd_dtb" /chosen pb626,sd-backup
+test "$(fdtget -t s "$sd_dtb" /soc/mmc@1c11000 status)" = okay
+test "$(fdtget -t u "$sd_dtb" "$sd_node" bus-width)" = 4
+fdtget "$sd_dtb" "$sd_node" cd-gpios >/dev/null
+fdtget "$sd_dtb" "$sd_node" vmmc-supply >/dev/null
 ram="$out/recovery/pb626-megi-initramfs.cpio.gz"
 (cd "$root" && sudo find . -print0 | sudo cpio --null -o --format=newc --quiet) | gzip -n -9 >"$ram"
 # Keep this deliberately small; FEL transfers every byte with readback.
 test "$(stat -c '%s' "$ram")" -lt 4194304
 end=$((0x45000000 + $(stat -c '%s' "$ram")))
-fdtput -t x "$dtb" /chosen linux,initrd-start 45000000
-fdtput -t x "$dtb" /chosen linux,initrd-end "$(printf '%x' "$end")"
+for dtb in "$out/recovery/"*.dtb; do
+    fdtput -t x "$dtb" /chosen linux,initrd-start 45000000
+    fdtput -t x "$dtb" /chosen linux,initrd-end "$(printf '%x' "$end")"
+done
 cp scripts/{fel-boot.sh,Start-PB626.ps1} "$out/recovery/"
 git rev-parse HEAD >"$out/recovery/BUILD-COMMIT"
 (cd "$out/recovery" && sha256sum pb626-megi-zImage *.dtb *.gz BUILD-COMMIT fel-boot.sh Start-PB626.ps1 > SHA256SUMS)

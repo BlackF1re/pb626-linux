@@ -17,20 +17,39 @@ for n in $(seq 1 30); do
     [ -b "$disk" ] && [ -b "${disk}boot0" ] && [ -b "${disk}boot1" ] && break
     sleep 1
 done
-test -b "$disk" || fatal 'missing eMMC'
-test "$(cat /sys/class/block/mmcblk2/device/name)" = 8WPD3R || fatal 'wrong eMMC model'
+# A failed eMMC must not prevent SD diagnostics in the explicit SD profile.
+if [ -b "$disk" ]; then
+    test "$(cat /sys/class/block/mmcblk2/device/name)" = 8WPD3R || fatal 'wrong eMMC model'
+elif [ ! -e /sys/firmware/devicetree/base/chosen/pb626,sd-backup ]; then
+    fatal 'missing eMMC'
+fi
 for node in "$disk" "${disk}boot0" "${disk}boot1" "$disk"p[0-9]*; do
     [ -b "$node" ] || continue
     blockdev --setro "$node" || fatal "cannot lock $node"
     test "$(blockdev --getro "$node")" = 1 || fatal "unlocked $node"
 done
-for region in boot0 boot1; do
-    test -b "$disk$region" || fatal "missing $region"
-    test "$(cat /sys/class/block/mmcblk2$region/force_ro)" = 1 || fatal "unlocked $region"
-done
+if [ -b "$disk" ]; then
+    for region in boot0 boot1; do
+        test -b "$disk$region" || fatal "missing $region"
+        test "$(cat /sys/class/block/mmcblk2$region/force_ro)" = 1 || fatal "unlocked $region"
+    done
+fi
+# No automount; initially present SD media is locked as well. Hot-added
+# media is locked by the explicit sd-info operation before any transfer.
+if [ -e /sys/firmware/devicetree/base/chosen/pb626,sd-backup ]; then
+    for card in /sys/bus/mmc/devices/mmc0:*/block/mmcblk*; do
+        [ -d "$card" ] || continue
+        for node in "/dev/${card##*/}" "/dev/${card##*/}"p[0-9]*; do
+            [ -b "$node" ] || continue
+            blockdev --setro "$node" || fatal "cannot lock $node"
+        done
+    done
+fi
 cp /usr/libexec/pb626-restore-fast.sh /run/pb626-restore-fast.sh
 cp /usr/libexec/pb626-restore-scan /run/pb626-restore-scan
-/bin/sh /run/pb626-restore-fast.sh probe >/run/board-id || fatal 'board preflight failed'
+if [ -b "$disk" ]; then
+    /bin/sh /run/pb626-restore-fast.sh probe >/run/board-id || fatal 'board preflight failed'
+fi
 mount -t configfs configfs /sys/kernel/config || fatal configfs
 g=/sys/kernel/config/usb_gadget/pb626
 mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/acm.usb0" || fatal gadget

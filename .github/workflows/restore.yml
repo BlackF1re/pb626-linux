@@ -90,9 +90,15 @@ jobs:
           /dts-v1/;
           / {
             chosen { pb626,emmc-backup; };
+            regulator-mmc0 { };
             soc {
               mmc@1c11000 { status = "okay"; };
-              mmc@1c0f000 { status = "disabled"; };
+              mmc@1c0f000 {
+                status = "disabled";
+                bus-width = <4>;
+                cd-gpios = <1 2 3>;
+                vmmc-supply = <1>;
+              };
             };
           };
           EOF
