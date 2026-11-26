@@ -1,2 +1,2 @@
-Qualification: verified BT0 MMC settings, resume watchdog, high-resolution diagnostics and exact-input caches.
-Inputs: 01850eeced9d1965e0ab3706156fb02ad3a820ff
+Qualification: native power management, panel regulator error handling, UI scrolling and input recovery, renderer milestone and patch checks.
+Inputs: 3dd6de2cacd1975692a8f4c5a10617f1511b0e5e
