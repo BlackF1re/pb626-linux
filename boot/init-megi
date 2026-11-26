@@ -87,11 +87,10 @@ elif [ "$boot_source" = RAM ]; then
   done
 fi
 # Modules are included in RAM, so no SD card is required for any driver.
-if [ -d "/lib/modules/$(uname -r)" ]; then
-  for module in rtl8xxxu elants_i2c; do
-    modprobe "$module" 2>/dev/null || true
-  done
+if [ "$emmc_backup" = 0 ] && [ -d "/lib/modules/$(uname -r)" ]; then
+  modprobe rtl8xxxu 2>/dev/null || true
 fi
+# ELAN and the panel driver are built-in. Recovery has no Wi-Fi probe.
 # Distinct PE8 patterns after the first 30 seconds:
 # 100ms on / 900ms off: no UDC controller registered.
 # 300ms on / 700ms off: CONFIGFS / ACM gadget setup failed.

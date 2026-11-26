@@ -1,7 +1,8 @@
-# Built-in zram; no disk writeback. Size is logical uncompressed MiB.
+# One built-in zram swap device, no eMMC backing, no second compression layer.
+# 128 MiB is logical capacity, allocated on demand as compressed pages.
 load_on_start=no
 unload_on_stop=no
 num_devices=1
 type0=swap
-size0=64
-algo0=
+size0=128
+algo0=lz4

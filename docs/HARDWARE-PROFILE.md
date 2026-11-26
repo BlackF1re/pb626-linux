@@ -58,7 +58,7 @@ Common hardware from Megi DTS and the factory FEX:
 | Internal eMMC (late), internal SD (early) | MMC2 PC6–PC11 | disabled in display RAM; enabled read-only in recovery; native root on MMC2 |
 | ED060XD4-family 1024x758 E Ink | DEBE/TCON0 and PD GPIOs | Megi sun5i-eink V4L2 /dev/video0 |
 | Panel power | TPS65185 I2C1 0x68, PD18 wake, PD19 VCOM, PE7 power, PE6 good | TPS65185 regulator |
-| Panel waveform storage | SPI2 MX25U4033, PE0–PE3; vendor /boot/*.wbf | factory default.wbf supplied offline; no SPI writes |
+| Panel waveform storage | SPI2 MX25U4033 in inherited Megi DT; physical NOR on this unit unconfirmed; vendor /boot/*.wbf | factory default.wbf supplied offline; SPI2 disabled in standard DTBs, diagnostic modules only |
 | Touch input | I2C2 PB17/PB18, IRQ PG11, reset PB3, enable PE5 | patched ELAN eKTF2227 |
 | Frontlight | PB2 PWM0, PB4 enable | pwm-backlight |
 | Keys | GPIO PG9/PG10, LRADC Home/Menu | gpio-keys, sun4i-lradc-keys |

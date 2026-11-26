@@ -23,8 +23,9 @@ Use `rc-status -a`, `rc-service pb626-desktop restart`,
 dependency on Wi-Fi or USB. Device discovery uses mdev/hwdrivers; Lima
 remains blacklisted. Logs rotate at 256 KiB with two backups; renderer
 messages also go through syslog; Xorg diagnostics are volatile under /run. Inspect /var/log/messages.
-64 MiB logical zram uses the kernel's default compressor and no eMMC
-writeback. This is not 64 MiB of reserved physical RAM.
+128 MiB logical zram uses LZ4, with no eMMC writeback or zswap.
+This is not 128 MiB of reserved physical RAM. See [kernel policy](KERNEL-POLICY.md)
+for the CMA, module, resource-controller and diagnostic decisions.
 
 ## Access and settings
 

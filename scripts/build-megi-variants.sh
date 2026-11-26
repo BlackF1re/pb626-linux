@@ -28,7 +28,7 @@ for variant in elan-display elan-emmc-backup elan-emmc-native; do
       if [[ $variant == elan-emmc-native ]]; then cat "$repo/board/megi/elan-emmc-native.fragment" >> "$src"; fi
       ;;
     elan-emmc-backup)
-      for fragment in elan elan-emmc-backup; do
+      for fragment in elan elan-ektf2227 elan-emmc-backup; do
         cat "$repo/board/megi/$fragment.fragment" >> "$src"
       done
       ;;
@@ -48,11 +48,23 @@ done
 for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/memory@40000000' device_type)" = memory
   test "$(fdtget -t x "$dtb" '/memory@40000000' reg)" = "40000000 10000000"
+  test "$(fdtget -t x "$dtb" /reserved-memory/default-pool size)" = 2000000
+  test "$(fdtget -t x "$dtb" /reserved-memory/default-pool alloc-ranges)" = "40000000 10000000"
+  fdtget "$dtb" /reserved-memory/default-pool linux,cma-default >/dev/null
+  fdtget "$dtb" /reserved-memory/default-pool reusable >/dev/null
+  test "$(fdtget -t s "$dtb" /display-engine status)" = disabled
+  test "$(fdtget -t s "$dtb" /soc/video-codec@1c0e000 status)" = disabled
+  host_status=okay
+  gpu_status=okay
+  touch_status=okay
   emmc_status=disabled
   case "${dtb##*/}" in
     pb626-elan-emmc-backup.dtb)
       emmc_status=okay
       sd_status=disabled
+      host_status=disabled
+      gpu_status=disabled
+      touch_status=disabled
       fdtget "$dtb" /chosen pb626,emmc-backup >/dev/null
       ;;
     pb626-elan-display.dtb) sd_status=disabled ;;
@@ -68,9 +80,14 @@ for dtb in "$out"/pb626-*.dtb; do
   # Essential Megi board devices: firmware pinout does not equal driver success.
   test "$(fdtget -t s "$dtb" '/soc/usb@1c13000' dr_mode)" = peripheral
   test "$(fdtget -t s "$dtb" '/soc/usb@1c13000' status)" = okay
-  test "$(fdtget -t s "$dtb" '/soc/usb@1c14000' status)" = okay
-  test "$(fdtget -t s "$dtb" '/soc/usb@1c14400' status)" = okay
-  test "$(fdtget -t s "$dtb" '/soc/spi@1c17000' status)" = okay
+  test "$(fdtget -t s "$dtb" '/soc/usb@1c14000' status)" = "$host_status"
+  test "$(fdtget -t s "$dtb" '/soc/usb@1c14400' status)" = "$host_status"
+  # Missing status is equivalent to okay in the upstream Mali node.
+  test "$(fdtget -t s -d okay "$dtb" /soc/gpu@1c40000 status)" = "$gpu_status"
+  test "$(fdtget -t s "$dtb" /soc/i2c@1c2b400 status)" = "$touch_status"
+  test "$(fdtget -t s -d okay "$dtb" /soc/i2c@1c2b400/touchscreen@15 status)" = "$touch_status"
+  test "$(fdtget -t s "$dtb" /soc/i2c@1c2b400/touchscreen@15 compatible)" = elan,ektf2227
+  test "$(fdtget -t s "$dtb" '/soc/spi@1c17000' status)" = disabled
   test "$(fdtget -t s "$dtb" '/soc/spi@1c17000/flash@0' compatible)" = 'macronix,mx25u4033 jedec,spi-nor'
   test "$(fdtget -t s "$dtb" '/soc/i2c@1c2ac00/pmic@34' compatible)" = x-powers,axp209
   test "$(fdtget -t s "$dtb" '/soc/i2c@1c2b000/rtc@51' compatible)" = nxp,pcf8563
