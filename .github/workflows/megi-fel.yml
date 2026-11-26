@@ -17,6 +17,7 @@ on:
       - 'scripts/build-native-rootfs.sh'
       - 'scripts/build-debian-rootfs.sh'
       - 'scripts/build-debian-base.sh'
+      - 'scripts/compile-debian-native.sh'
       - 'diagnostics/**'
       - 'BT0-uncaged/**'
       - '.github/workflows/source-bootloader.yml'
@@ -454,14 +455,19 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: Install ARM compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
       - run: |
           sh -n diagnostics/pb626-diagnostics
           sh diagnostics/pb626-diagnostics --self-test
           mkdir diagnostic-dist
           install -m 755 diagnostics/pb626-diagnostics diagnostic-dist/pb626-diagnostics
+          arm-linux-gnueabihf-gcc -O2 -Wall -Wextra -Werror -static -s diagnostics/pb626-diag-clock.c -o diagnostic-dist/pb626-diag-clock
           cp diagnostics/README.md diagnostic-dist/README.md
           git rev-parse HEAD > diagnostic-dist/BUILD-COMMIT
-          (cd diagnostic-dist && sha256sum pb626-diagnostics README.md BUILD-COMMIT > SHA256SUMS)
+          (cd diagnostic-dist && sha256sum pb626-diagnostics pb626-diag-clock README.md BUILD-COMMIT > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-diagnostics
@@ -501,7 +507,7 @@ jobs:
         id: native-binaries
         with:
           path: debian-compiled-cache
-          key: pb626-debian-compiled-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('debian-base/SHA256SUMS', 'kernel-stage/uapi/linux/sun5i-eink.h', 'scripts/build-debian-rootfs.sh', 'display/*.c', 'display/*.h', 'display/*.patch', 'boot/debian/pb626-charge.c') }}
+          key: pb626-debian-compiled-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('debian-base/SHA256SUMS', 'kernel-stage/uapi/linux/sun5i-eink.h', 'scripts/compile-debian-native.sh', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/pb626-x11-epd.c', 'display/pb626-sleep.h', 'display/pb626-ddx-fb.h', 'display/test-pb626-epd.c', 'display/test-pb626-x11-epd.c', 'display/matchbox-keyboard-eink.patch', 'display/matchbox-panel-power-supply.patch', 'display/xorg-dummy-pb626-shared.patch', 'boot/debian/pb626-charge.c') }}
       - name: Build and verify Debian rootfs and paired firmware
         run: bash scripts/build-debian-rootfs.sh kernel-stage debian-dist debian-base debian-compiled-cache
       - uses: actions/upload-artifact@v4
