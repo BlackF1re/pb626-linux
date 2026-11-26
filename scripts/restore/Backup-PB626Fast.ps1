@@ -138,8 +138,8 @@ try {
     $code = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'pb626-restore-fast.sh')).Replace("`r",'')
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
     $null = Invoke-Device ': > /run/pb626-restore-fast.sh.b64'
-    for ($offset = 0; $offset -lt $encoded.Length; $offset += 1024) {
-        $part = $encoded.Substring($offset, [Math]::Min(1024, $encoded.Length - $offset))
+    for ($offset = 0; $offset -lt $encoded.Length; $offset += 128) {
+        $part = $encoded.Substring($offset, [Math]::Min(128, $encoded.Length - $offset))
         $null = Invoke-Device "printf '%s' '$part' >> /run/pb626-restore-fast.sh.b64"
     }
     $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($code))).ToLowerInvariant()

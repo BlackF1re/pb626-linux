@@ -85,9 +85,9 @@ jobs:
           gcc -O2 -Wall -Wextra -Werror scripts/restore/pb626-restore-scan.c -o native-scanner
           busybox sh -n scripts/restore/pb626-restore-fast.sh
           python3 scripts/restore/test-transport.py ./native-scanner
-          ! grep -Eq '\''\$serial\.ReadLine\(|\$serial\.Read\('\'' scripts/restore/Backup-PB626Fast.ps1
-          grep -Fq '\''$serial.BaseStream.ReadByte()'\'' scripts/restore/Backup-PB626Fast.ps1
-          grep -Fq '\''$serial.BaseStream.Read(''\'' scripts/restore/Backup-PB626Fast.ps1
+          ! grep -Eq '\$serial\.ReadLine\(|\$serial\.Read\(' scripts/restore/Backup-PB626Fast.ps1
+          grep -Fq '$serial.BaseStream.ReadByte()' scripts/restore/Backup-PB626Fast.ps1
+          grep -Fq '$serial.BaseStream.Read(' scripts/restore/Backup-PB626Fast.ps1
           pwsh -NoProfile -Command '
             $tokens = $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile(
