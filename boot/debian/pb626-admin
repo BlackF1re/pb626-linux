@@ -85,6 +85,30 @@ apply_led() {
     if [ "$1" = on ]; then raw=$(cat "$led/max_brightness") || return 1; fi
     printf '%s\n' "$raw" >"$led/brightness"
 }
+# Only an SD card physically attached to external MMC0 is eligible.
+# The soldered MMC2 root cannot match this check.
+sd_device() {
+    for sys in /sys/class/block/mmcblk*; do
+        [ -r "$sys/device/type" ] || continue
+        [ "$(cat "$sys/device/type")" = SD ] || continue
+        case "$(readlink -f "$sys/device")" in */1c0f000.mmc/*) ;; *) continue ;; esac
+        name=$(basename "$sys")
+        case "$name" in mmcblk[0-9]|mmcblk[0-9][0-9]) ;; *) continue ;; esac
+        if [ -b "/dev/$name"p1 ]; then
+            printf '/dev/%sp1\n' "$name"
+        elif [ -b "/dev/$name" ]; then
+            # A partitioned card without p1 needs manual administration.
+            for partition in "/sys/class/block/$name"p*; do
+                [ ! -e "$partition" ] || return 1
+            done
+            printf '/dev/%s\n' "$name"
+        else
+            return 1
+        fi
+        return 0
+    done
+    return 1
+}
 valid_desktop() {
     case "$1" in arrows|pages) ;; *) return 2 ;; esac
     case "$2" in keyboard|home) ;; *) return 2 ;; esac
@@ -155,6 +179,31 @@ led-status)
         echo unavailable
     fi
     ;;
+sd-status)
+    [ "$#" -eq 1 ] || exit 2
+    if mountpoint -q /media/sdcard; then echo mounted
+    elif device=$(sd_device); then printf 'Available: %s\n' "$device"
+    else echo 'No external SD card detected'; fi
+    ;;
+sd-mount|sd-unmount)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    [ ! -L /media/sdcard ] || exit 1
+    if [ "$1" = sd-unmount ]; then
+        if mountpoint -q /media/sdcard; then umount /media/sdcard; fi
+    else
+        mountpoint -q /media/sdcard && exit 0
+        device=$(sd_device) || { echo 'No external SD card detected' >&2; exit 1; }
+        fs=$(blkid -p -s TYPE -o value "$device") || exit 1
+        case "$fs" in
+            vfat|exfat) opts=nosuid,nodev,noexec,uid=1000,gid=1000,umask=022 ;;
+            ext4) opts=nosuid,nodev,noexec ;;
+            *) echo "Unsupported SD filesystem: $fs" >&2; exit 1 ;;
+        esac
+        mkdir -p /media/sdcard
+        mount -t "$fs" -o "$opts" "$device" /media/sdcard
+    fi
+    ;;
 ntp)
     [ "$#" -eq 2 ] || exit 2
     case "$2" in true|false) ;; *) exit 2 ;; esac
@@ -201,6 +250,7 @@ lock-indicator)
     lock_state
     case "$2" in
     locked)
+        : > /run/pb626-lock-indicator
         for light in /sys/class/backlight/*; do
             [ -w "$light/bl_power" ] || continue
             printf '4\n' >"$light/bl_power"
@@ -212,11 +262,13 @@ lock-indicator)
         fi
         ;;
     awake)
+        [ -f /run/pb626-lock-indicator ] || exit 0
         read_light
         apply_light || :
         led_mode=heartbeat
         if [ -r "$state/led" ]; then read -r led_mode <"$state/led"; fi
         apply_led "$led_mode" || :
+        rm -f /run/pb626-lock-indicator
         ;;
     *) exit 2 ;;
     esac

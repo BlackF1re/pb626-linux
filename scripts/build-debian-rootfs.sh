@@ -337,6 +337,8 @@ cp "$out/pb626-elan-emmc-native.dtb" "$sd_dtb"
 sd_node=/soc/mmc@1c0f000
 fdtput -t s "$sd_dtb" "$sd_node" status okay
 fdtput -t u "$sd_dtb" "$sd_node" max-frequency 12500000
+# Conservative, experimental power-settling interval, not a measured value.
+fdtput -t u "$sd_dtb" /regulator-mmc0 startup-delay-us 20000
 for prop in no-1-8-v disable-wp no-mmc no-sdio; do
     fdtput "$sd_dtb" "$sd_node" "$prop"
 done

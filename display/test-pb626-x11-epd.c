@@ -96,6 +96,25 @@ static void test_gray(void)
 
 /* Optional real-X-server regression: compare the packed strip path with
  * a full XGetImage reference, including partial regions and strip edges. */
+static void test_power_press(void)
+{
+	int fds[2];
+	assert(!pipe(fds));
+	struct input_event events[] = {
+		{ .type = EV_KEY, .code = KEY_POWER, .value = 0, .input_event_sec = 1 },
+		{ .type = EV_KEY, .code = KEY_POWER, .value = 1, .input_event_sec = 2 },
+		{ .type = EV_KEY, .code = KEY_POWER, .value = 2, .input_event_sec = 2 },
+		{ .type = EV_KEY, .code = KEY_POWER, .value = 0, .input_event_sec = 2, .input_event_usec = 100000 },
+		{ .type = EV_KEY, .code = KEY_POWER, .value = 1, .input_event_sec = 3 },
+		{ .type = EV_KEY, .code = KEY_POWER, .value = 0, .input_event_sec = 5 },
+	};
+	assert(write(fds[1], events, sizeof(events)) == (ssize_t)sizeof(events));
+	close(fds[1]);
+	uint64_t pressed = 0;
+	assert(power_press(fds[0], &pressed) == 1 && !pressed);
+	close(fds[0]);
+}
+
 static void test_x11_capture(void)
 {
 	Display *display = XOpenDisplay(NULL);
@@ -162,6 +181,8 @@ static void test_x11_capture(void)
 			}
 		assert(!memcmp(reference, candidate, sizeof(reference)));
 	}
+	assert(!grab_lock(display, root));
+	release_lock(display);
 	XShmDetach(display, &shm);
 	XSync(display, False);
 	shmdt(shm.shmaddr);
@@ -177,6 +198,7 @@ int main(void)
 		test_x11_capture();
 		return 0;
 	}
+	test_power_press();
 	test_worker_deadlines();
 	test_packed_rgb565();
 	test_gray();

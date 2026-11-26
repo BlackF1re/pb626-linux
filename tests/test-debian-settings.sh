@@ -13,6 +13,7 @@ printf '4\n' >"$tmp/backlight/panel/bl_power"
 sed -e "s|/var/lib/pb626|$tmp/state|g" \
     -e "s|/sys/class/backlight|$tmp/backlight|g" \
     -e "s|/sys/class/leds|$tmp/leds|g" \
+    -e "s|/run/pb626-lock-indicator|$tmp/indicator|g" \
     -e "s|/etc/pb626/suspend-qualified|$tmp/qualified|g" \
     boot/debian/pb626-admin >"$tmp/admin"
 admin() { sh "$tmp/admin" "$@"; }
@@ -62,7 +63,24 @@ for args in 'frontlight -1' 'frontlight 101' 'frontlight 01' \
     'desktop-settings pages keyboard menu ui 16 5' 'suspend extra'; do
     if admin $args; then echo "Invalid command accepted: $args" >&2; exit 1; fi
 done
+test "$(admin power-key-status)" = lock
+admin power-key ignore
+test "$(admin power-key-status)" = ignore
+if admin power-key s2idle; then exit 1; fi
+admin power-key lock
+admin led heartbeat
+admin light-on
+admin lock-indicator locked
+test "$(cat "$tmp/leds/led/trigger")" = timer
+test "$(cat "$tmp/backlight/panel/bl_power")" = 4
+test "$(admin light-status)" = '1 72'
+admin lock-indicator awake
+test "$(cat "$tmp/leds/led/trigger")" = heartbeat
+test "$(cat "$tmp/backlight/panel/bl_power")" = 0
+test ! -e "$tmp/indicator"
 touch "$tmp/qualified"
+admin power-key s2idle
+test "$(admin power-key-status)" = s2idle
 admin desktop-settings arrows home menu balanced 24 30
 admin desktop-status | grep -qx PB626_IDLE_MINUTES=30
 echo "Debian frontlight persistence, native settings and qualification gates passed"

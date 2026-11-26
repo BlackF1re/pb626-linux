@@ -230,6 +230,12 @@ button $p.off -text "Shut down" -command {power poweroff}
 pack $p.reboot $p.off -fill x -padx 12 -pady 4
 
 set p .tabs.system
+frame $p.storage
+button $p.storage.mount -text "Mount SD" -command {if {[act sd-mount]} {term "External SD" mc -b /media/sdcard}}
+button $p.storage.unmount -text "Eject SD" -command {if {[act sd-unmount]} {tk_messageBox -message "SD card can be removed."}}
+button $p.storage.status -text "SD status" -command {if {![catch {query sd-status} s]} {tk_messageBox -message $s}}
+pack $p.storage.mount $p.storage.unmount $p.storage.status -side left -expand 1 -fill x -padx 2
+pack $p.storage -fill x -padx 8 -pady 4
 frame $p.host
 label $p.host.label -text "Hostname"
 entry $p.host.entry -textvariable host -width 18

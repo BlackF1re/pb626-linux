@@ -240,3 +240,17 @@ place until a short power press. The AXP209 emergency hold is unchanged.
 The bridge is an input convenience lock, not a security boundary against
 other X11 clients. Deep sleep is not enabled: SUN5I_PM requires a resume-aware
 SPL, while BT0-uncaged currently reconstructs a fixed cold-boot SPL.
+
+The published PocketBook Platform_A13 source (Kernel/arch/arm/mach-sun5i/pm/pm.c)
+maps factory pm_para standby_mode=1 to NORMAL_STANDBY for standby and
+SUPER_STANDBY for mem/bootfast; partial uses NORMAL_STANDBY. The supplied
+FEX contains that exact value. This establishes the BSP policy, not the
+actual frequency of deep suspend in the proprietary UI. The factory MMC
+host drives PE4 low before probe, toggles PG0 interrupt levels, preserves
+MMC2 power and conditionally preserves external card power on partial and
+standby. The experimental DT uses a fixed-regulator startup delay of 20 ms
+as a conservative trial, not a measured factory delay. Settings > System
+can mount a detected SD card at /media/sdcard or eject it; the helper checks
+the actual MMC0 host and SD type and never formats media. Eject before
+physical removal. ext4 preserves existing Unix ownership. No automount
+or extra daemon. Firmware tests do not establish SD I/O or suspend stability.
