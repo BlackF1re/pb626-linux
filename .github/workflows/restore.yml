@@ -100,48 +100,9 @@ jobs:
           bash scripts/build-debian-recovery.sh "$work/kernel" "$work/fixture"
           (cd "$work/fixture/recovery" && sha256sum -c SHA256SUMS)
           gzip -dc "$work/fixture/recovery/pb626-megi-initramfs.cpio.gz" | cpio -it >"$work/files"
-          grep -Eq '^([.]/)?init
-        run: |
-          mkdir dist
-          cp scripts/restore/{Backup-PB626Fast.ps1,Restore-PB626Fast.ps1,pb626-restore-fast.sh,README.md} dist/
-          gzip -n -9 -c pb626-restore-scan >dist/pb626-restore-scan.gz
-          git rev-parse HEAD > dist/BUILD-COMMIT
-          (cd dist && sha256sum pb626-restore-scan.gz >SHA256SUMS.fast)
-          (cd dist && sha256sum Backup-PB626Fast.ps1 Restore-PB626Fast.ps1 pb626-restore-fast.sh pb626-restore-scan.gz README.md BUILD-COMMIT SHA256SUMS.fast > SHA256SUMS)
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pb626-emmc-tools
-          path: dist/
-          if-no-files-found: error
- "$work/files"
-          grep -Eq '^([.]/)?usr/libexec/pb626-restore-scan
-        run: |
-          mkdir dist
-          cp scripts/restore/{Backup-PB626Fast.ps1,Restore-PB626Fast.ps1,pb626-restore-fast.sh,README.md} dist/
-          gzip -n -9 -c pb626-restore-scan >dist/pb626-restore-scan.gz
-          git rev-parse HEAD > dist/BUILD-COMMIT
-          (cd dist && sha256sum pb626-restore-scan.gz >SHA256SUMS.fast)
-          (cd dist && sha256sum Backup-PB626Fast.ps1 Restore-PB626Fast.ps1 pb626-restore-fast.sh pb626-restore-scan.gz README.md BUILD-COMMIT SHA256SUMS.fast > SHA256SUMS)
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pb626-emmc-tools
-          path: dist/
-          if-no-files-found: error
- "$work/files"
-          if grep -Eq '(^|/)(Xorg|systemd|modules|apt-get)
-        run: |
-          mkdir dist
-          cp scripts/restore/{Backup-PB626Fast.ps1,Restore-PB626Fast.ps1,pb626-restore-fast.sh,README.md} dist/
-          gzip -n -9 -c pb626-restore-scan >dist/pb626-restore-scan.gz
-          git rev-parse HEAD > dist/BUILD-COMMIT
-          (cd dist && sha256sum pb626-restore-scan.gz >SHA256SUMS.fast)
-          (cd dist && sha256sum Backup-PB626Fast.ps1 Restore-PB626Fast.ps1 pb626-restore-fast.sh pb626-restore-scan.gz README.md BUILD-COMMIT SHA256SUMS.fast > SHA256SUMS)
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pb626-emmc-tools
-          path: dist/
-          if-no-files-found: error
- "$work/files"; then exit 1; fi
+          grep -Eq '^([.]/)?init$' "$work/files"
+          grep -Eq '^([.]/)?usr/libexec/pb626-restore-scan$' "$work/files"
+          if grep -Eq '(^|/)(Xorg|systemd|modules|apt-get)$' "$work/files"; then exit 1; fi
           rm -rf "$work"
       - name: Package fast restore
         run: |
