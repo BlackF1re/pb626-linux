@@ -45,4 +45,13 @@ grep -Fxq 'JobTimeoutSec=5s' "$unitdir/dev-input-pb626_touch.device.d/60-pb626.c
 grep -Fq 'ENV{SYSTEMD_ALIAS}+="/dev/input/pb626_touch"' boot/debian/rootfs/usr/lib/udev/rules.d/73-pb626-touch.rules
 ! grep -q '^ExecStartPost=/bin/sleep' "$unitdir/pb626-poweroff-screen.service"
 grep -Fq 'systemd-analyze --man=no --generators=no --recursive-errors=one verify' scripts/build-debian-rootfs.sh
+# Udev-activated native services must wait for the boot-mode decision.
+for unit in pb626-board.service pb626-desktop.service pb626-battery.service pb626-battery-warning.service pb626-usb.service; do
+    grep -Fxq 'Requires=pb626-boot-select.service' "$unitdir/$unit"
+    grep -Fxq 'After=pb626-boot-select.service' "$unitdir/$unit"
+    grep -Fxq 'ConditionPathExists=/run/pb626-normal-boot' "$unitdir/$unit"
+done
+grep -Fxq 'ConditionPathExists=/run/pb626-charge-mode' "$unitdir/pb626-charge.service"
+grep -Fxq 'After=local-fs.target pb626-desktop.service pb626-charge.service' "$unitdir/pb626-poweroff-screen.service"
+grep -Fxq 'ctl set-default pb626-boot.target' scripts/build-debian-rootfs.sh
 echo "Native service contracts passed"

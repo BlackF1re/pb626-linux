@@ -86,6 +86,23 @@ def main():
             expected = f"\nPB626_DATA {len(data)} {checksum}\n".encode() + data + b"\nPB626_DATA_END\n"
             if result.stdout != expected:
                 raise RuntimeError("Invalid outbound frame")
+            # Same fixed raw hash and bounded frame for compressed or zero blocks.
+            for block, wanted_format in ((data, "gzip"), (bytes(len(data)), "zero"),
+                                         (os.urandom(len(data)), "raw")):
+                image.write_bytes(block)
+                packed = subprocess.run(
+                    ["busybox", "sh", str(script), "backup-read-packed", "user", "0"],
+                    stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    timeout=30, check=True,
+                ).stdout
+                header, rest = packed[1:].split(b"\n", 1)
+                tag, length, raw_hash, fmt = header.decode().split()
+                length = int(length)
+                assert tag == "PB626_DATA" and fmt == wanted_format
+                assert 0 <= length <= len(block) and rest[length:] == b"\nPB626_DATA_END\n"
+                payload = rest[:length]
+                decoded = bytes(len(block)) if fmt == "zero" else gzip.decompress(payload) if fmt == "gzip" else payload
+                assert decoded == block and hashlib.sha256(decoded).hexdigest() == raw_hash
             result = subprocess.run(
                 ["busybox", "sh", str(script), "backup-read", "boot0", "1"],
                 stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

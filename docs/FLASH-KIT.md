@@ -51,8 +51,11 @@ preflight. It asks for the new root password and the destructive RESTORE
 CID confirmation. It writes only changed 4 MiB blocks (compressed on
 the wire when worthwhile), placing user block 0 last, then verifies all
 three eMMC regions. The old backup and new image are retained; do not
-share them. Full backup and readback still take time over USB; no physical
-throughput measurement is claimed. No automatic retry on a failed flash.
+share them. Backup now sends zero blocks as metadata only and optionally compresses
+other blocks, falling back to raw for incompressible data. Every decoded
+4 MiB block and all three complete images are still hashed. The raw
+protocol remains available with Backup-PB626Fast.ps1 -Raw. Full backup
+and readback still take time; no physical throughput measurement is claimed. No automatic retry on a failed flash.
 
 Recovery runs entirely in RAM using Debian 13 armhf busybox-static and
 a static helper, not a full desktop or APT installation. The shared

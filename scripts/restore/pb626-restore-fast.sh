@@ -122,7 +122,7 @@ case "$operation" in
         case "$hex" in *[!0-9a-fA-F]*) fail "Invalid EXT_CSD" ;; esac
         printf 'EXT_CSD=%s\n' "$hex"
         ;;
-    backup-read)
+    backup-read|backup-read-packed)
         select_region "$1"
         number "$2"
         test "$2" -lt "$blocks" || fail "Block index outside region"
@@ -136,10 +136,31 @@ case "$operation" in
         dd if="$device" of="$work/chunk" bs="$chunk" skip="$2" count=1 status=none
         test "$(wc -c <"$work/chunk")" -eq "$chunk" || fail "Short read"
         digest=$(sha256sum "$work/chunk")
+        format=raw
+        payload=$work/chunk
+        bytes=$chunk
+        if test "$operation" = backup-read-packed; then
+            # The hash is of four MiB of zero bytes, not of an empty file.
+            if test "${digest%% *}" = bb9f8df61474d25e71fa00722318cd387396ca1736605e1248821cc0de3d3af8; then
+                format=zero
+                bytes=0
+            elif gzip -c "$work/chunk" >"$work/packed"; then
+                packed=$(wc -c <"$work/packed")
+                if test "$packed" -lt "$((chunk-65536))"; then
+                    format=gzip
+                    payload=$work/packed
+                    bytes=$packed
+                fi
+            fi
+        fi
         tty_settings=$(stty -g)
         stty raw -echo
-        printf '\nPB626_DATA %s %s\n' "$chunk" "${digest%% *}"
-        cat "$work/chunk"
+        if test "$operation" = backup-read-packed; then
+            printf '\nPB626_DATA %s %s %s\n' "$bytes" "${digest%% *}" "$format"
+        else
+            printf '\nPB626_DATA %s %s\n' "$chunk" "${digest%% *}"
+        fi
+        test "$bytes" = 0 || cat "$payload"
         stty "$tty_settings"
         tty_settings=
         printf '\nPB626_DATA_END\n'
