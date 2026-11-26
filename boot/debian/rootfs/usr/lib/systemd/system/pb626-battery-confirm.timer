@@ -1,0 +1,9 @@
+[Unit]
+Description=Confirm critically low PocketBook battery once
+ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
+
+[Timer]
+OnActiveSec=12s
+AccuracySec=1s
+Unit=pb626-battery.service
+RemainAfterElapse=no

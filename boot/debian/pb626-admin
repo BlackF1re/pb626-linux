@@ -152,16 +152,19 @@ valid_desktop() {
 # Unknown or contradictory charger telemetry must never trigger shutdown.
 battery_capacity() {
     battery=
+    charger_seen=0
     for p in /sys/class/power_supply/*; do
         [ -r "$p/type" ] || continue
         case "$(cat "$p/type")" in
             Battery) [ -z "$battery" ] || return 1; battery=$p ;;
             *) if [ -r "$p/online" ]; then
                    [ "$(cat "$p/online")" = 0 ] || return 1
+                   charger_seen=1
                fi ;;
         esac
     done
-    [ -n "$battery" ] && [ "$(cat "$battery/status")" = Discharging ] || return 1
+    [ "$charger_seen" = 1 ] && [ -n "$battery" ] &&
+        [ "$(cat "$battery/status")" = Discharging ] || return 1
     capacity=$(cat "$battery/capacity") || return 1
     valid_percent "$capacity" || return 1
     printf '%s\n' "$capacity"
@@ -405,6 +408,7 @@ battery-check)
     read_battery
     if ! capacity=$(battery_capacity); then
         rm -f /run/pb626-battery-warning /run/pb626-battery-critical
+        systemctl --no-block stop pb626-battery-confirm.timer || :
         exit 0
     fi
     if [ "$capacity" -le "$warning" ]; then
@@ -425,7 +429,11 @@ battery-check)
         now="${uptime%%.*}"
         first=
         if [ -r /run/pb626-battery-critical ]; then read -r first </run/pb626-battery-critical || :; fi
-        case "$first" in ''|*[!0-9]*) printf '%s\n' "$now" >/run/pb626-battery-critical ;;
+        case "$first" in ''|*[!0-9]*)
+                printf '%s\n' "$now" >/run/pb626-battery-critical
+                # One extra sample only when needed, not a faster polling loop.
+                systemctl --no-block start pb626-battery-confirm.timer
+                ;;
             *) if [ "$now" -ge "$((first+10))" ]; then
                    # Recheck charger state immediately before asking PID 1.
                    if current=$(battery_capacity) && [ "$current" -le "$critical" ]; then
@@ -434,7 +442,10 @@ battery-check)
                fi ;;
         esac
     else
-        rm -f /run/pb626-battery-critical
+        if [ -e /run/pb626-battery-critical ]; then
+            rm -f /run/pb626-battery-critical
+            systemctl --no-block stop pb626-battery-confirm.timer || :
+        fi
     fi
     ;;
 shutdown-image-status)

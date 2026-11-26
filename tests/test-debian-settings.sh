@@ -18,7 +18,21 @@ printf "none\n" >"$tmp/leds/led/trigger"
 printf '100\n' >"$tmp/backlight/panel/max_brightness"
 printf '0\n' >"$tmp/backlight/panel/brightness"
 printf '4\n' >"$tmp/backlight/panel/bl_power"
-sed -e "s|/var/lib/pb626|$tmp/state|g" \
+mkdir -p "$tmp/bin" "$tmp/power_supply/battery" "$tmp/power_supply/usb" "$tmp/run/pb626-desktop"
+cat >"$tmp/bin/systemctl" <<'MOCK'
+#!/bin/sh
+printf '%s\n' "$*" >>"$PB626_TEST_SYSTEMCTL_LOG"
+exit 0
+MOCK
+chmod 755 "$tmp/bin/systemctl"
+export PB626_TEST_SYSTEMCTL_LOG="$tmp/systemctl.log"
+: >"$PB626_TEST_SYSTEMCTL_LOG"
+sed -e "s|export PATH=/sbin:/bin:/usr/sbin:/usr/bin|export PATH=$tmp/bin:/sbin:/bin:/usr/sbin:/usr/bin|" \
+    -e "s|/sys/class/power_supply|$tmp/power_supply|g" \
+    -e "s|/proc/uptime|$tmp/uptime|g" \
+    -e "s|/run/pb626-battery-|$tmp/run/pb626-battery-|g" \
+    -e "s|/run/pb626-desktop/ready|$tmp/run/pb626-desktop/ready|g" \
+    -e "s|/var/lib/pb626|$tmp/state|g" \
     -e "s|/sys/class/backlight|$tmp/backlight|g" \
     -e "s|/sys/class/leds|$tmp/leds|g" \
     -e "s|/sys/devices/system/cpu/cpufreq|$tmp/cpufreq|g" \
@@ -118,6 +132,37 @@ test "$(admin battery-status)" = '15 4'
 for args in 'battery-settings 4 3' 'battery-settings 5 5' 'battery-settings 31 3' 'battery-settings 10 1'; do
     if admin $args; then echo "Invalid battery policy: $args" >&2; exit 1; fi
 done
+# Exercise the actual critical-battery transaction without the host's
+# power supplies or PID 1. No shutdown on a single sample or a charger.
+printf 'Battery\n' >"$tmp/power_supply/battery/type"
+printf 'Discharging\n' >"$tmp/power_supply/battery/status"
+printf '4\n' >"$tmp/power_supply/battery/capacity"
+printf 'USB\n' >"$tmp/power_supply/usb/type"
+printf '0\n' >"$tmp/power_supply/usb/online"
+printf '100.00 0.00\n' >"$tmp/uptime"
+printf 'ready\n' >"$tmp/run/pb626-desktop/ready"
+admin battery-check
+grep -Fxq -- '--no-block start pb626-battery-warning.service' "$PB626_TEST_SYSTEMCTL_LOG"
+grep -Fxq -- '--no-block start pb626-battery-confirm.timer' "$PB626_TEST_SYSTEMCTL_LOG"
+! grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+printf '105.00 0.00\n' >"$tmp/uptime"
+admin battery-check
+! grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+printf '1\n' >"$tmp/power_supply/usb/online"
+printf '112.00 0.00\n' >"$tmp/uptime"
+admin battery-check
+test ! -e "$tmp/run/pb626-battery-critical"
+! grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+# Missing charger telemetry also fails closed.
+rm "$tmp/power_supply/usb/online"
+admin battery-check
+test ! -e "$tmp/run/pb626-battery-critical"
+printf '0\n' >"$tmp/power_supply/usb/online"
+admin battery-check
+printf '124.00 0.00\n' >"$tmp/uptime"
+admin battery-check
+grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+
 test "$(admin shutdown-image-status)" = white
 if printf bad | admin shutdown-image-save; then exit 1; fi
 test "$(admin shutdown-image-status)" = white

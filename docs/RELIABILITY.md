@@ -59,6 +59,18 @@ The legacy Alpine/manual startup path keeps its original bounded wait.
 ELAN startup still has a short bounded discovery window for the pointer
 fallback; no claim of dynamic touch hotplug support.
 
+## Critical battery confirmation
+
+The ordinary 60-second fallback timer and power_supply uevents remain.
+A first confirmed critical reading arms a nonpersistent one-shot systemd
+timer for 12 seconds, not a continuously faster polling loop. A second
+reading at least 10 seconds later and a final charger recheck are required
+before requesting normal poweroff. Missing charger-online telemetry,
+contradictory supply state or a recovered capacity clear the confirmation.
+This intentionally fails closed on unverified telemetry; validate AXP209
+status and shutdown margin on the actual battery. Host tests use fake
+sysfs, uptime and a fake systemctl, never the host power manager.
+
 ## Next steps and hardware gates
 
 - Verify normal and intentionally interrupted refreshes, service restarts,
