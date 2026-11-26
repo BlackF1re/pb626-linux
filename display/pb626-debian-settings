@@ -16,12 +16,13 @@ wm geometry . 700x840
 
 proc readfile {path} {
     if {[catch {set fd [open $path r]}]} {return ""}
-    set value [string trim [read $fd]]
-    close $fd
+    set failed [catch {set value [string trim [read $fd]]}]
+    catch {close $fd}
+    if {$failed} {return ""}
     return $value
 }
 proc query {args} {
-    if {[catch {exec /usr/bin/doas /usr/sbin/pb626-admin {*}$args 2>@1} result]} {
+    if {[catch {exec /usr/bin/timeout -k 2s 15s /usr/bin/doas /usr/sbin/pb626-admin {*}$args 2>@1} result]} {
         tk_messageBox -icon error -title "Operation failed" -message $result
         return -code error $result
     }
@@ -155,12 +156,12 @@ proc updateStatus {} {
         append data "LED [file tail $p]: [readfile $p/brightness]\n"
     }
     foreach cmd {{free -m} {df -h /} {date} {timedatectl status} {systemctl --no-pager --failed} {rfkill list}} {
-        if {![catch {exec {*}$cmd 2>@1} result]} {append data "$result\n"}
+        if {![catch {exec /usr/bin/timeout -k 1s 3s {*}$cmd 2>@1} result]} {append data "$result\n"} else {append data "[lindex $cmd 0]: unavailable\n"}
     }
-    .tabs.system.info configure -state normal
-    .tabs.system.info delete 1.0 end
-    .tabs.system.info insert end $data
-    .tabs.system.info configure -state disabled
+    .tabs.system.canvas.body.info configure -state normal
+    .tabs.system.canvas.body.info delete 1.0 end
+    .tabs.system.canvas.body.info insert end $data
+    .tabs.system.canvas.body.info configure -state disabled
 }
 proc desktopApply {} {
     global buttons home menu gray depth idle fast
@@ -219,12 +220,31 @@ if {![catch {query power-key-status} value]} {set powerKey $value}
 label .heading -text "PocketBook settings" -font {{Liberation Sans} 22 bold}
 pack .heading -pady 12
 ttk::notebook .tabs
+# Fixed-size portrait layouts clip controls when the keyboard is visible
+# or the screen is rotated. Each page has an independent touch-sized
+# scrollbar; no animated/inertial redraws or periodic layout polling.
+proc tabRegion {canvas} {
+    $canvas configure -scrollregion [$canvas bbox all]
+}
+proc tabWidth {canvas item width} {
+    $canvas itemconfigure $item -width $width
+    tabRegion $canvas
+}
 foreach {tab title} {display Display keys Buttons net Network power Power system System} {
-    frame .tabs.$tab -background white
-    .tabs add .tabs.$tab -text $title
+    set page .tabs.$tab
+    frame $page -background white
+    canvas $page.canvas -background white -highlightthickness 0 -borderwidth 0 -yscrollcommand [list $page.vscroll set] -yscrollincrement 20
+    scrollbar $page.vscroll -orient vertical -width 36 -command [list $page.canvas yview]
+    frame $page.canvas.body -background white
+    set item [$page.canvas create window 0 0 -window $page.canvas.body -anchor nw]
+    bind $page.canvas.body <Configure> [list tabRegion $page.canvas]
+    bind $page.canvas <Configure> [list tabWidth $page.canvas $item %w]
+    pack $page.vscroll -side right -fill y
+    pack $page.canvas -side left -fill both -expand 1
+    .tabs add $page -text $title
 }
 pack .tabs -fill both -expand 1 -padx 8 -pady 4
-set p .tabs.display
+set p .tabs.display.canvas.body
 label $p.state -textvariable lightText -font {{Liberation Sans} 19 bold}
 pack $p.state -pady 8
 scale $p.brightness -from 1 -to 100 -orient horizontal -variable level -resolution 1 -length 500 \
@@ -242,7 +262,7 @@ pack $p.switch -fill x -padx 12 -pady 4
 choose $p gray "Grayscale profile" gray {balanced ui photo legacy mono}
 choose $p fast "Fast waveform" fast {du auto a2 du4}
 choose $p depth "X11 color depth" depth {16 24}
-label $p.note -text "Mono uses black and white only. Other profiles retain 16 gray levels.\nDisplay profile changes apply after restart." -justify left
+label $p.note -text "Mono uses black and white only. Other profiles retain 16 gray levels.\nDisplay profile changes apply after restart." -justify left -wraplength 560
 pack $p.note -pady 6
 button $p.save -text "Save display / desktop settings" -command desktopApply
 pack $p.save -fill x -padx 12 -pady 5
@@ -251,11 +271,11 @@ pack $p.offimage -fill x -padx 12 -pady 4
 button $p.restart -text "Restart desktop" -command desktopRestart
 pack $p.restart -fill x -padx 12 -pady 5
 
-set p .tabs.keys
+set p .tabs.keys.canvas.body
 choose $p arrows "Left / Right" buttons {arrows pages}
 choose $p home "Home button" home {keyboard home}
 choose $p menu "Menu short press" menu {menu escape}
-label $p.note -text "Advanced bindings override these defaults.\nWithout touch, hardware pointer controls remain available." -justify left -wraplength 620
+label $p.note -text "Advanced bindings override these defaults.\nWithout touch, hardware pointer controls remain available." -justify left -wraplength 560
 pack $p.note -pady 10
 button $p.bindings -text "Advanced button bindings…" -command buttonSettings
 pack $p.bindings -fill x -padx 12 -pady 5
@@ -263,14 +283,14 @@ button $p.save -text "Save button settings" -command desktopApply
 button $p.restart -text "Restart desktop" -command desktopRestart
 pack $p.save $p.restart -fill x -padx 12 -pady 5
 
-set p .tabs.net
+set p .tabs.net.canvas.body
 button $p.on -text "Wi-Fi networks (iwgtk)" -command wifi
 button $p.off -text "Turn Wi-Fi off" -command {act wifi-off}
 button $p.cli -text "Wi-Fi terminal (iwctl)" -command {if {[act wifi-on]} {term "Wi-Fi" iwctl}}
 button $p.dns -text "Network and DNS status" -command {term "Network status" sh -c {ip address; ip route; resolvectl status; read -r x}}
 foreach w {on off cli dns} {pack $p.$w -fill x -padx 12 -pady 7}
 
-set p .tabs.power
+set p .tabs.power.canvas.body
 if {$ledMode ne "unavailable"} {
     choose $p led "Power indicator" ledMode {heartbeat on off}
     button $p.ledapply -text "Save indicator state" -command {act led $ledMode}
@@ -297,7 +317,7 @@ if {$qualified} {
     pack $p.idleapply $p.sleep -fill x -padx 12 -pady 4
 } else {
     set idle 0
-    label $p.sleepnote -text "Lock is available now. Real s2idle is disabled until wakeup is qualified; deep sleep needs a resume-aware SPL." -wraplength 620 -justify left
+    label $p.sleepnote -text "Lock is available now. Real s2idle is disabled until wakeup is qualified; deep sleep needs a resume-aware SPL." -wraplength 560 -justify left
     pack $p.sleepnote -padx 12 -pady 10
 }
 button $p.battery -text "Battery warning / shutdown…" -command batterySettings
@@ -306,7 +326,7 @@ button $p.reboot -text "Restart reader" -command {power reboot}
 button $p.off -text "Shut down" -command {power poweroff}
 pack $p.reboot $p.off -fill x -padx 12 -pady 4
 
-set p .tabs.system
+set p .tabs.system.canvas.body
 frame $p.storage
 button $p.storage.mount -text "Mount SD" -command {if {[act sd-mount]} {term "External SD" mc -b /media/sdcard}}
 button $p.storage.unmount -text "Eject SD" -command {if {[act sd-unmount]} {tk_messageBox -message "SD card can be removed."}}
