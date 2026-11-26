@@ -1,0 +1,403 @@
+diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
+--- a/drivers/video/fbdev/sun5i-eink.c
++++ b/drivers/video/fbdev/sun5i-eink.c
+@@ -25,6 +25,7 @@
+ #include <linux/of_device.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
+ #include <linux/pinctrl/consumer.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
+@@ -183,9 +184,7 @@
+ 	struct regulator *drive_supply;	/* source/gate rails (VPOS/VNEG..) */
+ 	struct regulator *vcom_supply;
+ 	u32 vcom_uv;			/* panel nominal VCOM magnitude */
+-	struct timer_list powerdown_timer;
+-	struct work_struct powerdown_work;
+-	bool powered;
++	bool vdd_on, drive_on, vcom_on;
+ 
+ 	// tcon0/debe
+ 	struct clk_bulk_data *clks;
+@@ -246,66 +245,71 @@
+  * (the TPS65185 sequences the individual rails internally and waits
+  * for power good), VCOM last; power down in reverse order.
+  */
+-static int eink_set_power(struct eink_dev* eink, bool en)
++/* Preserve regulator ownership after partial failures; never disable
++ * logic while a drive rail is still enabled. */
++static int eink_power_off(struct eink_dev *eink)
+ {
+ 	int ret;
+ 
+-	if (!en == !eink->powered)
+-		return 0;
++	if (eink->vcom_on) {
++		ret = regulator_disable(eink->vcom_supply);
++		if (ret)
++			return ret;
++		eink->vcom_on = false;
++	}
++	if (eink->drive_on) {
++		ret = regulator_disable(eink->drive_supply);
++		if (ret)
++			return ret;
++		eink->drive_on = false;
++	}
++	if (eink->vdd_on) {
++		ret = regulator_disable(eink->vdd_supply);
++		if (ret)
++			return ret;
++		eink->vdd_on = false;
++	}
++	return 0;
++}
+ 
+-	dev_dbg(eink->dev, "%sable power supplies", en ? "en" : "dis");
++static int eink_set_power(struct eink_dev *eink, bool en)
++{
++	int ret;
+ 
+-	if (en) {
+-		ret = regulator_set_voltage(eink->vcom_supply, eink->vcom_uv,
+-					    eink->vcom_uv);
+-		if (ret)
+-			goto err;
+-		eink->vcom_cur_uv = eink->vcom_uv;
++	if (!en)
++		return eink_power_off(eink);
++	if (eink->vcom_on)
++		return 0;
++	ret = regulator_set_voltage(eink->vcom_supply, eink->vcom_uv,
++				    eink->vcom_uv);
++	if (ret)
++		goto err;
++	eink->vcom_cur_uv = eink->vcom_uv;
++	if (!eink->vdd_on) {
+ 		ret = regulator_enable(eink->vdd_supply);
+ 		if (ret)
+ 			goto err;
++		eink->vdd_on = true;
++	}
++	if (!eink->drive_on) {
+ 		ret = regulator_enable(eink->drive_supply);
+ 		if (ret)
+-			goto err_vdd;
+-		ret = regulator_enable(eink->vcom_supply);
+-		if (ret)
+-			goto err_drive;
+-	} else {
+-		regulator_disable(eink->vcom_supply);
+-		regulator_disable(eink->drive_supply);
+-		regulator_disable(eink->vdd_supply);
++			goto err;
++		eink->drive_on = true;
+ 	}
+-
+-	eink->powered = en;
++	ret = regulator_enable(eink->vcom_supply);
++	if (ret)
++		goto err;
++	eink->vcom_on = true;
+ 	return 0;
+ 
+-err_drive:
+-	regulator_disable(eink->drive_supply);
+-err_vdd:
+-	regulator_disable(eink->vdd_supply);
+ err:
+-	dev_err(eink->dev, "can't enable power supplies (%d)", ret);
++	dev_err(eink->dev, "can't enable panel supplies (%d)\n", ret);
++	if (eink_power_off(eink))
++		dev_err(eink->dev, "panel supply rollback failed\n");
+ 	return ret;
+ }
+ 
+-static void eink_powerdown_work(struct work_struct *work)
+-{
+-	struct eink_dev *eink = container_of(work, struct eink_dev,
+-					     powerdown_work);
+-
+-	mutex_lock(&eink->fop_lock);
+-	if (!vb2_is_streaming(&eink->queue))
+-		eink_set_power(eink, 0);
+-	mutex_unlock(&eink->fop_lock);
+-}
+-
+-static void eink_supply_powerdown_timer(struct timer_list *t)
+-{
+-	struct eink_dev *eink = timer_container_of(eink, t, powerdown_timer);
+-
+-	queue_work(eink->wq, &eink->powerdown_work);
+-}
+-
+ // }}}
+ // {{{ Scanout engine
+ 
+@@ -700,10 +704,13 @@
+ 	unsigned long flags;
+ 	int ret;
+ 
+-	timer_delete_sync(&eink->powerdown_timer);
++	/* Keep a PM reference throughout streaming, even for an empty queue. */
++	ret = pm_runtime_resume_and_get(eink->dev);
++	if (ret < 0)
++		goto err_return;
+ 	ret = eink_set_power(eink, 1);
+ 	if (ret)
+-		goto err_return;
++		goto err_pm;
+ 
+ 	spin_lock_irqsave(&eink->lock, flags);
+ 	buf = list_first_entry(&eink->buf_list, struct eink_buffer, list);
+@@ -717,6 +724,8 @@
+ 	eink_tcon_start(eink);
+ 	return 0;
+ 
++err_pm:
++	pm_runtime_put_autosuspend(eink->dev);
+ err_return:
+ 	eink_return_buffers(eink, VB2_BUF_STATE_QUEUED);
+ 	return ret;
+@@ -763,7 +772,8 @@
+ 	flush_workqueue(eink->wq);
+ 	eink_return_buffers(eink, VB2_BUF_STATE_ERROR);
+ 
+-	mod_timer(&eink->powerdown_timer, jiffies + msecs_to_jiffies(5000));
++	/* All scanout work is drained; the PM core owns the idle deadline. */
++	pm_runtime_put_autosuspend(eink->dev);
+ }
+ 
+ static const struct vb2_ops eink_qops = {
+@@ -867,10 +877,15 @@
+ 		    t->vsync < 1 || t->vsync > 0x7ff)
+ 			return -EINVAL;
+ 		if (t->sclk_hz) {
+-			int ret = clk_set_rate(eink->clks[1].clk, t->sclk_hz);
++			int ret = pm_runtime_resume_and_get(eink->dev);
++			if (ret < 0)
++				return ret;
++			ret = clk_set_rate(eink->clks[1].clk, t->sclk_hz);
++			if (!ret)
++				eink->timing.sclk_hz = t->sclk_hz;
++			pm_runtime_put_autosuspend(eink->dev);
+ 			if (ret)
+ 				return ret;
+-			eink->timing.sclk_hz = t->sclk_hz;
+ 		}
+ 		if (t->dclk_div)
+ 			eink->timing.dclk_div = t->dclk_div;
+@@ -943,6 +958,94 @@
+ 	{ .id = "be_ram" },
+ };
+ 
++/* The scan engine is stateless between streams. Restore safe parked
++ * hardware with panel rails off. Runtime callbacks must not take
++ * fop_lock, which VB2 holds when acquiring a runtime PM reference. */
++static int eink_hw_enable(struct eink_dev *eink)
++{
++	int ret, i;
++
++	ret = reset_control_deassert(eink->rstc);
++	if (ret)
++		return ret;
++	ret = clk_set_rate(eink->clks[1].clk, eink->timing.sclk_hz);
++	if (ret)
++		goto err_reset;
++	ret = clk_bulk_prepare_enable(eink->num_clks, eink->clks);
++	if (ret)
++		goto err_reset;
++	for (i = 0x800; i < 0x1000; i += 4)
++		regmap_write(eink->be_regs, i, 0);
++	regmap_write(eink->tcon_regs, SUN4I_TCON_GCTL_REG, 0);
++	regmap_write(eink->tcon_regs, SUN4I_TCON_GINT0_REG, 0);
++	regmap_write(eink->tcon_regs, SUN4I_TCON_GINT1_REG, 0);
++	regmap_write(eink->tcon_regs, SUN4I_TCON0_IO_TRI_REG, ~0);
++	ret = pinctrl_select_state(eink->pinctrl, eink->pinctrl_idle);
++	if (ret) {
++		clk_bulk_disable_unprepare(eink->num_clks, eink->clks);
++		goto err_reset;
++	}
++	return 0;
++
++err_reset:
++	reset_control_assert(eink->rstc);
++	return ret;
++}
++
++static int eink_runtime_suspend(struct device *dev)
++{
++	struct eink_dev *eink = dev_get_drvdata(dev);
++	int ret;
++
++	if (READ_ONCE(eink->state) != EINK_STREAM_OFF)
++		return -EBUSY;
++	disable_irq(eink->irq);
++	flush_workqueue(eink->wq);
++	ret = pinctrl_select_state(eink->pinctrl, eink->pinctrl_idle);
++	if (ret)
++		goto err_irq;
++	regmap_write(eink->tcon_regs, SUN4I_TCON0_IO_TRI_REG, ~0);
++	ret = eink_set_power(eink, false);
++	if (ret)
++		goto err_irq;
++	ret = reset_control_assert(eink->rstc);
++	if (ret)
++		goto err_irq;
++	clk_bulk_disable_unprepare(eink->num_clks, eink->clks);
++	return 0;
++
++err_irq:
++	enable_irq(eink->irq);
++	dev_err(dev, "failed to suspend E Ink hardware: %d\n", ret);
++	return ret;
++}
++
++static int eink_runtime_resume(struct device *dev)
++{
++	struct eink_dev *eink = dev_get_drvdata(dev);
++	int ret = eink_hw_enable(eink);
++
++	if (ret)
++		return ret;
++	enable_irq(eink->irq);
++	return 0;
++}
++
++static int eink_system_suspend(struct device *dev)
++{
++	struct eink_dev *eink = dev_get_drvdata(dev);
++
++	/* Never truncate an active waveform, including direct root sleep. */
++	if (vb2_is_streaming(&eink->queue))
++		return -EBUSY;
++	return pm_runtime_force_suspend(dev);
++}
++
++static const struct dev_pm_ops eink_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(eink_system_suspend, pm_runtime_force_resume)
++	RUNTIME_PM_OPS(eink_runtime_suspend, eink_runtime_resume, NULL)
++};
++
+ static int eink_probe(struct platform_device *pdev)
+ {
+ 	struct eink_dev *eink;
+@@ -963,9 +1066,7 @@
+ 	INIT_LIST_HEAD(&eink->buf_list);
+ 	INIT_WORK(&eink->idle_work, eink_idle_work);
+ 	INIT_WORK(&eink->restart_work, eink_restart_work);
+-	INIT_WORK(&eink->powerdown_work, eink_powerdown_work);
+ 	INIT_WORK(&eink->vcom_work, eink_vcom_work);
+-	timer_setup(&eink->powerdown_timer, eink_supply_powerdown_timer, 0);
+ 
+ 	eink->timing = eink_default_timing;
+ 	/* identity palette; userspace must upload a real pin-state table */
+@@ -1089,39 +1190,10 @@
+ 		return ret;
+ 	}
+ 
+-	// init the actual hardware
+-	ret = reset_control_deassert(eink->rstc);
+-	if (ret) {
+-		dev_err(dev, "Couldn't deassert our reset line (%d)\n", ret);
++	ret = eink_hw_enable(eink);
++	if (ret)
+ 		return ret;
+-	}
+ 
+-	// possible to set 27-381MHz in 3MHz steps
+-	ret = clk_set_rate(eink->clks[1].clk, eink->timing.sclk_hz);
+-	if (ret) {
+-		dev_err(dev, "Couldn't set tcon0 sclk rate (%d)\n", ret);
+-		goto err_reset;
+-	}
+-
+-	ret = clk_bulk_prepare_enable(eink->num_clks, eink->clks);
+-	if (ret) {
+-		dev_err(dev, "Couldn't enable clocks (%d)\n", ret);
+-		goto err_reset;
+-	}
+-
+-	/* Clear DEBE registers; the backend stays disabled with register
+-	 * autoloading in its enabled reset state until stream start */
+-	for (i = 0x800; i < 0x1000; i += 4)
+-		regmap_write(eink->be_regs, i, 0);
+-
+-	/* Make sure the TCON is disabled and all IRQs are off */
+-	regmap_write(eink->tcon_regs, SUN4I_TCON_GCTL_REG, 0);
+-	regmap_write(eink->tcon_regs, SUN4I_TCON_GINT0_REG, 0);
+-	regmap_write(eink->tcon_regs, SUN4I_TCON_GINT1_REG, 0);
+-
+-	/* Disable IO lines and set them to tristate */
+-	regmap_write(eink->tcon_regs, SUN4I_TCON0_IO_TRI_REG, ~0);
+-
+ 	ret = devm_request_irq(dev, eink->irq, eink_tcon0_irq_handler, 0,
+ 			       dev_name(dev), eink);
+ 	if (ret) {
+@@ -1167,23 +1239,35 @@
+ 	eink->vdev.queue = q;
+ 	video_set_drvdata(&eink->vdev, eink);
+ 
++	/* Establish runtime PM before publishing the node. */
++	ret = pm_runtime_set_active(dev);
++	if (ret)
++		goto err_unreg_v4l2;
++	pm_runtime_get_noresume(dev);
++	pm_runtime_set_autosuspend_delay(dev, 5000);
++	pm_runtime_use_autosuspend(dev);
++	pm_runtime_enable(dev);
+ 	ret = video_register_device(&eink->vdev, VFL_TYPE_VIDEO, -1);
+ 	if (ret) {
+ 		dev_err(dev, "can't register video device (%d)\n", ret);
+-		goto err_unreg_v4l2;
++		goto err_pm;
+ 	}
++	pm_runtime_put_autosuspend(dev);
+ 
+ 	dev_info(dev, "eink-panel scanout driver ready (%s)\n",
+ 		 video_device_node_name(&eink->vdev));
+ 	return 0;
+ 
++err_pm:
++	pm_runtime_disable(dev);
++	pm_runtime_put_noidle(dev);
++	pm_runtime_set_suspended(dev);
+ err_unreg_v4l2:
+ 	v4l2_device_unregister(&eink->v4l2_dev);
+ err_free_wq:
+ 	destroy_workqueue(eink->wq);
+ err_disable_hw:
+ 	clk_bulk_disable_unprepare(eink->num_clks, eink->clks);
+-err_reset:
+ 	reset_control_assert(eink->rstc);
+ 	return ret;
+ }
+@@ -1195,12 +1279,14 @@
+ 	video_unregister_device(&eink->vdev);
+ 	v4l2_device_unregister(&eink->v4l2_dev);
+ 
+-	timer_delete_sync(&eink->powerdown_timer);
++	pm_runtime_barrier(eink->dev);
++	pm_runtime_disable(eink->dev);
++	if (!pm_runtime_status_suspended(eink->dev)) {
++		int ret = eink_runtime_suspend(eink->dev);
++		if (ret)
++			dev_err(eink->dev, "failed to park panel on remove: %d\n", ret);
++	}
+ 	destroy_workqueue(eink->wq);
+-	eink_set_power(eink, 0);
+-
+-	clk_bulk_disable_unprepare(eink->num_clks, eink->clks);
+-	reset_control_assert(eink->rstc);
+ }
+ 
+ static const struct of_device_id eink_of_match[] = {
+@@ -1215,6 +1301,7 @@
+ 	.driver = {
+ 		.name = "eink_tcon0",
+ 		.of_match_table = eink_of_match,
++		.pm = pm_ptr(&eink_pm_ops),
+ 	},
+ };
+ 

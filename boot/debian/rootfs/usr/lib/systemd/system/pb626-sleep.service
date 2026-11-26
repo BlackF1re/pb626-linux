@@ -1,7 +1,7 @@
 [Unit]
 Description=Prepare PocketBook E Ink sleep image and restore desktop on resume
 After=pb626-desktop.service
-Before=systemd-suspend.service
+Before=sleep.target systemd-suspend.service
 StopWhenUnneeded=yes
 
 [Service]
@@ -10,6 +10,5 @@ RemainAfterExit=yes
 TimeoutStartSec=125
 TimeoutStopSec=115
 ExecStart=/usr/bin/pb626-x11-epd --sleep-prepare
-# The current kernel's STREAMOFF delays rail shutdown by 5 seconds.
-ExecStartPost=/bin/sleep 6
+# Kernel device PM synchronously parks E Ink and powers off the rails.
 ExecStopPost=-/usr/bin/pb626-x11-epd --sleep-resume
