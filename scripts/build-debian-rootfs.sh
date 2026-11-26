@@ -141,7 +141,9 @@ in_build /bin/bash -euc '
   cd ../matchbox-panel
   patch -l -p1 < ../matchbox-panel-power-supply.patch
   autoreconf -fi
-  ./configure --prefix=/usr --sysconfdir=/etc --enable-linux-power-supply
+  # Old Matchbox relies on libmatchbox transitive X11 dependencies.
+  LIBS="$(pkg-config --libs x11 xext xrender xft)" \
+    ./configure --prefix=/usr --sysconfdir=/etc --enable-linux-power-supply
   make -j2
   make install DESTDIR=/tmp/pb626-build/panel-install
   strip /tmp/pb626-build/keyboard-install/usr/bin/matchbox-keyboard \
