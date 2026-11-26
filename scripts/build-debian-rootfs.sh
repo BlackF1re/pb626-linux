@@ -212,6 +212,8 @@ in_root /bin/bash -euc '
   test "$(/usr/bin/pb626-epd --protocol)" = pb626-epd-shm-4
   bash -n /usr/bin/pb626-xsession
   sh -n /usr/sbin/pb626-admin
+  sh -n /usr/sbin/pb626-diagnostics
+  /usr/sbin/pb626-diag-clock resolution
   for exe in /usr/bin/pb626-epd /usr/bin/pb626-x11-epd /usr/libexec/pb626/bin/* /usr/lib/pb626/xorg/drivers/dummy_drv.so; do
     ldd "$exe" > /tmp/pb626-ldd
     cat /tmp/pb626-ldd
@@ -281,5 +283,6 @@ fdtget "$sd_dtb" "$sd_node" cd-gpios >/dev/null
 fdtget "$sd_dtb" "$sd_node" vmmc-supply >/dev/null
 python3 BT0-uncaged/pack-kernel.py "$out/pb626-native-zImage" "$sd_dtb" "$out/pb626-raw-linux-sd.img"
 git rev-parse HEAD > "$out/BUILD-COMMIT"
-(cd "$out" && sha256sum pb626-* KERNELRELEASE KERNEL-SOURCE.txt BUILD-COMMIT raw-linux.img DEBIAN-PACKAGES.txt > SHA256SUMS)
+cp "$out/BUILD-COMMIT" "$out/CONTENT-BUILD-COMMIT"
+(cd "$out" && sha256sum pb626-* KERNELRELEASE KERNEL-SOURCE.txt BUILD-COMMIT CONTENT-BUILD-COMMIT raw-linux.img DEBIAN-PACKAGES.txt > SHA256SUMS)
 echo "Debian 13 armhf rootfs (on eMMC): $(sudo du -sm "$root" | cut -f1) MiB"
