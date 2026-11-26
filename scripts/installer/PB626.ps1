@@ -9,6 +9,7 @@ param(
     [string]$StockDir,
     [string]$ImageDir,
     [switch]$EnableRecoverySD,
+    [switch]$PrepareFelInputs,
     [switch]$SD
 )
 $ErrorActionPreference='Stop'
@@ -95,12 +96,17 @@ function Find-RecoveryPort {
     if ($ports.Count -eq 1) { return $ports[0] }
 }
 $lab=Join-Path $kit 'fel-inputs'
+if ($PrepareFelInputs) {
+    if (!$seen.ContainsKey('source/scripts/prepare-fel-inputs.py') -or !$seen.ContainsKey('fel-host/SHA256SUMS')) { throw 'Missing verified FEL host preparation files' }
+    Write-Warning 'The entry and SPL are hash-qualified; the rebuilt host executable still needs physical USB qualification. Missing SPL is downloaded directly from its original author and must match the laboratory hash. Existing inputs are not overwritten.'
+    Run-Linux @('python3',(LinuxPath (Join-Path $kit 'source/scripts/prepare-fel-inputs.py')),'--host',(LinuxPath (Join-Path $kit 'fel-host')),'--output',(LinuxPath $lab))
+}
 if (!$UseRunningRecovery -or $Action -eq 'Install') {
     foreach ($name in @('pb626-spl.bin','direct-entry.bin','sunxi-fel')) {
         if (!(Test-Path -LiteralPath (Join-Path $lab $name) -PathType Leaf)) { throw "Missing verified private FEL input: $name" }
     }
     if ((Get-FileHash -LiteralPath (Join-Path $lab 'pb626-spl.bin')).Hash -ne '7543ab1379d19cd07cd01e7ea3ff7d257aada22f770d0e937a6ae0605732a38f') { throw 'Unknown SPL' }
-    if ((Get-Item (Join-Path $lab 'direct-entry.bin')).Length -ne 52) { throw 'Wrong private entry stub' }
+    if ((Get-FileHash -LiteralPath (Join-Path $lab 'direct-entry.bin')).Hash -ne '1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd') { throw 'Wrong entry stub' }
 }
 if ($Action -eq 'Install') {
     Write-Warning 'Installation replaces BT0, raw kernel/DTB and the entire rootfs partition. All eMMC regions are verified and changed blocks restored. Keep a verified stock backup and do not unplug USB during writes.'

@@ -40,6 +40,8 @@ on:
       - 'patches/axp209-boot-source.patch'
       - 'scripts/build-debian-recovery.sh'
       - 'scripts/prepare-install.sh'
+      - 'scripts/prepare-fel-inputs.py'
+      - 'patches/sunxi-fel-keep-mmu-off.patch'
       - 'scripts/installer/**'
       - 'scripts/restore/**'
       - 'boot/recovery/**'
@@ -427,6 +429,28 @@ jobs:
     uses: ./.github/workflows/source-bootloader.yml
     secrets: inherit
 
+  fel-host:
+    name: Rebuild recovered FEL host inputs (independent of SPL candidates)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld llvm libusb-1.0-0-dev libfdt-dev zlib1g-dev pkg-config
+          bash BT0-uncaged/build-fel-host.sh fel-host
+          (cd fel-host && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-fel-host-tools
+          path: fel-host/
+          if-no-files-found: error
+      - name: Verify historical upstream SPL availability (no binary publication)
+        continue-on-error: true
+        run: |
+          python3 scripts/prepare-fel-inputs.py --host fel-host --output "$RUNNER_TEMP/verified-fel"
+          rm -rf "$RUNNER_TEMP/verified-fel"
+
   diagnostics:
     name: Terminal diagnostics (standalone)
     runs-on: ubuntu-24.04
@@ -555,7 +579,7 @@ jobs:
 
   flash-kit:
     name: Assemble same-run flash kit (no compilation)
-    needs: [debian-native, recovery, diagnostics]
+    needs: [debian-native, recovery, diagnostics, fel-host]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -572,6 +596,10 @@ jobs:
         with:
           name: pb626-diagnostics
           path: flash-kit/diagnostics
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-fel-host-tools
+          path: flash-kit/fel-host
       - name: Assemble paired installation, backup and restore kit
         run: |
           set -euo pipefail
@@ -581,6 +609,8 @@ jobs:
           (cd flash-kit/recovery && sha256sum -c SHA256SUMS)
           (cd flash-kit/tools && sha256sum -c SHA256SUMS)
           (cd flash-kit/diagnostics && sha256sum -c SHA256SUMS)
+          (cd flash-kit/fel-host && sha256sum -c SHA256SUMS)
+          cp scripts/prepare-fel-inputs.py flash-kit/source/scripts/
           mv native-stage flash-kit/native
           cp docs/FLASH-KIT.md flash-kit/README.md
           (cd flash-kit && find . -type f ! -path ./SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum > SHA256SUMS)

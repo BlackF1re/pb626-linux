@@ -174,3 +174,24 @@ BusyBox and the ARM restore scanner independently. SPL keys include
 only actual source and patches, not its documentation or kernel packer.
 The diagnostic artifact includes the shell and native ARM timing helper.
 No cache hit substitutes for a first successful build or a hardware test.
+
+## Recovered FEL inputs
+
+The lab archive contains the original 52-byte direct-entry assembly and
+full patched sunxi-tools sources. The kit now includes a separately built
+`fel-host/` directory with the byte-identical entry, host executable,
+corresponding source archive and manifest. Existing known-working local
+inputs remain preferred. The rebuilt host binary is not yet physically
+USB-qualified; its two modified C sources are checked against the original
+laboratory hashes. Install libfdt1 and zlib1g in addition to libusb in WSL.
+
+Explicitly opt in to preparing missing inputs with `PB626.ps1 -Action
+Preflight -PrepareFelInputs`. It downloads the historical upstream
+U-Boot from xff.cz directly, only accepts SHA256
+ad00580889a797836b05ed8c718c11d5ccb014aa266707c4f41fa89d192fb87f,
+and extracts its first 24576 bytes with the existing SPL hash check.
+Existing files are not overwritten. If the upstream download is missing
+or different, use the original lab uboot.bin locally with
+`python3 source/scripts/prepare-fel-inputs.py --host fel-host --output
+fel-inputs --uboot /path/to/uboot.bin`. The historical executable is not
+republished by the kit. Verify cold FEL RAM recovery before writing eMMC.

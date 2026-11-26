@@ -25,3 +25,24 @@ compilation check. The audit output records any existing DRAM resume
 implementation; if absent, the missing retention path must be ported
 and tested separately before CONFIG_SUN5I_PM can be enabled. The
 old fixed-address binary hook tests do not certify a newly linked SPL.
+
+## Recovered original lab build (archive inspection)
+
+The original full U-Boot binary is 284992 bytes; its first 24576 bytes
+are the exact lab SPL. The embedded banner identifies
+U-Boot 2020.07-00059-g38fcae2e23e2-dirty, built 2023-07-17 with
+arm-linux-musleabihf-gcc 13.1.1 20230716 and GNU ld 2.40.0.20230703.
+The original distribution is https://xff.cz/kernels/bootloaders/pb/;
+its README identifies the same revision. The local combined binary SHA256
+is ad00580889a797836b05ed8c718c11d5ccb014aa266707c4f41fa89d192fb87f.
+The upstream download must match this hash before extracting the lab SPL.
+The exact dirty source tree is still unrecovered; the newer 2021.04
+candidate must not be represented as a reproduction.
+
+The original direct-entry.S is recovered and rebuilt to the exact 52-byte
+SHA256 1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd.
+The lab sunxi-tools source includes not only the MMU override, but the
+8 KiB maximum USB send chunks and legacy U-Boot DRAM read probes.
+The recovered patch is checked against the original fel.c and fel_lib.c
+hashes. A locally rebuilt host tool ran --help and --list-socs; USB
+qualification remains pending. See build-fel-host.sh and FLASH-KIT.md.

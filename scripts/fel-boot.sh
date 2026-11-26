@@ -68,7 +68,7 @@ done
 # source-candidate path is for RAM qualification, not BT0 installation.
 if [[ $source_candidate == 0 ]]; then
     printf '%s  %s\n' 7543ab1379d19cd07cd01e7ea3ff7d257aada22f770d0e937a6ae0605732a38f "$spl" | sha256sum -c -
-    [[ $(stat -c '%s' "$entry") -eq 52 ]] || { echo 'Entry stub is not 52 bytes' >&2; exit 11; }
+    printf '%s  %s\n' 1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd "$entry" | sha256sum -c -
 else
     echo 'EXPERIMENTAL source-built FEL: RAM qualification only; no BT0 flash approval.'
     for f in "$fel" "$spl" "$entry" "$lab/UBOOT-REV" "$lab/SUNXI-TOOLS-REV"; do
@@ -79,7 +79,8 @@ else
     done
     [[ $(cat "$lab/UBOOT-REV") == 96c08df75f632622c57954940d6a1a6c20062e18 ]]
     [[ $(cat "$lab/SUNXI-TOOLS-REV") == 0237931bb3d66de17c441a3c94d0e4b39e1308d1 ]]
-    [[ $(stat -c '%s' "$spl") -eq 24576 && $(stat -c '%s' "$entry") -eq 72 ]]
+    [[ $(stat -c '%s' "$spl") -eq 24576 ]]
+    printf '%s  %s\n' 1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd "$entry" | sha256sum -c -
 fi
 
 # Authenticity: match the bundle's per-file CI SHA256SUMS. The local SPL and

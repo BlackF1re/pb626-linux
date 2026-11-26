@@ -125,12 +125,14 @@ cd "$repo"
 "${CROSS_COMPILE}as" "$here/fel-entry.S" -o "$work/entry.o"
 "${CROSS_COMPILE}ld" -Ttext=0x41000000 -e _start "$work/entry.o" -o "$work/entry.elf"
 "${CROSS_COMPILE}objcopy" -O binary -j .text "$work/entry.elf" "$out/direct-entry-candidate.bin"
+(cd "$out" && echo "1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd  direct-entry-candidate.bin" | sha256sum -c -)
 git init -q "$work/sunxi-tools"
 toolsrev=0237931bb3d66de17c441a3c94d0e4b39e1308d1
 git -C "$work/sunxi-tools" fetch -q --depth=1 https://github.com/linux-sunxi/sunxi-tools.git "$toolsrev"
 git -C "$work/sunxi-tools" checkout -q --detach FETCH_HEAD
 git -C "$work/sunxi-tools" apply --check "$repo/patches/sunxi-fel-keep-mmu-off.patch"
 git -C "$work/sunxi-tools" apply "$repo/patches/sunxi-fel-keep-mmu-off.patch"
+(cd "$work/sunxi-tools" && printf '%s\n' '7b097c7148faf1032cf78d31ee25832d08556a61f89cd23dd234b0aa2508274e  fel.c' '76195e9312a81b5461785982300803a7d8b22fa5feb6a023b56df3a054baf61a  fel_lib.c' | sha256sum -c -)
 make -C "$work/sunxi-tools" sunxi-fel
 cp "$work/sunxi-tools/sunxi-fel" "$out/"
 printf '%s\n' "$toolsrev" >"$out/SUNXI-TOOLS-REV"
