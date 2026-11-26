@@ -2,7 +2,7 @@
 
 **[Step-by-step Windows instructions](https://github.com/BlackF1re/pb626-linux/blob/main/docs/INSTALL.md)**
 
-Use the tested ELAN / Samsung 8WPD3R board with recovery variant elan-emmc-backup. The eMMC is read-only and unmounted until an explicit restore. PowerShell 7.4+ and all files from pb626-emmc-tools are required. Verify the tool artifact's SHA256SUMS; older artifacts provide SHA256SUMS.fast for the ARM helper only. The new backup receiver and CID adaptation still need physical validation; the original differential restore was hardware-tested.
+Use the tested ELAN / Samsung 8WPD3R board with recovery variant elan-emmc-backup. The eMMC is read-only and unmounted until an explicit restore. PowerShell 7.4+ and all files from pb626-emmc-tools are required. Verify the tool artifact's SHA256SUMS; older artifacts provide SHA256SUMS.fast for the ARM helper only. The new backup receiver and CID adaptation still need physical validation; the original differential restore was hardware-tested. The backup receiver uses one raw SerialPort BaseStream for both line framing and binary payloads, avoiding text-reader prefetch across a binary frame.
 
 ## Backup format
 

@@ -21,18 +21,49 @@ $serial.ReadTimeout = 1000
 $serial.WriteTimeout = 15000
 $serial.DtrEnable = $true
 $serial.RtsEnable = $true
+# Use BaseStream exclusively. SerialPort.ReadLine() may prefetch binary bytes
+# after a text header into its character buffer; switching to raw Read() can
+# then leave the binary receiver waiting on bytes that are no longer in the
+# underlying stream. Byte-wise line parsing keeps text and payload in one stream.
 $buffer = [byte[]]::new($blockSize)
 $wireBuffer = [byte[]]::new($blockSize)
+function Write-SerialText {
+    param([string]$Text)
+    $bytes = [Text.Encoding]::ASCII.GetBytes($Text)
+    $serial.BaseStream.Write($bytes, 0, $bytes.Length)
+    $serial.BaseStream.Flush()
+}
+
+function Read-SerialLine {
+    param([datetime]$Deadline)
+    $line = [Text.StringBuilder]::new()
+    while ([datetime]::UtcNow -lt $Deadline) {
+        try {
+            $value = $serial.BaseStream.ReadByte()
+        } catch [TimeoutException] {
+            continue
+        }
+        if ($value -lt 0) { throw 'Recovery serial stream closed.' }
+        if ($value -eq 10) { return $line.ToString().TrimEnd([char]13).Trim() }
+        if ($line.Length -ge 8192) { throw 'Recovery response line exceeded 8192 bytes.' }
+        [void]$line.Append([char]$value)
+    }
+    throw 'Timed out waiting for a recovery response line.'
+}
+
 function Invoke-Device {
     param([string]$Command, [switch]$Receive, [int]$TimeoutSeconds = 60, [int]$ExpectedBytes = $blockSize)
     $marker = 'PB626_' + [guid]::NewGuid().ToString('N')
-    $serial.Write("$Command; printf '\n$marker=%s\n' `$?`n")
-    $deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
+    Write-SerialText "$Command; printf '\n$marker=%s\n' `$?`n"
+    # A 4 MiB read can take longer on slower USB CDC bridges. Bound total
+    # receive time, but fail quickly if the device stops producing bytes.
+    $effectiveTimeout = if ($Receive) { [Math]::Max($TimeoutSeconds, 600) } else { $TimeoutSeconds }
+    $deadline = [datetime]::UtcNow.AddSeconds($effectiveTimeout)
     $history = [Collections.Generic.List[string]]::new()
     $received = $false
     $endSeen = $false
     while ([datetime]::UtcNow -lt $deadline) {
-        try { $line = $serial.ReadLine().Trim() } catch [TimeoutException] { continue }
+        $line = Read-SerialLine -Deadline $deadline
         if ($line -cmatch '^PB626_DATA ([0-9]+) ([a-f0-9]{64})(?: (raw|gzip|zero))?$') {
             $bytes = [long]$Matches[1]
             $want = $Matches[2]
@@ -47,12 +78,28 @@ function Invoke-Device {
             # when assigning the output of an if-expression).
             if ($format -eq 'raw') { $dest = $buffer } else { $dest = $wireBuffer }
             $offset = 0
+            $lastDataAt = [datetime]::UtcNow
+            $lastReported = 0
             while ($offset -lt $bytes) {
-                if ([datetime]::UtcNow -ge $deadline) { throw 'Binary receive timed out.' }
+                $now = [datetime]::UtcNow
+                if ($now -ge $deadline) {
+                    throw "Binary receive timed out: received $offset of $bytes bytes."
+                }
+                if (($now - $lastDataAt).TotalSeconds -ge 30) {
+                    throw "Binary receive stalled: received $offset of $bytes bytes; no data for 30 seconds."
+                }
                 try {
-                    $n = $serial.Read($dest, $offset, [Math]::Min(64KB, [int]($bytes - $offset)))
-                } catch [TimeoutException] { continue }
+                    $n = $serial.BaseStream.Read($dest, $offset, [Math]::Min(64KB, [int]($bytes - $offset)))
+                } catch [TimeoutException] {
+                    continue
+                }
+                if ($n -le 0) { throw "Recovery serial stream closed after $offset of $bytes bytes." }
                 $offset += $n
+                $lastDataAt = [datetime]::UtcNow
+                if (($offset - $lastReported) -ge 512KB -or $offset -eq $bytes) {
+                    Write-Host ("Received {0:N0} / {1:N0} bytes" -f $offset, $bytes)
+                    $lastReported = $offset
+                }
             }
             if ($format -eq 'zero') {
                 [Array]::Clear($buffer, 0, $ExpectedBytes)
@@ -87,7 +134,7 @@ function Invoke-Device {
 }
 try {
     $serial.Open()
-    $serial.Write("`n")
+    Write-SerialText "`n"
     $code = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'pb626-restore-fast.sh')).Replace("`r",'')
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
     $null = Invoke-Device ': > /run/pb626-restore-fast.sh.b64'
