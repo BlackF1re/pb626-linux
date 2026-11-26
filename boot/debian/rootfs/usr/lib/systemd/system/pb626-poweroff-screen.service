@@ -4,7 +4,7 @@ DefaultDependencies=no
 ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
 ConditionPathExists=/lib/firmware/pb626/default.wbf
 After=local-fs.target pb626-desktop.service pb626-charge.service
-Before=shutdown.target poweroff.target
+Before=shutdown.target umount.target poweroff.target
 
 [Service]
 Type=oneshot

@@ -23,7 +23,7 @@
 #include <time.h>
 #include <unistd.h>
 
-enum { W = 758, H = 1024, SAMPLE_MS = 60000 };
+enum { W = 758, H = 1024, SAMPLE_MS = 15000, CONFIRM_MS = 1000 };
 static uint8_t image[W * H];
 static const char normal_marker[] = "/run/pb626-normal-boot";
 static const char charge_marker[] = "/run/pb626-charge-mode";
@@ -235,6 +235,13 @@ static int render(int percent, bool full)
     char *args[] = {"/usr/bin/pb626-epd", "/lib/firmware/pb626/default.wbf",
         full ? "full" : "partial", path, NULL};
     int ret = ok ? command(args[0], args) : -1;
+    if (ret && ok && !full) {
+        /* The chosen factory waveform can reject a transition in partial
+         * mode. Reacquire the panel through the ordinary full-quality
+         * recovery path instead of abandoning the charging session. */
+        args[2] = "full";
+        ret = command(args[0], args);
+    }
     unlink(path);
     return ret;
 }
@@ -281,7 +288,11 @@ static bool power_event(int fd)
         struct sockaddr_nl addr = {0};
         socklen_t len = sizeof(addr);
         ssize_t n = recvfrom(fd, buf, sizeof(buf), 0, (struct sockaddr *)&addr, &len);
-        if (n < 0) break;
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            if (errno == ENOBUFS) found = true;
+            break;
+        }
         if (addr.nl_pid != 0) continue;
         for (ssize_t i = 0; i < n;) {
             size_t l = strnlen(buf + i, (size_t)(n - i));
@@ -302,45 +313,63 @@ static int64_t now_ms(void)
     return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 
+enum action { WAIT, DRAW_FULL, DRAW_PARTIAL, POWER_OFF, BOOT_NORMAL, TELEMETRY_ERROR };
+struct charge_state {
+    int last, updates, failures;
+    int64_t absent_since, next;
+    bool armed;
+};
+
+/* All decisions use actual PMIC presence, not the uevent's payload.
+ * Two absent samples separated by one second are required. A reconnect
+ * or unknown sample cancels the decision. A missing gauge does not
+ * mean a missing battery or an unplug. */
+static enum action sample(struct charge_state *s, int64_t now, int present, int level)
+{
+    if (present < 0) {
+        s->absent_since = -1;
+        s->next = now + CONFIRM_MS;
+        return ++s->failures >= 3 ? TELEMETRY_ERROR : WAIT;
+    }
+    s->failures = 0;
+    if (!present) {
+        if (s->absent_since < 0) s->absent_since = now;
+        s->next = s->absent_since + CONFIRM_MS;
+        return now >= s->next ? POWER_OFF : WAIT;
+    }
+    s->absent_since = -1;
+    s->next = now + SAMPLE_MS;
+    if (level == s->last) return WAIT;
+    return s->updates % 10 == 0 ? DRAW_FULL : DRAW_PARTIAL;
+}
+
+static enum action key_action(struct charge_state *s, int value)
+{
+    if (value == 0) s->armed = true;
+    if (value == 1 && s->armed) {
+        s->armed = false;
+        return BOOT_NORMAL;
+    }
+    return WAIT;
+}
+
 static int run_charge(void)
 {
     if (access(charge_marker, F_OK) || access(normal_marker, F_OK) == 0)
         return -1;
     int key = power_key(), events = uevents();
     /* Do not strand the user in a target with no power-button path. */
-    if (key < 0 || events < 0 || external_present() < 0)
+    if (key < 0 || events < 0)
         return -1;
     unsigned long pressed[(KEY_MAX / (8 * sizeof(unsigned long))) + 1] = {0};
-    bool armed = ioctl(key, EVIOCGKEY(sizeof(pressed)), pressed) >= 0 &&
-        !(pressed[KEY_POWER / (8 * sizeof(unsigned long))] &
-          (1ul << (KEY_POWER % (8 * sizeof(unsigned long)))));
-    int last = -2, updates = 0;
-    int64_t next = 0;
+    struct charge_state s = { .last = -2, .absent_since = -1 };
+    if (ioctl(key, EVIOCGKEY(sizeof(pressed)), pressed) < 0)
+        return -1;
+    s.armed = !(pressed[KEY_POWER / (8 * sizeof(unsigned long))] &
+                (1ul << (KEY_POWER % (8 * sizeof(unsigned long)))));
     struct pollfd p[] = {{key, POLLIN, 0}, {events, POLLIN, 0}};
     for (;;) {
-        int64_t now = now_ms();
-        if (now >= next) {
-            int present = external_present();
-            if (present == 0) {
-                struct timespec delay = {1, 0};
-                nanosleep(&delay, NULL);
-                if (external_present() == 0) {
-                    /* The existing poweroff-screen service restores the
-                     * selected picture or white before kernel poweroff. */
-                    close(key); close(events);
-                    return systemctl("poweroff", NULL);
-                }
-            }
-            int level = capacity();
-            if (present == 1 && level != last) {
-                if (render(level, updates % 10 == 0))
-                    return -1;
-                last = level;
-                updates++;
-            }
-            next = now_ms() + SAMPLE_MS;
-        }
-        int64_t wait = next - now_ms();
+        int64_t wait = s.next - now_ms();
         int ret = poll(p, 2, wait > 0 ? (int)wait : 0);
         if (ret < 0) {
             if (errno == EINTR) continue;
@@ -353,8 +382,7 @@ static int run_charge(void)
             struct input_event e;
             while (read(key, &e, sizeof(e)) == sizeof(e)) {
                 if (e.type != EV_KEY || e.code != KEY_POWER) continue;
-                if (!e.value) armed = true;
-                if (e.value == 1 && armed) {
+                if (key_action(&s, e.value) == BOOT_NORMAL) {
                     close(key); close(events);
                     /* No reboot, no reliance on the PMIC startup bit again. */
                     return select_normal();
@@ -362,7 +390,36 @@ static int run_charge(void)
             }
         }
         if ((p[1].revents & POLLIN) && power_event(events))
-            next = 0;
+            s.next = 0;
+        int64_t now = now_ms();
+        if (now < s.next) continue;
+        int present = external_present();
+        int level = present == 1 ? capacity() : -1;
+        enum action act = sample(&s, now, present, level);
+        if (act == POWER_OFF) {
+            /* Check again immediately before committing to shutdown.
+             * Existing poweroff-screen restores the configured image. */
+            int final = external_present();
+            if (final != 0) {
+                s.absent_since = -1;
+                s.next = 0;
+                continue;
+            }
+            close(key); close(events);
+            return systemctl("poweroff", NULL);
+        }
+        if (act == TELEMETRY_ERROR) {
+            fprintf(stderr, "PB626 charge: repeated PMIC read failure; normal boot fallback\n");
+            return -1;
+        }
+        if (act == DRAW_FULL || act == DRAW_PARTIAL) {
+            if (render(level, act == DRAW_FULL))
+                return -1;
+            s.last = level;
+            s.updates++;
+            /* An unplug may have happened during the physical scan. */
+            s.next = 0;
+        }
     }
 }
 
@@ -386,13 +443,44 @@ static void self_test(void)
         for (size_t i = 0; i < sizeof(image); i++)
             assert(image[i] == 0 || image[i] == 255);
     }
-    puts("PB626 charger policy and 0..100% bitmap tests passed");
+    struct charge_state s = { .last = -2, .absent_since = -1, .armed = true };
+    assert(sample(&s, 0, 1, 0) == DRAW_FULL);
+    s.last = 0; s.updates = 1;
+    assert(sample(&s, 10, 1, 0) == WAIT && s.next == 15010);
+    assert(sample(&s, 100, 1, 1) == DRAW_PARTIAL);
+    assert(sample(&s, 1000, 0, -1) == WAIT && s.next == 2000);
+    assert(sample(&s, 1500, 0, -1) == WAIT);
+    assert(sample(&s, 1999, 1, 1) == DRAW_PARTIAL);
+    assert(sample(&s, 2100, 0, -1) == WAIT);
+    assert(sample(&s, 3100, 0, -1) == POWER_OFF);
+    assert(sample(&s, 3101, -1, -1) == WAIT && s.absent_since == -1);
+    assert(sample(&s, 4101, -1, -1) == WAIT);
+    assert(sample(&s, 5101, -1, -1) == TELEMETRY_ERROR);
+    assert(sample(&s, 5200, 1, -1) == DRAW_PARTIAL && s.failures == 0);
+    s.last = -1; s.updates = 10;
+    assert(sample(&s, 5300, 1, 100) == DRAW_FULL);
+    assert(key_action(&s, 2) == WAIT);
+    assert(key_action(&s, 1) == BOOT_NORMAL);
+    assert(key_action(&s, 1) == WAIT);
+    assert(key_action(&s, 0) == WAIT);
+    assert(key_action(&s, 1) == BOOT_NORMAL);
+    puts("PB626 charger transitions, unplug/reconnect, faults, key and 0..100% bitmap tests passed");
 }
 
 int main(int argc, char **argv)
 {
     if (argc != 2) return 2;
     if (!strcmp(argv[1], "--self-test")) { self_test(); return 0; }
+    if (!strcmp(argv[1], "probe")) {
+        char source[32] = "unknown";
+        if (read_pmic("pb626_boot_source", source, sizeof(source)))
+            strcpy(source, "unknown");
+        int key = power_key();
+        printf("boot_source=%s\nexternal_present=%d\ncapacity=%d\npek_available=%d\nqualified=%d\n",
+               source, external_present(), capacity(), key >= 0, access(qualified, F_OK) == 0);
+        if (key >= 0) close(key);
+        return 0;
+    }
     if (!strcmp(argv[1], "select")) return select_boot() ? 1 : 0;
     if (!strcmp(argv[1], "normal")) return select_normal() ? 1 : 0;
     if (!strcmp(argv[1], "run")) return run_charge() ? 1 : 0;

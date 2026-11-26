@@ -23,7 +23,7 @@ the panel's native Runtime PM remain active.
 
 The compiled helper draws a 758x1024 black/white battery with a large
 numeric percentage. It updates only when the integer capacity changes,
-using power_supply notifications and a 60-second fallback because the
+using power_supply notifications and a 15-second fallback because the
 gauge does not promise an event for every percentage change. Missing
 battery telemetry is displayed as --%, not as 100%. The first update
 and every tenth changed percentage use the existing full quality mode;
@@ -52,3 +52,25 @@ Confirm whether the PMIC is configured to power on from USB/AC at all.
 If the board does not start on input insertion, Linux cannot implement
 that behavior while fully off; inspect the PMIC boot configuration
 before considering any changes. Never qualify from register docs alone.
+
+## Software acceptance and diagnostic
+
+The host and armhf build run the same pure transition tests: startup
+source/override, 0..100 plus unknown gauge, unchanged percentage,
+unplug/reconnect within the debounce window, confirmed unplug,
+three consecutive failed PMIC reads, and fresh versus repeated PEK
+events. The service polls the PEK and power_supply netlink fd, checks
+fresh PMIC telemetry and uses a 15-second fallback. Absence needs two
+samples separated by at least one second and a final recheck; a
+reconnect cancels shutdown. Netlink overflow triggers a new sample.
+A failed partial render retries the existing full-quality mode.
+No synthetic test calls the real host power manager.
+
+On the running reader, `sudo /usr/libexec/pb626-charge probe` prints
+the latched startup source, live external presence, capacity and PEK
+availability. Record this before enabling the qualification marker.
+The helper does not change the PMIC charger current or disable hardware
+drivers. Kernel device discovery can still load the Wi-Fi driver even
+though the iwd/desktop user session is not started. Physical standby
+current, regulator behavior and boot on cable insertion remain hardware
+tests, not consequences of the systemd target graph alone.
