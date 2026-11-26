@@ -218,7 +218,11 @@ sudo depmod -b "$root" "$release"
 test -s "$root/usr/lib/modules/$release/modules.dep"
 in_root test -s /lib/firmware/rtlwifi/rtl8188eufw.bin
 # Factory waveform remains owner-supplied at offline installation.
+# Trixie uses /etc/locale.conf; /etc/default/locale is a compatibility
+# symlink and must never be overwritten from outside the chroot.
 sudo cp -r boot/debian/rootfs/etc/. "$root/etc/"
+in_root grep -qx "LANG=C.UTF-8" /etc/locale.conf
+in_root grep -qx "LANG=C.UTF-8" /etc/default/locale
 sudo install -m 600 boot/native/doas.conf "$root/etc/doas.conf"
 sudo install -m 644 boot/native/fstab "$root/etc/fstab"
 sudo install -m 600 boot/native/sshd_config "$root/etc/ssh/sshd_config"
