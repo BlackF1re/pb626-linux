@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, enhance/native-reliability]
     paths:
       - '.github/workflows/ci.yml'
       - '.github/workflows/megi-fel.yml'
@@ -14,6 +14,9 @@ on:
       - 'patches/**'
       - 'scripts/**'
       - 'tests/**'
+      - 'diagnostics/**'
+      - '.github/workflows/source-bootloader.yml'
+      - '.github/workflows/request-firmware.yml'
       - '!**/*.md'
   pull_request:
     branches: [main]
@@ -28,6 +31,9 @@ on:
       - 'patches/**'
       - 'scripts/**'
       - 'tests/**'
+      - 'diagnostics/**'
+      - '.github/workflows/source-bootloader.yml'
+      - '.github/workflows/request-firmware.yml'
       - '!**/*.md'
   workflow_dispatch:
 
@@ -63,6 +69,12 @@ jobs:
           for f in boot/pb626-native-{desktop,console} boot/native/init.d/* boot/native/pb626-* display/pb626-{desktop,xsession}; do sh -n "$f"; done
           bash -n scripts/build-native-rootfs.sh
           bash -n scripts/build-debian-rootfs.sh
+          bash -n scripts/build-debian-base.sh
+          sh -n diagnostics/pb626-diagnostics
+          sh diagnostics/pb626-diagnostics --self-test
+          sh diagnostics/pb626-diagnostics --help
+          if sh diagnostics/pb626-diagnostics --interval 0; then exit 1; fi
+          if sh diagnostics/pb626-diagnostics --input /dev/sda 1; then exit 1; fi
           bash -n scripts/build-debian-recovery.sh
           bash -n scripts/prepare-install.sh
           sh -n boot/recovery/init
