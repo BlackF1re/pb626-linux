@@ -9,6 +9,7 @@ on:
       - 'BT0-uncaged/fel-entry.S'
       - '.github/workflows/source-bootloader.yml'
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -23,10 +24,24 @@ jobs:
           sudo apt-get install -y --no-install-recommends gcc-arm-linux-gnueabihf \
             libc6-dev-armhf-cross bc bison flex libssl-dev python3-pyelftools \
             python3-setuptools device-tree-compiler libusb-1.0-0-dev libfdt-dev zlib1g-dev pkg-config
+      - name: Fingerprint toolchain
+        id: tools
+        run: |
+          fingerprint=$(dpkg-query -W -f='${Version}\n' gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross libusb-1.0-0-dev libfdt-dev | sha256sum | cut -c1-20)
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: source-boot-candidates
+          key: pb626-source-spl-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/**', 'patches/sunxi-fel-keep-mmu-off.patch') }}
       - name: Build independently from pinned source
+        if: steps.cache.outputs.cache-hit != 'true'
         run: bash BT0-uncaged/build-from-source.sh source-boot-candidates
+      - name: Verify both candidate manifests
+        run: |
+          (cd source-boot-candidates && sha256sum -c SHA256SUMS)
+          (cd source-boot-candidates/deep-resume && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: pb626-source-boot-candidates-NOT-FOR-FLASH
           path: source-boot-candidates/
