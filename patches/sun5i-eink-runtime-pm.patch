@@ -188,7 +188,38 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  		}
  		if (t->dclk_div)
  			eink->timing.dclk_div = t->dclk_div;
-@@ -943,6 +958,94 @@
+@@ -904,11 +919,29 @@
+ };
+ 
++/* A persistent worker keeps its FD open and uses delayed Runtime PM.
++ * A standalone final update closes it: park immediately rather than
++ * asking userspace to guess a panel power-down delay. */
++static int eink_release(struct file *file)
++{
++	struct eink_dev *eink = video_drvdata(file);
++	int ret = vb2_fop_release(file);
++	int pm_ret;
++
++	if (ret)
++		return ret;
++	pm_ret = pm_runtime_suspend(eink->dev);
++	if (pm_ret < 0 && pm_ret != -EAGAIN && pm_ret != -EBUSY &&
++	    pm_ret != -EACCES)
++		dev_warn(eink->dev, "close could not park E Ink: %d\n", pm_ret);
++	return 0;
++}
++
+ static const struct v4l2_file_operations eink_fops = {
+ 	.owner		= THIS_MODULE,
+ 	.open		= v4l2_fh_open,
+-	.release	= vb2_fop_release,
++	.release	= eink_release,
+ 	.unlocked_ioctl	= video_ioctl2,
+ 	.mmap		= vb2_fop_mmap,
+ 	.poll		= vb2_fop_poll,
+ };
+ 
+@@ -943,6 +976,94 @@
  	{ .id = "be_ram" },
  };
  
@@ -283,7 +314,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  static int eink_probe(struct platform_device *pdev)
  {
  	struct eink_dev *eink;
-@@ -963,9 +1066,7 @@
+@@ -963,9 +1084,7 @@
  	INIT_LIST_HEAD(&eink->buf_list);
  	INIT_WORK(&eink->idle_work, eink_idle_work);
  	INIT_WORK(&eink->restart_work, eink_restart_work);
@@ -293,7 +324,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  
  	eink->timing = eink_default_timing;
  	/* identity palette; userspace must upload a real pin-state table */
-@@ -1089,39 +1190,10 @@
+@@ -1089,39 +1208,10 @@
  		return ret;
  	}
  
@@ -335,7 +366,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  	ret = devm_request_irq(dev, eink->irq, eink_tcon0_irq_handler, 0,
  			       dev_name(dev), eink);
  	if (ret) {
-@@ -1167,23 +1239,35 @@
+@@ -1167,23 +1257,35 @@
  	eink->vdev.queue = q;
  	video_set_drvdata(&eink->vdev, eink);
  
@@ -373,7 +404,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  	reset_control_assert(eink->rstc);
  	return ret;
  }
-@@ -1195,12 +1279,14 @@
+@@ -1195,12 +1297,26 @@
  	video_unregister_device(&eink->vdev);
  	v4l2_device_unregister(&eink->v4l2_dev);
  
@@ -392,8 +423,21 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
 -	reset_control_assert(eink->rstc);
  }
  
++static void eink_shutdown(struct platform_device *pdev)
++{
++	struct eink_dev *eink = platform_get_drvdata(pdev);
++	int ret;
++
++	/* device_shutdown() already drains runtime PM. Reuse the same
++	 * synchronous parking sequence as system suspend. */
++	ret = eink_system_suspend(eink->dev);
++	if (ret)
++		dev_err(eink->dev, "shutdown could not park E Ink: %d\n", ret);
++}
++
  static const struct of_device_id eink_of_match[] = {
-@@ -1215,6 +1301,7 @@
+@@ -1215,6 +1331,8 @@
++	.shutdown = eink_shutdown,
  	.driver = {
  		.name = "eink_tcon0",
  		.of_match_table = eink_of_match,

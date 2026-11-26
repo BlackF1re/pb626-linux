@@ -9,8 +9,8 @@ Before=shutdown.target poweroff.target
 [Service]
 Type=oneshot
 ExecStart=/usr/sbin/pb626-admin poweroff-screen
-# Let STREAMOFF's delayed panel power-off complete before power removal.
-ExecStartPost=/bin/sleep 6
+# The paired kernel parks the panel synchronously on renderer close and
+# again at device shutdown if needed; no arbitrary userspace rail delay.
 TimeoutStartSec=65s
 
 [Install]

@@ -47,6 +47,12 @@ remain off until STREAMON. System PM rejects active streaming and
 uses pm_runtime_force_suspend / pm_runtime_force_resume. Rail errors
 abort suspend; separate ownership flags preserve regulator counts.
 No waveform or VCOM change. Logical frame history remains valid.
+The one-shot renderer's V4L2 close attempts a synchronous runtime suspend
+once the queue is released; an active stream's PM reference prevents an
+unrelated close from powering it off. The platform shutdown callback also
+reuses the synchronous parking sequence. Normal desktop streaming retains
+the 5-second idle policy. The power-off service no longer sleeps for a
+fixed six seconds. Confirm rail timing and shutdown on hardware.
 
 ELAN eKTF2227 now disables IRQ, releases all contacts and powers down
 its regulator before sleep. On resume it uses the same reset, hello
