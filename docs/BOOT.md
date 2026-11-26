@@ -9,9 +9,11 @@ Menu press can return to FEL. Factory BT1 and boot.axf are not executed.
 Preserve them and the factory partition layout in offline backups.
 
 Native DTB: MMC0 disabled, MMC2 enabled, no initrd,
-root=/dev/mmcblk2p1 rootfstype=ext4 rootwait rw init=/sbin/init.
-Runtime scripts in boot/ configure proc/sys/dev/run, disable frontlight,
-start USB ACM and the desktop independently. A persistent E Ink worker
+root=/dev/mmcblk2p1 rootfstype=ext4 rootwait ro init=/sbin/init.
+Native BusyBox PID 1 runs Alpine OpenRC sysinit/boot/default/shutdown.
+Standard services handle filesystems, devices, clock and logging; board,
+USB ACM, authenticated getty and the supervised desktop are separate services.
+Xorg and the renderer retain hardware access while desktop clients run as reader. A persistent E Ink worker
 starts before xinit; INIT overlaps Xorg startup, and its ACK is required
 before skipping the first physical reset. No GUI-specific readiness gate.
 The renderer's ready file indicates first acknowledged frame, not all

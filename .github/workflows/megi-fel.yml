@@ -14,6 +14,7 @@ on:
       - 'scripts/assemble-megi-ram.sh'
       - 'scripts/build-desktop-base.sh'
       - 'scripts/build-megi-desktop.sh'
+      - 'scripts/build-native-rootfs.sh'
       - 'scripts/Start-PB626*.ps1'
       - 'scripts/fel-boot.sh'
       - 'scripts/inspect-live.sh'
@@ -31,6 +32,11 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/megi-fel.yml'
+      - 'scripts/build-native-rootfs.sh'
+      - 'scripts/configure-megi-kernel.sh'
+      - 'scripts/build-megi-variants.sh'
+      - 'board/**'
+      - 'boot/native/zram-init'
   workflow_dispatch:
 
 concurrency:
@@ -192,7 +198,7 @@ jobs:
           gzip -t kernel-cache/kernel-modules.tar.gz
           grep -qx 'CONFIG_USB_MUSB_HDRC=y' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_USB_MUSB_SUNXI=y' kernel-cache/pb626-megi.config
-          grep -qx 'CONFIG_USB_MUSB_DUAL_ROLE=y' kernel-cache/pb626-megi.config
+          bash scripts/configure-megi-kernel.sh --check kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_PHY_SUN4I_USB=y' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_EXTCON=y' kernel-cache/pb626-megi.config
           grep -qx 'CONFIG_USB_CONFIGFS_ACM=y' kernel-cache/pb626-megi.config

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Settings
+Exec=pb626-control-center
+Icon=preferences-desktop
+Categories=Settings;Utility;

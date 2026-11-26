@@ -10,8 +10,8 @@
   };
 };
 /* Stock type 8: ELAN eKTF2227 on I2C2 0x15 (late/eMMC revisions).
- * Display/native builds override the binding with the eKTF2227 driver.
- * Recovery retains this board marker without using touchscreen input.
+ * All profiles override the binding with the eKTF2227 driver.
+ * Recovery disables the touch controller and I2C2.
  */
 &i2c2 {
   /delete-node/ touchpanel@24;

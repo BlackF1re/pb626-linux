@@ -1,0 +1,70 @@
+#!/bin/sh
+# Deliberately narrow privileged hardware/UI interface. No arbitrary commands.
+set -eu
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+umask 077
+state=/var/lib/pb626/frontlight
+apply_light() {
+    case "$1" in 0|[1-9]|[1-9][0-9]|100) ;; *) return 2 ;; esac
+    for light in /sys/class/backlight/*; do
+        [ -r "$light/max_brightness" ] || continue
+        max=$(cat "$light/max_brightness")
+        [ "$max" -gt 0 ] || return 1
+        level=$(( (max * $1 + 50) / 100 ))
+        if [ "$level" -eq 0 ]; then
+            echo 0 >"$light/brightness"
+            echo 4 >"$light/bl_power"
+        else
+            echo "$level" >"$light/brightness"
+            echo 0 >"$light/bl_power"
+        fi
+        return 0
+    done
+    return 1
+}
+case "${1:-}" in
+frontlight)
+    [ "$#" -eq 2 ] || exit 2
+    apply_light "$2"
+    tmp=$(mktemp /var/lib/pb626/.frontlight.XXXXXX)
+    printf '%s\n' "$2" >"$tmp"
+    mv -f "$tmp" "$state"
+    ;;
+restore-light)
+    [ "$#" -eq 1 ] || exit 2
+    value=0
+    if [ -r "$state" ]; then IFS= read -r value <"$state" || value=0; fi
+    case "$value" in 0|[1-9]|[1-9][0-9]|100) ;; *) value=0 ;; esac
+    apply_light "$value"
+    ;;
+light-off)
+    [ "$#" -eq 1 ] || exit 2
+    apply_light 0
+    ;;
+wifi-on)
+    [ "$#" -eq 1 ] || exit 2
+    rc-service connman start
+    # ConnMan may already have restored the saved powered state.
+    if ! connmanctl enable wifi; then
+        connmanctl technologies | awk '/Type = wifi/ {wifi=1} /Powered = True/ && wifi {ok=1} /^\// {wifi=0} END {exit !ok}'
+    fi
+    rc-update add connman default
+    ;;
+wifi-off)
+    [ "$#" -eq 1 ] || exit 2
+    if rc-service connman status >/dev/null 2>&1; then
+        connmanctl disable wifi || :
+        rc-service connman stop
+    fi
+    rc-update del connman default 2>/dev/null || :
+    ;;
+wifi-console)
+    [ "$#" -eq 1 ] || exit 2
+    exec /usr/bin/connmanctl
+    ;;
+reboot|poweroff)
+    [ "$#" -eq 1 ] || exit 2
+    exec "/sbin/$1"
+    ;;
+*) exit 2 ;;
+esac

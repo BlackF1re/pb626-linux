@@ -12,7 +12,7 @@
 };
 &{/chosen} {
   pb626,emmc-root;
-  bootargs = "console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rootwait rw init=/sbin/init";
+  bootargs = "console=ttyS0,115200 root=/dev/mmcblk2p1 rootfstype=ext4 rootwait ro init=/sbin/init";
   /delete-property/ linux,initrd-start;
   /delete-property/ linux,initrd-end;
   /delete-property/ pb626,emmc-backup;

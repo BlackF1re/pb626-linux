@@ -63,5 +63,24 @@ indexed group rendering with PIN32 output, not a reduced-width bus.
 
 PIN32 is required: the first 85 data clocks assert G_CLK and first/subsequent gate S_OE differs. Four independent baselines × 81 four-source combinations can require 324 palette entries before fixed clocks, exceeding IDX8's 256. Indexed group rendering optimizes CPU work, not bus width. Never substitute waveform, VCOM or pin timing.
 
+### Application-level high contrast
+
+Keep the original Xorg 24-bit visual, grayscale profiles and all 16 physical
+levels. Do not force binary quantization: pictures, antialiased text and
+gray UI states must retain their luminance. Instead, publish neutral X11
+resource defaults using xrdb before launching desktop clients
+(`/etc/X11/pb626.Xresources`), including XTerm, NEdit and XCalc. The
+existing Matchbox theme, keyboard patch, `mc -b` and `htop -C` remain.
+Shell defaults `NO_COLOR=1` and `CLICOLOR=0` are advisory.
+
+GTK2 gets neutral RC defaults; GTK3/4 request their HighContrast theme
+and disable animations by default if installed later. No new GTK or Qt
+runtime is bundled for this purpose. User overrides, custom widgets,
+hard-coded colors and icons may ignore these defaults; configure such
+applications individually. Do not recolor book content or photographs.
+Qt does not have a universal monochrome setting in this Matchbox session;
+select a verified monochrome palette when adding a Qt application.
+The new settings require visual acceptance testing on the RAM desktop.
+
 No claim that scanout ACK alone establishes optical quality. Stock
 advanced HQ/shadow filters and full optical calibration remain unimplemented.

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Read Documents
+Exec=pb626-open-document
+Icon=mbfolder.png
+Categories=Utility;Viewer;

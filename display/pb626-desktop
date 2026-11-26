@@ -12,7 +12,13 @@ umask 077
 work=/run/pb626-desktop
 mkdir "$work"
 bridge_pid=
-trap 'if [ -n "$bridge_pid" ]; then kill "$bridge_pid" 2>/dev/null || :; wait "$bridge_pid" || :; fi; rm -f "$work"/Xauthority "$work"/xorg.conf "$work"/ready "$work"/layout "$work"/clients.started; rmdir "$work"' EXIT
+xinit_pid=
+cleanup() {
+    if [ -n "$xinit_pid" ]; then kill "$xinit_pid" 2>/dev/null || :; wait "$xinit_pid" || :; fi
+    if [ -n "$bridge_pid" ]; then kill "$bridge_pid" 2>/dev/null || :; wait "$bridge_pid" || :; fi
+    rm -rf "$work"
+}
+trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 count=0
@@ -59,12 +65,22 @@ fi
 touch "$XAUTHORITY"
 cookie=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 xauth add :0 MIT-MAGIC-COOKIE-1 "$cookie"
+client=/usr/bin/pb626-xsession
 if [ -f /proc/device-tree/chosen/pb626,emmc-root ]; then
-    export PB626_EPD_SESSION_STARTED="$work/clients.started"
+    chgrp reader "$work" "$XAUTHORITY"
+    chmod 750 "$work"
+    chmod 640 "$XAUTHORITY"
+    mkdir -m 700 "$work/session"
+    chown reader:reader "$work/session"
+    export XDG_RUNTIME_DIR="$work/session"
+    export PB626_EPD_SESSION_STARTED="$work/session/clients.started"
+    client=/usr/libexec/pb626-user-session
     DISPLAY=:0 /usr/bin/pb626-x11-epd "$waveform" "$work/ready" &
     bridge_pid=$!
     export PB626_EPD_BRIDGE_PID="$bridge_pid"
 fi
-xinit /usr/bin/pb626-xsession "$waveform" "$work/ready" -- \
+xinit "$client" "$waveform" "$work/ready" -- \
     /usr/bin/Xorg :0 vt2 -nolisten tcp -nocursor -auth "$XAUTHORITY" \
-    -config "$work/xorg.conf" -logfile /run/pb626-xorg.log
+    -config "$work/xorg.conf" -logfile /run/pb626-xorg.log &
+xinit_pid=$!
+wait "$xinit_pid"

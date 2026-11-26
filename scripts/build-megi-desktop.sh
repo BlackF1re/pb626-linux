@@ -74,7 +74,13 @@ printf 'nameserver 1.1.1.1\n' | sudo tee desktop-root/etc/resolv.conf >/dev/null
 sudo install -m 755 display/pb626-desktop display/pb626-xsession display/pb626-settings desktop-root/usr/bin/
 sudo install -D -m 644 display/xorg.conf desktop-root/etc/pb626/xorg.conf
 sudo install -D -m 644 display/eink-fonts.conf desktop-root/etc/fonts/conf.d/99-pb626-eink.conf
-sudo install -D -m 644 display/matchbox/Xresources desktop-root/etc/pb626/Xresources
+sudo install -D -m 644 display/matchbox/Xresources desktop-root/etc/X11/pb626.Xresources
+sudo install -D -m 644 display/no-color.sh desktop-root/etc/profile.d/pb626-no-color.sh
+sudo install -D -m 644 display/gtkrc desktop-root/etc/gtk-2.0/gtkrc
+for version in 3 4; do
+  sudo install -D -m 644 display/gtk-settings.ini "desktop-root/etc/gtk-$version.0/settings.ini"
+done
+test -x desktop-root/usr/bin/xrdb
 sudo install -D -m 644 display/matchbox/keyboard.desktop desktop-root/etc/pb626/keyboard.desktop
 sudo tic -x -o desktop-root/etc/terminfo display/matchbox/pb626-mono.terminfo
 sudo install -d desktop-root/usr/share/themes/PB626/matchbox
@@ -102,10 +108,8 @@ done
 # Build native root separately from the RAM archive.
 mkdir -p native-dist
 sudo install -m 755 ./native-worker desktop-root/usr/bin/pb626-epd
-sudo install -m 755 boot/pb626-native-{setup,desktop,console} desktop-root/sbin/
-sudo install -m 644 boot/pb626-native.inittab desktop-root/etc/inittab
-printf 'pb626-native-alpine-v1\n' | sudo tee desktop-root/etc/pb626-image-id >/dev/null
-sudo rm -f desktop-root/init
+bash scripts/build-native-rootfs.sh desktop-root
+printf 'pb626-native-alpine-openrc-v2\n' | sudo tee desktop-root/etc/pb626-image-id >/dev/null
 sudo tar --numeric-owner -C desktop-root -czf native-dist/pb626-native-rootfs.tar.gz .
 cp "$bundle"/{pb626-native-zImage,pb626-elan-emmc-native.dtb,KERNELRELEASE,KERNEL-SOURCE.txt} native-dist/
 python3 BT0-uncaged/pack-kernel.py native-dist/pb626-native-zImage native-dist/pb626-elan-emmc-native.dtb native-dist/raw-linux.img

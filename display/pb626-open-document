@@ -1,0 +1,13 @@
+#!/usr/bin/wish
+wm withdraw .
+set file [tk_getOpenFile -initialdir [file join $env(HOME) Books] -title "Open document" -filetypes {{{Documents} {.pdf .epub .cbz .xps .fb2}} {{All files} {*}}}]
+if {$file ne ""} {
+    foreach viewer {mupdf-x11 mupdf} {
+        if {[auto_execok $viewer] ne ""} {
+            if {[catch {exec $viewer $file &} err]} {tk_messageBox -icon error -message $err}
+            exit
+        }
+    }
+    tk_messageBox -icon error -message "MuPDF is not installed"
+}
+exit

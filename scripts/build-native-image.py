@@ -2,6 +2,7 @@
 """Assemble a private, restorable firmware dump offline. Never open a block device."""
 import argparse
 import hashlib
+import getpass
 import os
 from pathlib import Path
 import re
@@ -10,6 +11,7 @@ import stat
 import struct
 import subprocess
 import tempfile
+import time
 import zlib
 
 SECTOR = 512
@@ -89,6 +91,30 @@ def overlay(image, source, offset, length):
         os.fsync(out.fileno())
     require(digest(image, offset, length) == digest(source), "Overlay verification failed")
 
+def set_root_password(root, password_hash):
+    require(re.fullmatch(r"\$6\$(?:rounds=[0-9]+\$)?[./0-9A-Za-z]{1,16}\$[./0-9A-Za-z]{86}", password_hash), "Invalid SHA-512 crypt password hash")
+    shadow = regular(root / "etc/shadow")
+    rows = shadow.read_text().splitlines()
+    require(sum(row.startswith("root:") for row in rows) == 1, "Missing or duplicate root shadow entry")
+    for i, row in enumerate(rows):
+        if row.startswith("root:"):
+            fields = row.split(":")
+            require(len(fields) == 9, "Malformed root shadow entry")
+            fields[1] = password_hash
+            fields[2] = str(int(time.time()) // 86400)
+            rows[i] = ":".join(fields)
+    shadow.write_text("\n".join(rows) + "\n")
+    shadow.chmod(0o600)
+
+def prompt_root_password(hash_file=None):
+    if hash_file is not None:
+        return regular(hash_file).read_text().strip()
+    require(os.isatty(0), "Interactive terminal required, or use --root-password-hash-file")
+    password = getpass.getpass("New native root password (at least 8 characters): ")
+    require(len(password) >= 8 and "\n" not in password and "\r" not in password, "Password too short or invalid")
+    require(password == getpass.getpass("Confirm root password: "), "Passwords do not match")
+    return subprocess.check_output(["openssl", "passwd", "-6", "-stdin"], input=password + "\n", text=True).strip()
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--backup", type=Path, required=True, help="Verified original or current full dump")
@@ -97,6 +123,7 @@ def main():
     p.add_argument("--waveform", type=Path, required=True, help="Owner's original default.wbf")
     p.add_argument("--output", type=Path, required=True, help="New private directory")
     p.add_argument("--expected-cid", help="Original CID for a legacy backup")
+    p.add_argument("--root-password-hash-file", type=Path, help="Private SHA-512 crypt hash file for noninteractive installation")
     p.add_argument("--accept-replace-p1", action="store_true", help="Replace p1 including all existing user data")
     a = p.parse_args()
     require(a.accept_replace_p1, "Explicit --accept-replace-p1 required")
@@ -155,7 +182,8 @@ def main():
         root.mkdir()
         subprocess.run(["tar","--numeric-owner","-xzf",str(archive.resolve()),"-C",str(root)],check=True)
         require((root/"lib/modules"/release/"modules.dep").is_file(),"Kernel modules missing")
-        require((root/"etc/inittab").is_file() and (root/"sbin/pb626-native-setup").is_file(),"Native init missing")
+        require((root/"etc/inittab").is_file() and (root/"sbin/openrc").is_file() and (root/"etc/init.d/pb626-desktop").is_file(), "OpenRC native init missing")
+        set_root_password(root, prompt_root_password(a.root_password_hash_file))
         wave=root/"lib/firmware/pb626/default.wbf"
         wave.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(a.waveform,wave)

@@ -15,6 +15,28 @@
 
 &mmc0 { status = "disabled"; };
 &mmc2 { status = "disabled"; };
+
+/* The inherited A13 DT reserves 96 MiB for the unused video engine.
+ * Match the kernel fallback; leave the 32 MiB CMA pool reusable.
+ * The E Ink queue alone needs about 7.1 MiB, with headroom for DMA
+ * fragmentation and optional Lima experiments. Preserve alloc-ranges.
+ */
+&{/reserved-memory/default-pool} {
+  size = <0x02000000>;
+};
+
+/* Never probe the conventional display pipeline or video decoder:
+ * the built-in E Ink V4L2 driver owns TCON0/DEBE directly.
+ * Mali is deliberately left available in display/native builds.
+ */
+&{/display-engine} { status = "disabled"; };
+&{/soc/video-codec@1c0e000} { status = "disabled"; };
+
+/* The late eMMC board has no confirmed NOR inventory. Keep the inherited
+ * description, but do not probe SPI2 or its flash in production/recovery.
+ * Optional diagnostic builds can re-enable it with the shipped modules.
+ */
+&spi2 { status = "disabled"; };
 /* Do not illuminate the panel at first boot. */
 &{/backlight} {
   /* IMPORTANT: pwm_bl ignores default-brightness-level when it

@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="Authenticated USB serial console"
+supervisor=supervise-daemon
+command=/sbin/pb626-native-console
+respawn_delay=2
+respawn_max=0
+depend() {
+    need pb626-usb
+    use syslog
+}

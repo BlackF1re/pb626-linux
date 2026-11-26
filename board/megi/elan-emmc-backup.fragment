@@ -1,4 +1,12 @@
-/* Dedicated FEL recovery: USB peripheral, backlight and display off. */
+/* Dedicated FEL recovery: USB ACM, eMMC and diagnostic LED only.
+ * E Ink remains compiled into the shared kernel but is not bound here.
+ * Do not touch the shared USB PHY or its SRAM mapping.
+ */
+&ehci0 { status = "disabled"; };
+&ohci0 { status = "disabled"; };
+&mali { status = "disabled"; };
+&i2c2 { status = "disabled"; };
+&{/soc/i2c@1c2b400/touchscreen@15} { status = "disabled"; };
 /* Disallow any other driver from racing the PB4 hog or PWM output. */
 &{/backlight} {
   status = "disabled";

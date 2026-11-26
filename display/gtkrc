@@ -1,0 +1,25 @@
+# Neutral defaults for GTK2 applications installed later; no engine dependency.
+gtk-cursor-blink = 0
+style "pb626-paper" {
+  fg[NORMAL] = "#000000"
+  fg[ACTIVE] = "#000000"
+  fg[PRELIGHT] = "#000000"
+  fg[SELECTED] = "#ffffff"
+  fg[INSENSITIVE] = "#555555"
+  bg[NORMAL] = "#eeeeee"
+  bg[ACTIVE] = "#bbbbbb"
+  bg[PRELIGHT] = "#dddddd"
+  bg[SELECTED] = "#000000"
+  bg[INSENSITIVE] = "#eeeeee"
+  text[NORMAL] = "#000000"
+  text[ACTIVE] = "#000000"
+  text[PRELIGHT] = "#000000"
+  text[SELECTED] = "#ffffff"
+  text[INSENSITIVE] = "#555555"
+  base[NORMAL] = "#ffffff"
+  base[ACTIVE] = "#dddddd"
+  base[PRELIGHT] = "#ffffff"
+  base[SELECTED] = "#000000"
+  base[INSENSITIVE] = "#eeeeee"
+}
+class "*" style "pb626-paper"
