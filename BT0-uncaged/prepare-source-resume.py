@@ -124,12 +124,16 @@ static void pb626_try_resume(struct dram_para *para)
 		    DRAM_DCR_MODE(DRAM_DCR_MODE_INTERLEAVE)))
 		return;
 
+	/* Arm before clock setup: retained-state recovery must never hang
+	 * without the cold-reset escape. Linux stops it on successful resume. */
+	pb626_resume_watchdog();
 	mctl_setup_dram_clock(para->clock, para->mbus_clock);
-	if (!(readl(&dram->ppwrsctl) & 1))
+	if (!(readl(&dram->ppwrsctl) & 1)) {
+		writel(0, PB626_WDOG_MODE);
 		return;
+	}
 
 	/* No relocation or RAM size probing after this point. */
-	pb626_resume_watchdog();
 	para->io_width = io;
 	para->bus_width = bus;
 	para->density = density;
