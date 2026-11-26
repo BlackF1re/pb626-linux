@@ -73,6 +73,7 @@ struct span_range {
 
 struct buffer {
 	uint32_t *data;
+	size_t length;
 	struct span_range rows[GATES];
 };
 
@@ -580,9 +581,32 @@ static void allocate_queue(struct renderer *renderer)
 						 MAP_SHARED, renderer->fd, info.m.offset);
 		if (renderer->buffers[i].data == MAP_FAILED)
 			fail("could not map an E Ink scanout buffer");
+		renderer->buffers[i].length = info.length;
 		memset(renderer->buffers[i].data, 0, FRAME_BYTES);
 		scan_template(renderer->buffers[i].data);
 	}
+}
+
+/* Only called in the command loop, after the preceding update's
+ * STREAMOFF and ACK. Keep the exclusive device fd and logical history.
+ * The next apply() lazily recreates the full eight-buffer queue. */
+static void release_queue(struct renderer *renderer)
+{
+	if (!renderer->buffers_count)
+		return;
+	for (unsigned int i = 0; i < renderer->buffers_count; i++) {
+		struct buffer *buffer = &renderer->buffers[i];
+		if (munmap(buffer->data, buffer->length))
+			fail("could not unmap idle scanout buffer");
+		memset(buffer, 0, sizeof(*buffer));
+	}
+	struct v4l2_requestbuffers req = { .count = 0, .type = type,
+					  .memory = V4L2_MEMORY_MMAP };
+	if (retry_ioctl(renderer->fd, VIDIOC_REQBUFS, &req))
+		fail("could not release idle scanout queue");
+	renderer->buffers_count = 0;
+	if (renderer->profile)
+		fprintf(stderr, "epd: idle DMA queue released\n");
 }
 
 static void enqueue(struct renderer *renderer, unsigned int index, const struct phase *phase,
@@ -941,6 +965,12 @@ int main(int argc, char **argv)
 			fail("could not map shared frame");
 		int command;
 		while ((command = fgetc(stdin)) != EOF) {
+			if (command == RELEASE_QUEUE) {
+				release_queue(&renderer);
+				if (fputc(command, stdout) == EOF || fflush(stdout))
+					fail("could not acknowledge queue release");
+				continue;
+			}
 			switch (command) {
 			case PREVIEW: mode = DU; break;
             case PREVIEW_A2: mode = A2; break;

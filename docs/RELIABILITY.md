@@ -39,3 +39,21 @@ PSS, MemAvailable, CMA, zram and PSI; PSS alone excludes kernel memory.
 - Do not free the DMA queue during ordinary use; suspend/charger-only UI,
   critical battery shutdown, pstore/ramoops and in-place updates need
   board qualification. Keep last verified rescue image.
+
+## Candidate: idle DMA queue reclamation
+
+The worker supports a RELEASE_QUEUE command after STREAMOFF, unmaps all
+buffers and issues VIDIOC_REQBUFS(count=0). The worker remains the sole
+owner of the video device and retains the acknowledged packed panel
+history. The next update lazily allocates the ordinary full queue and
+rebuilds neutral templates; no INIT or waveform change is introduced
+solely by freeing buffers. Potential reclaim is about 7.1 MiB of DMA/CMA,
+not an increase in physical RAM. The bridge can release after 30 seconds
+of settled inactivity or before acknowledged suspend, using its
+existing deadline loop. No extra timer is armed when disabled.
+This is opt-in only: create /etc/pb626/dma-release-qualified as root
+after testing reallocation, repeated idle/wake cycles and severe memory
+pressure on the physical board, then restart the desktop. Remove the
+marker to restore the known persistent-queue behavior. Do not qualify
+the experiment on QEMU alone. Record CmaFree, MemAvailable and refresh
+latency before/after; a failing ioctl follows existing worker recovery.

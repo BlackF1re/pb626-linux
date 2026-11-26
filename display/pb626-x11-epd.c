@@ -1452,6 +1452,12 @@ int main(int argc, char **argv)
                 lightness ? "cie-lstar" : "srgb", gamma,
                 fast_mode == FAST_A2 ? "a2" : fast_mode == FAST_DU4 ? "du4" :
                 fast_mode == FAST_AUTO ? "auto" : "du");
+	/* Reallocation under memory pressure needs physical qualification.
+	 * No new polling timer when this experiment is disabled. */
+	const int release_idle = access("/etc/pb626/dma-release-qualified", F_OK) == 0;
+	const uint64_t dma_idle_us = 30000000;
+	uint64_t last_update = now_us();
+	int queue_released = 0;
 	unsigned int failures = 0;
 	int dirty = 1, focus_changed = 1, has_frame = 0, pending = 0;
 	unsigned int cleanup_count = 0;
@@ -1499,8 +1505,16 @@ int main(int argc, char **argv)
 					}
 					if (lock_pending)
 						sleep_fd = client;
-					else
+					else {
+						if (release_idle && !queue_released) {
+							if (submit(&worker, RELEASE_QUEUE)) {
+								sleep_reply(&client, 0);
+								goto failed;
+							}
+							queue_released = 1;
+						}
 						sleep_reply(&client, 'P');
+					}
 				} else if (request == 'R') {
 					if (system_sleep) {
 						system_sleep = 0;
@@ -1563,6 +1577,15 @@ int main(int argc, char **argv)
 				goto failed;
 			}
 			acknowledge_sleep_frame(worker.frame, previous);
+			last_update = now_us();
+			queue_released = 0;
+			if (release_idle && system_sleep) {
+				if (submit(&worker, RELEASE_QUEUE)) {
+					sleep_reply(&sleep_fd, 0);
+					goto failed;
+				}
+				queue_released = 1;
+			}
 			lock_pending = dirty = pending = cleanup_count = 0;
 			controls.clean_requested = 0;
 			(void)power_action("lock-indicator", "locked");
@@ -1709,6 +1732,8 @@ int main(int argc, char **argv)
 			if (profile)
 				ack = now_us();
 			acknowledge(command, worker.frame, frame, previous);
+			last_update = now_us();
+			queue_released = 0;
 			panel_rotation = capture_rotation;
 			if (!has_frame) {
 				FILE *ready = fopen(argv[2], "w");
@@ -1744,8 +1769,21 @@ int main(int argc, char **argv)
 wait_input:
 		now = now_us();
 		uint64_t deadline = UINT64_MAX;
-		if ((!screen_locked || lock_pending) && (dirty || !damage))
-			deadline = next_capture > layout_until ? next_capture : layout_until;
+		if (release_idle && has_frame && !queue_released && !dirty && !pending &&
+		    !cleanup_count && !lock_pending && damage) {
+			uint64_t release_due = last_update + dma_idle_us;
+			if (now >= release_due) {
+				if (submit(&worker, RELEASE_QUEUE))
+					goto failed;
+				queue_released = 1;
+			} else {
+				deadline = release_due;
+			}
+		}
+		if ((!screen_locked || lock_pending) && (dirty || !damage)) {
+			uint64_t capture_due = next_capture > layout_until ? next_capture : layout_until;
+			if (capture_due < deadline) deadline = capture_due;
+		}
 		if ((pending || cleanup_count) && has_frame && !dirty) {
 			uint64_t settle = last_damage + (pending ? QUIET_US : cleanup_delay(cleanup_count));
 			if (settle < layout_until)
