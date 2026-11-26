@@ -28,7 +28,8 @@ bash scripts/build-debian-rootfs.sh kernel-stage debian-dist
 APT and dpkg own ordinary programs. The PB626 worker, bridge, hardware
 units, existing settings and patched Matchbox panel/keyboard are installed
 as pb626-runtime. A separate disposable ARM build chroot is used for
-compilation and tests. No compiler or QEMU executable is in the final root.
+compilation and tests. No GCC compiler or QEMU executable is in the final root; the Debian
+x11-xserver-utils dependency on cpp is retained.
 The patched clients live in a private PATH directory; the stock Debian
 Matchbox packages own their data and unaffected applets. No new shell,
 display manager or compositor is introduced.
@@ -179,3 +180,25 @@ setting restored at boot. System includes hostname and NTP controls via
 hostnamectl/timedatectl. Tk fonts use proper family-list syntax; the GUI
 smoke test actually creates the five tabs under Xvfb rather than checking
 only Tcl completeness.
+
+## Stock feature parity and remaining qualification
+
+The owner's stock archive contains an embedded Linux 3.0.8 Kconfig,
+ELAN/alternative touch modules, RTL8188EU/alternative Wi-Fi modules,
+Mali/UMP, a 50 MiB zram setup, Android USB mass-storage and developer
+RNDIS scripts. It also contains a squashfs resource image and vendor UI.
+The factory WBF matches the existing validated digest. Do not import the
+proprietary stock binaries, device data, or waveform into the repository.
+The current native port intentionally provides authenticated USB ACM,
+not a Windows file-transfer interface; exporting the mounted ext4 root
+as USB mass storage would risk corruption. Qualify an on-demand USB
+network or MTP transfer mechanism separately. MicroSD, suspend/resume,
+charger-only boot and GPU acceleration remain unqualified. A successful
+firmware build is not a substitute for testing these features on hardware.
+
+Stock Xorg's Debian package pulls GBM/Mesa/Gallium/LLVM through package
+relationships even though the Xorg executable does not directly link
+Gallium/LLVM. Do not delete these libraries or bypass dpkg dependencies.
+GLX is disabled at both extension and module levels; verify Xorg maps/PSS
+and both visual depths on the reader before making any size or RAM claim.
+GTK3 is required by stock matchbox-desktop; GTK4 by iwgtk (on demand).

@@ -16,6 +16,12 @@ pkg="$work/pkg"
 keys="$work/keys"
 cd "$repo"
 
+# Fail before the expensive foreign-architecture bootstrap if a host
+# tool needed to package the final boot image is missing.
+for tool in mmdebstrap clang ld.lld fdtget depmod tic git python3; do
+    command -v "$tool" >/dev/null || { echo "Missing host tool: $tool" >&2; exit 1; }
+done
+
 test -s "$kernel/pb626-megi-zImage"
 test -s "$kernel/pb626-elan-emmc-native.dtb"
 test -s "$kernel/kernel-modules.tar.gz"
@@ -253,7 +259,8 @@ ctl enable pb626-board.service pb626-desktop.service pb626-usb.service \
 # iwd starts on demand; user can enable it persistently from Settings.
 # D-Bus activation is permitted for the normal iwgtk/iwctl clients.
 for unit in iwd.service ssh.service ssh.socket nftables.service \
-  apt-daily.timer apt-daily-upgrade.timer systemd-networkd.service \
+  apt-daily.timer apt-daily-upgrade.timer man-db.timer e2scrub_all.timer e2scrub_reap.service \
+  systemd-networkd.service \
   systemd-networkd.socket systemd-networkd-wait-online.service getty@tty1.service; do
   if ctl is-enabled "$unit" >/dev/null 2>&1; then ctl disable "$unit"; fi
 done
@@ -288,19 +295,28 @@ in_root /bin/bash -euc '
   for exe in /usr/bin/pb626-epd /usr/bin/pb626-x11-epd /usr/libexec/pb626/bin/*; do
     ldd "$exe" > /tmp/pb626-ldd
     cat /tmp/pb626-ldd
-    ! grep -q "not found" /tmp/pb626-ldd
+    if grep -q "not found" /tmp/pb626-ldd; then
+      echo "Unresolved runtime library: $exe" >&2
+      exit 1
+    fi
   done
   rm /tmp/pb626-ldd
   test -x /usr/lib/xorg/Xorg || test -x /usr/bin/Xorg
   for exe in iwgtk iwctl systemctl wish mupdf xterm matchbox-desktop xrestop xidle; do command -v "$exe"; done
-  ! command -v apk
-  ! command -v gcc
+  for unexpected in apk gcc; do
+    if command -v "$unexpected" >/dev/null; then
+      echo "Unexpected executable in Debian rootfs: $unexpected" >&2
+      exit 1
+    fi
+  done
   test -x /usr/bin/dbus-run-session
 '
 for unit in pb626-board.service pb626-desktop.service pb626-usb.service systemd-resolved.service; do
   test "$(ctl is-enabled "$unit")" = enabled
 done
-test "$(ctl is-enabled iwd.service || :)" = disabled
+for unit in iwd.service man-db.timer e2scrub_all.timer e2scrub_reap.service; do
+  test "$(ctl is-enabled "$unit" || :)" = disabled
+done
 test "$(ctl is-enabled tmp.mount || :)" = masked
 test ! -e "$root/usr/bin/qemu-arm-static"
 sudo install -m 644 tests/check-control-center.tcl "$root/tmp/pb626-check-tk.tcl"
