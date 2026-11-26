@@ -1,10 +1,14 @@
 #Requires -Version 7.4
 [CmdletBinding()]
 param(
-    [ValidateSet('Install','Backup','Restore','Preflight')][string]$Action,
+    [ValidateSet('Install','Backup','Restore','Preflight','Flash')][string]$Action,
     [string]$DataDir,
     [string]$Distro='Ubuntu',
-    [switch]$UseRunningRecovery
+    [switch]$UseRunningRecovery,
+    [switch]$SkipBackup,
+    [string]$StockDir,
+    [string]$ImageDir,
+    [switch]$EnableRecoverySD
 )
 $ErrorActionPreference='Stop'
 $kit=$PSScriptRoot
@@ -17,10 +21,19 @@ if (!$Action) {
     Write-Host '2 - Backup only'
     Write-Host '3 - Restore a verified dump'
     Write-Host '4 - Read-only preflight of a verified dump'
-    $Action=switch (Read-Host 'Choose 1-4') {
+    Write-Host '5 - Install new Debian build (reuse existing verified dump; no new backup)'
+    Write-Host '6 - Flash an already assembled firmware (no backup)'
+    $Action=switch (Read-Host 'Choose 1-6') {
         '1' {'Install'} '2' {'Backup'} '3' {'Restore'} '4' {'Preflight'}
+        '5' {$SkipBackup=$true; 'Install'}
+        '6' {'Flash'}
         default {throw 'Cancelled'}
     }
+}
+if ($SkipBackup -and $Action -ne 'Install') { throw '-SkipBackup applies only to Install' }
+if ($Action -eq 'Install' -and $SkipBackup) {
+    if (!$StockDir) { $StockDir=Join-Path $DataDir 'stock' }
+    if (!(Test-Path -LiteralPath (Join-Path $StockDir 'SHA256SUMS') -PathType Leaf)) { throw 'Skipping a new backup requires a previously verified dump for the device-specific data. Use -StockDir.' }
 }
 # Verify the trusted public kit before invoking any included script. Paths
 # in the release manifest are relative, with no traversal or private files.
@@ -83,10 +96,11 @@ if (!$UseRunningRecovery) {
     Write-Host 'Power the reader fully off, unplug it, hold Menu and connect USB.'
     $null=Read-Host 'Press Enter when cold FEL is ready'
     $recovery=Join-Path $kit 'recovery'
+    $variant=if ($EnableRecoverySD) { 'elan-emmc-sd-backup' } else { 'elan-emmc-backup' }
     if ($IsWindows) {
-        & (Join-Path $recovery 'Start-PB626.ps1') -BundleDir $recovery -Variant elan-emmc-backup -Profile diagnostic -Distro $Distro -LabDir $lab
+        & (Join-Path $recovery 'Start-PB626.ps1') -BundleDir $recovery -Variant $variant -Profile diagnostic -Distro $Distro -LabDir $lab
     } else {
-        Run-Linux @('env',"PB626_LAB_DIR=$lab","PB626_FEL_TOOL=$lab/sunxi-fel",'bash',(Join-Path $recovery 'fel-boot.sh'),$recovery,'elan-emmc-backup','diagnostic')
+        Run-Linux @('env',"PB626_LAB_DIR=$lab","PB626_FEL_TOOL=$lab/sunxi-fel",'bash',(Join-Path $recovery 'fel-boot.sh'),$recovery,$variant,'diagnostic')
     }
 }
 $port=$null
@@ -100,14 +114,15 @@ $backup=Join-Path $kit 'tools/Backup-PB626Fast.ps1'
 $restore=Join-Path $kit 'tools/Restore-PB626Fast.ps1'
 if ($Action -eq 'Install') {
     $null=New-Item -ItemType Directory -Force -Path $DataDir
-    $stock=Join-Path $DataDir 'stock'
-    $linux=Join-Path $DataDir 'linux'
-    if (Test-Path -LiteralPath $linux) { throw "Output already exists: $linux (never overwritten)" }
-    if (!(Test-Path -LiteralPath $stock)) { & $backup -Port $port -BackupDir $stock }
-    elseif (!(Test-Path -LiteralPath (Join-Path $stock 'SHA256SUMS'))) { throw 'Incomplete stock backup; retain it and use another DataDir' }
-    else {
-        Write-Warning "Using existing stock backup: $stock. The builder and restore will verify hashes and CID."
-        if ((Read-Host 'Type USE STOCK to confirm') -cne 'USE STOCK') { throw 'Cancelled' }
+    $stock=if ($StockDir) { $StockDir } else { Join-Path $DataDir 'stock' }
+    $linux=Join-Path $DataDir ('linux-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+    if ($SkipBackup) {
+        Write-Warning "No new backup will be made. Using $stock as the source of preserved factory data."
+    } elseif (Test-Path -LiteralPath $stock) {
+        $stock=Join-Path $DataDir ('backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+        & $backup -Port $port -BackupDir $stock
+    } else {
+        & $backup -Port $port -BackupDir $stock
     }
     Run-Linux @('bash',(LinuxPath (Join-Path $kit 'source/scripts/prepare-install.sh')),(LinuxPath $stock),(LinuxPath (Join-Path $kit 'native')),(LinuxPath $lab),(LinuxPath $linux))
     & $restore -Port $port -BackupDir $linux -Write
@@ -116,7 +131,7 @@ if ($Action -eq 'Install') {
     $target=Join-Path $DataDir ('backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
     & $backup -Port $port -BackupDir $target
 } else {
-    $target=Read-Host 'Full path to a verified backup directory'
-    & $restore -Port $port -BackupDir $target -Write:($Action -eq 'Restore')
+    $target=if ($ImageDir) { $ImageDir } else { Read-Host 'Full path to a verified image/backup directory' }
+    & $restore -Port $port -BackupDir $target -Write:($Action -in @('Restore','Flash'))
 }
 Write-Host 'Operation complete. Only after successful verification may you disconnect the reader.'

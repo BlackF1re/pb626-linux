@@ -17,7 +17,7 @@ unmounted() {
 probe() {
     test -f "$chosen/pb626,emmc-backup" || fail "Wrong RAM boot variant"
     compatible=${chosen%/chosen}/soc/i2c@1c2b400/touchscreen@15/compatible
-    tr '\000' '\n' <"$compatible" | grep -qx elan,ekth3500 || fail "Wrong board variant"
+    tr '\000' '\n' <"$compatible" | grep -qx elan,ektf2227 || fail "Wrong board variant"
     test "$(cat "$sys/device/name")" = 8WPD3R || fail "Unexpected eMMC model"
     test "$(cat "$sys/removable")" = 0 || fail "Target is removable"
     test "$(blockdev --getss "$disk")" = 512 || fail "Unexpected sector size"

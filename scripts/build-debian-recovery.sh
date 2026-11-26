@@ -18,8 +18,8 @@ test -s "$keyring"
 sudo mmdebstrap --mode=root --variant=extract --architectures=armhf \
     --include=busybox-static --keyring="$keyring" \
     trixie "$work/debian" 'deb http://deb.debian.org/debian trixie main'
-busybox=$(sudo find "$work/debian" -type f -name busybox -print)
-test -n "$busybox"
+busybox="$work/debian/usr/bin/busybox"
+test -f "$busybox" && test -x "$busybox"
 root="$work/root"
 sudo install -d "$root"/{bin,sbin,usr/bin,usr/sbin,usr/libexec,dev,proc,sys,run,root,tmp,etc,sys/kernel/config}
 sudo install -m 755 "$busybox" "$root/bin/busybox"
