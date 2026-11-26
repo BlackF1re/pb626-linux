@@ -84,3 +84,14 @@ The new settings require visual acceptance testing on the RAM desktop.
 
 No claim that scanout ACK alone establishes optical quality. Stock
 advanced HQ/shadow filters and full optical calibration remain unimplemented.
+
+### Packed waveform temperature cache
+
+Keep the original WBF two-bit transition signals in the six decoded mode
+caches. Expand only the active update plan before rendering. This removes
+301,056 bytes of fixed cache allocation (294 KiB) and the 16 KiB decode
+scratch array, without changing the per-pixel PIN32 render loop, waveform
+eligibility, repeat merging, temperature selection or the shared protocol.
+The host regression checks all 256 transition indices, active filtering and
+phase merging. Actual RSS savings depend on how many waveform pages were
+resident; compare PSS and update timings on hardware.

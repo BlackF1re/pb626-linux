@@ -55,6 +55,18 @@ struct update {
 	unsigned int count;
 };
 
+/* WBF stores four 2-bit transition signals in each byte. Keep that
+ * representation in the temperature cache; expand only the active plan. */
+struct cached_update {
+	uint8_t lut[MAX_PHASES * LUT_BYTES];
+	unsigned int count;
+};
+
+static inline uint8_t packed_signal(const uint8_t *lut, unsigned int t)
+{
+	return (lut[t / 4] >> (2 * (t % 4))) & 3;
+}
+
 struct span_range {
 	unsigned short first, end;
 };
@@ -75,7 +87,8 @@ struct renderer {
 	unsigned int patterns_count;
 	struct buffer buffers[QUEUE_SIZE];
 	struct waveform wbf;
-	struct update cache[DU4 + 1], planned;
+	struct cached_update cache[DU4 + 1];
+	struct update planned;
 	bool driven[DU4 + 1][TRANSITIONS];
 	uint64_t temperature_checked;
 	uint32_t neutral_data[2][GROUPS];
@@ -254,24 +267,22 @@ static size_t decode(const struct waveform *wbf, enum mode mode, uint8_t *lut)
 
 static void cache_mode(struct renderer *renderer, enum mode mode)
 {
-	struct update *decoded = &renderer->cache[mode];
+	struct cached_update *decoded = &renderer->cache[mode];
 	if (decoded->count)
 		return;
 
 	uint64_t start = now_us();
-	uint8_t packed[MAX_PHASES * LUT_BYTES];
-	decoded->count = decode(&renderer->wbf, mode, packed);
+	decoded->count = decode(&renderer->wbf, mode, decoded->lut);
 	memset(renderer->driven[mode], 0, sizeof(renderer->driven[mode]));
 	for (unsigned int i = 0; i < decoded->count; i++) {
-		const uint8_t *lut = packed + i * LUT_BYTES;
-		struct phase *phase = &decoded->phases[i];
+		const uint8_t *lut = decoded->lut + i * LUT_BYTES;
+		uint8_t first = packed_signal(lut, 0);
 		for (unsigned int t = 0; t < TRANSITIONS; t++) {
-			uint8_t signal = (lut[t / 4] >> (2 * (t % 4))) & 3;
+			uint8_t signal = packed_signal(lut, t);
 			if (signal == 3)
 				fail("unsupported WBF source voltage");
-			phase->lut[t] = signal;
 			renderer->driven[mode][t] |= signal != 0;
-			if (mode == INIT && signal != phase->lut[0])
+			if (mode == INIT && signal != first)
 				fail("RESET requires a uniform waveform");
 		}
 	}
@@ -292,12 +303,13 @@ static bool supports(const struct renderer *renderer, enum mode mode, const bool
 static void plan(struct renderer *renderer, enum mode mode, const bool *active)
 {
 	struct update *update = &renderer->planned;
-	const struct update *decoded = &renderer->cache[mode];
+	const struct cached_update *decoded = &renderer->cache[mode];
 	update->count = 0;
 	for (unsigned int i = 0; i < decoded->count; i++) {
 		uint8_t phase[TRANSITIONS];
+		const uint8_t *lut = decoded->lut + i * LUT_BYTES;
 		for (unsigned int t = 0; t < TRANSITIONS; t++)
-			phase[t] = !active || active[t] ? decoded->phases[i].lut[t] : 0;
+			phase[t] = !active || active[t] ? packed_signal(lut, t) : 0;
 
 		struct phase *last = update->count ? &update->phases[update->count - 1] : NULL;
 		if (last && !memcmp(last->lut, phase, sizeof(phase))) {

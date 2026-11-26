@@ -112,6 +112,37 @@ static void test_render_equivalence(void)
 	assert(index_groups(&renderer) == 0);
 }
 
+static void set_cached_signal(struct cached_update *cache, unsigned int phase,
+			      unsigned int transition, uint8_t signal)
+{
+	unsigned int shift = 2 * (transition % 4);
+	uint8_t *byte = &cache->lut[phase * LUT_BYTES + transition / 4];
+	*byte = (*byte & ~(3u << shift)) | ((signal & 3u) << shift);
+}
+
+static void test_packed_cache(void)
+{
+	static struct renderer renderer;
+	struct cached_update *cache = &renderer.cache[GC16];
+	bool active[TRANSITIONS];
+	cache->count = 2;
+	for (unsigned int t = 0; t < TRANSITIONS; t++) {
+		active[t] = t % 2;
+		for (unsigned int i = 0; i < cache->count; i++) {
+			set_cached_signal(cache, i, t, (t + i) % 3);
+			assert(packed_signal(cache->lut + i * LUT_BYTES, t) == (t + i) % 3);
+		}
+	}
+	for (unsigned int filtered = 0; filtered < 2; filtered++) {
+		plan(&renderer, GC16, filtered ? active : NULL);
+		assert(renderer.planned.count == 2);
+		for (unsigned int i = 0; i < cache->count; i++)
+			for (unsigned int t = 0; t < TRANSITIONS; t++)
+				assert(renderer.planned.phases[i].lut[t] ==
+				       (!filtered || active[t] ? (t + i) % 3 : 0));
+	}
+}
+
 static void test_waveform_policy(void)
 {
 	static struct renderer renderer;
@@ -120,11 +151,11 @@ static void test_waveform_policy(void)
 	assert(!supports(&renderer, DU, active));
 	assert(supports(&renderer, GC16, active));
 	renderer.cache[GC16].count = 4;
-	renderer.cache[GC16].phases[0].lut[0x8f] = 1;
-	renderer.cache[GC16].phases[1].lut[0x8f] = 1;
-	renderer.cache[GC16].phases[1].lut[0x12] = 2;
-	renderer.cache[GC16].phases[2].lut[0x8f] = 2;
-	renderer.cache[GC16].phases[3].lut[0x8f] = 1;
+	set_cached_signal(&renderer.cache[GC16], 0, 0x8f, 1);
+	set_cached_signal(&renderer.cache[GC16], 1, 0x8f, 1);
+	set_cached_signal(&renderer.cache[GC16], 1, 0x12, 2);
+	set_cached_signal(&renderer.cache[GC16], 2, 0x8f, 2);
+	set_cached_signal(&renderer.cache[GC16], 3, 0x8f, 1);
 	plan(&renderer, GC16, active);
 	assert(renderer.planned.count == 3);
 	assert(renderer.planned.phases[0].scans == 2);
@@ -190,6 +221,7 @@ int main(void)
 	test_quantization();
 	test_sparse_scan();
 	test_render_equivalence();
+	test_packed_cache();
 	test_waveform_policy();
 	test_fast_mode_selection();
     assert(PREVIEW_A2 != PREVIEW && PREVIEW_DU4 != PREVIEW);
