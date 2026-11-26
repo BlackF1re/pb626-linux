@@ -528,6 +528,9 @@ enum { LUMA_STEPS = 4096 };
 static enum gray_profile gray_profile;
 static uint16_t linear_r[256], linear_g[256], linear_b[256];
 static uint8_t gray_tone[256], luma_tone[LUMA_STEPS];
+#if defined(__ARM_NEON)
+static int gray_tone_identity;
+#endif
 static uint8_t dirty_tiles[TILE_ROWS][TILE_COLS];
 
 static double srgb_decode(double v)
@@ -545,6 +548,9 @@ static double gray_encode(double y, int lightness)
 static void setup_gray(enum gray_profile selected, int lightness, double gamma)
 {
 	gray_profile = selected;
+#if defined(__ARM_NEON)
+	gray_tone_identity = 1;
+#endif
 	if (selected == GRAY_LEGACY)
 		return;
 	for (int i = 0; i < 256; i++) {
@@ -554,6 +560,10 @@ static void setup_gray(enum gray_profile selected, int lightness, double gamma)
 		linear_g[i] = scaled * 0.7152 + 0.5;
 		linear_b[i] = scaled * 0.0722 + 0.5;
 		gray_tone[i] = 255 * pow(lightness ? gray_encode(y, 1) : v, 1 / gamma) + 0.5;
+#if defined(__ARM_NEON)
+		if (gray_tone[i] != i)
+			gray_tone_identity = 0;
+#endif
 	}
 	for (int i = 0; i < LUMA_STEPS; i++)
 		luma_tone[i] = 255 * pow(gray_encode(i / (LUMA_STEPS - 1.0), lightness),
@@ -677,6 +687,52 @@ static inline uint8_t rgb565_gray(unsigned int pixel)
 			  (pixel & 31) * 255 / 31);
 }
 
+/* In a typical UI many adjacent pixels are pure black/white or neutral.
+ * SIMD handles only mathematically exact cases, with the existing color
+ * conversion as fallback. Load bytes (not potentially unaligned uint16_t)
+ * and keep scalar tails so partial XDamage strips need no padding. */
+static void rgb565_gray_row(const uint8_t *src, uint8_t *dst, int count)
+{
+	int x = 0;
+#if defined(__ARM_NEON)
+	for (; x + 8 <= count; x += 8) {
+		uint16x8_t words = vreinterpretq_u16_u8(vld1q_u8(src + 2 * x));
+		uint16x8_t binary = vorrq_u16(vceqq_u16(words, vdupq_n_u16(0)),
+					      vceqq_u16(words, vdupq_n_u16(0xffff)));
+		uint64x2_t mask = vreinterpretq_u64_u16(binary);
+		if (vgetq_lane_u64(mask, 0) == UINT64_MAX &&
+		    vgetq_lane_u64(mask, 1) == UINT64_MAX) {
+			vst1_u8(dst + x, vshrn_n_u16(words, 8));
+		} else {
+			for (int i = x; i < x + 8; i++)
+				dst[i] = rgb565_gray(src[2 * i] | ((unsigned int)src[2 * i + 1] << 8));
+		}
+	}
+#endif
+	for (; x < count; x++)
+		dst[x] = rgb565_gray(src[2 * x] | ((unsigned int)src[2 * x + 1] << 8));
+}
+
+static void rgbx_gray_row(const uint8_t *src, uint8_t *dst, int count)
+{
+	int x = 0;
+#if defined(__ARM_NEON)
+	if (gray_tone_identity)
+		for (; x + 8 <= count; x += 8) {
+			uint8x8x4_t bgrx = vld4_u8(src + 4 * x);
+			uint8x8_t neutral = vand_u8(vceq_u8(bgrx.val[0], bgrx.val[1]),
+						  vceq_u8(bgrx.val[1], bgrx.val[2]));
+			if (vget_lane_u64(vreinterpret_u64_u8(neutral), 0) == UINT64_MAX)
+				vst1_u8(dst + x, bgrx.val[0]);
+			else
+				for (int i = x; i < x + 8; i++)
+					dst[i] = gray_value(src[4 * i + 2], src[4 * i + 1], src[4 * i]);
+		}
+#endif
+	for (; x < count; x++)
+		dst[x] = gray_value(src[4 * x + 2], src[4 * x + 1], src[4 * x]);
+}
+
 static int shm_attach_error;
 
 static int mark_shm_error(Display *display, XErrorEvent *event)
@@ -778,20 +834,17 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 			const uint8_t *row = (const uint8_t *)image->data +
 					     (y - read_area.top) * image->bytes_per_line;
 			uint8_t *dest = lightness[y % 3];
-			for (int x = read_area.left; x < read_area.right; x++) {
+			int count = read_area.right - read_area.left;
+			if (rgb565)
+				rgb565_gray_row(row, dest + read_area.left, count);
+			else if (rgbx)
+				rgbx_gray_row(row, dest + read_area.left, count);
+			else for (int x = read_area.left; x < read_area.right; x++) {
 				int column = x - read_area.left;
-				if (rgb565) {
-					const uint8_t *color = row + column * 2;
-					dest[x] = rgb565_gray(color[0] | ((unsigned int)color[1] << 8));
-				} else if (rgbx) {
-					const uint8_t *color = row + column * 4;
-					dest[x] = gray_value(color[2], color[1], color[0]);
-				} else {
-					unsigned long pixel = XGetPixel(image, column, y - read_area.top);
-					dest[x] = gray_value(channel(pixel, image->red_mask),
-							     channel(pixel, image->green_mask),
-							     channel(pixel, image->blue_mask));
-				}
+				unsigned long pixel = XGetPixel(image, column, y - read_area.top);
+				dest[x] = gray_value(channel(pixel, image->red_mask),
+						     channel(pixel, image->green_mask),
+						     channel(pixel, image->blue_mask));
 			}
 			}
 			int output_y = y - 1;

@@ -111,6 +111,11 @@ resident; compare PSS and update timings on hardware.
 ### NEON and binary keyboard
 
 The ARMv7 bridge builds with NEON for exact four-neighbour L1 contrast.
+RGB565 binary blocks and neutral RGBX blocks (when the gray tone table
+is the identity) also use eight-pixel SIMD conversion. Mixed colors,
+nonidentity tone curves and short tails retain the scalar reference.
+Regression tests compare both paths on unaligned partial rows and all
+profiles; throughput still needs Cortex-A8 measurements.
 Scalar tails and reference tests preserve all gray profiles and dither.
 The keyboard uses black backgrounds, white non-antialiased labels and a
 small white pressed outline. Existing DU and per-pixel cleanup apply to

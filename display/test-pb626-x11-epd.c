@@ -47,6 +47,41 @@ static void test_packed_rgb565(void)
 	}
 }
 
+static void test_gray_rows(void)
+{
+	enum { N = 39 };
+	uint8_t raw16[2 * N + 1], raw32[4 * N + 1], out[N + 2];
+	uint8_t *src16 = raw16 + 1, *src32 = raw32 + 1;
+	for (int i = 0; i < N; i++) {
+		unsigned int p = i < 16 ? (i % 2 ? 0xffff : 0) : (i * 17237) & 0xffff;
+		src16[2 * i] = p;
+		src16[2 * i + 1] = p >> 8;
+		src32[4 * i] = i * 37;
+		src32[4 * i + 1] = i < 16 ? src32[4 * i] : i * 17;
+		src32[4 * i + 2] = i < 16 ? src32[4 * i] : i * 71;
+		src32[4 * i + 3] = i * 83;
+	}
+	for (int profile = GRAY_BALANCED; profile <= GRAY_LEGACY; profile++)
+		for (int tone = 0; tone < 2; tone++)
+			for (int gamma = 0; gamma < 2; gamma++) {
+				setup_gray(profile, tone, gamma ? 1.2 : 1.0);
+				for (int count = 0; count <= N; count++) {
+					memset(out, 0x9a, sizeof(out));
+					rgb565_gray_row(src16, out + 1, count);
+					assert(out[0] == 0x9a && out[count + 1] == 0x9a);
+					for (int i = 0; i < count; i++)
+						assert(out[i + 1] == rgb565_gray(src16[2 * i] |
+						       ((unsigned int)src16[2 * i + 1] << 8)));
+					memset(out, 0x9a, sizeof(out));
+					rgbx_gray_row(src32, out + 1, count);
+					assert(out[0] == 0x9a && out[count + 1] == 0x9a);
+					for (int i = 0; i < count; i++)
+						assert(out[i + 1] == gray_value(src32[4 * i + 2],
+						       src32[4 * i + 1], src32[4 * i]));
+				}
+			}
+}
+
 static void test_contrast_row(void)
 {
 	uint8_t row[65], above[65], below[65];
@@ -278,6 +313,7 @@ int main(void)
 	test_power_press();
 	test_worker_deadlines();
 	test_packed_rgb565();
+	test_gray_rows();
 	test_gray();
 	test_contrast_row();
 	test_stock_sleep();
