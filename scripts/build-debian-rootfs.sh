@@ -55,68 +55,7 @@ if [ -f "$compiled_cache/SHA256SUMS" ]; then
     (cd "$compiled_cache" && sha256sum -c SHA256SUMS)
     sudo tar --numeric-owner -xzf "$compiled_cache/compiled.tar.gz" -C "$build/tmp/pb626-build"
 else
-sudo install -d "$build/tmp/pb626-build" "$pkg/usr/bin" "$pkg/usr/libexec/pb626/bin"
-sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
-sudo cp -a "$kernel/uapi" "$build/tmp/pb626-build/uapi"
-sudo install -m 644 boot/debian/pb626-charge.c "$build/tmp/pb626-build/"
-sudo install -m 644 display/{matchbox-keyboard-eink.patch,matchbox-panel-power-supply.patch,xorg-dummy-pb626-shared.patch} "$build/tmp/pb626-build/"
-
-fetch_source() {
-    local name=$1 rev=$2 src="$work/src-$1"
-    git init -q "$src"
-    git -C "$src" fetch -q --depth 1 "https://git.yoctoproject.org/$name" "$rev"
-    git -C "$src" checkout -q --detach FETCH_HEAD
-    test "$(git -C "$src" rev-parse HEAD)" = "$rev"
-    sudo mkdir "$build/tmp/pb626-build/$name"
-    git -C "$src" archive HEAD | sudo tar -xf - -C "$build/tmp/pb626-build/$name"
-}
-fetch_source matchbox-keyboard 630d89068dc0a1e9199306d405cb32f892dfa4d3
-fetch_source matchbox-panel 886605280c1032f76e382f68f9a1d2e57012f4db
-
-in_build /bin/bash -euc '
-  cd /tmp/pb626-build
-  cc -O3 -Wall -Wextra -Werror -I uapi pb626-epd.c -o pb626-epd
-  cc -mfpu=neon -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
-  cc -O2 -Wall -Wextra -Werror -I uapi test-pb626-epd.c -o test-pb626-epd
-  cc -mfpu=neon -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
-  ./test-pb626-epd
-  ./test-pb626-x11-epd
-  cc -O2 -Wall -Wextra -Werror pb626-charge.c -o pb626-charge
-  ./pb626-charge --self-test
-  strip pb626-charge
-  test "$(./pb626-epd --protocol)" = pb626-epd-shm-4
-  strip pb626-epd pb626-x11-epd
-  # Build against the actual target Xorg module ABI. The vendor package is
-  # retained unmodified, and the private module is not selected by default.
-  apt-get source --only-source xserver-xorg-video-dummy=1:0.4.0-1
-  cd xserver-xorg-video-dummy-0.4.0
-  cp ../pb626-ddx-fb.h src/
-  patch --fuzz=0 -p1 < ../xorg-dummy-pb626-shared.patch
-  autoreconf -fi
-  ./configure --prefix=/usr
-  make -j2
-  test -s src/.libs/dummy_drv.so
-  strip --strip-unneeded src/.libs/dummy_drv.so
-  cd ..
-  export CFLAGS="-O2 -std=gnu17"
-  cd matchbox-keyboard
-  patch -p1 < ../matchbox-keyboard-eink.patch
-  autoreconf -fi
-  ./configure --prefix=/usr --sysconfdir=/etc --disable-shared --enable-static
-  make -j2
-  make install DESTDIR=/tmp/pb626-build/keyboard-install
-  cd ../matchbox-panel
-  patch -l -p1 < ../matchbox-panel-power-supply.patch
-  autoreconf -fi
-  # Old Matchbox relies on libmatchbox transitive X11 dependencies.
-  LIBS="$(pkg-config --libs x11 xext xrender xft)" \
-    ./configure --prefix=/usr --sysconfdir=/etc --enable-linux-power-supply
-  make -j2
-  make install DESTDIR=/tmp/pb626-build/panel-install
-  strip /tmp/pb626-build/keyboard-install/usr/bin/matchbox-keyboard \
-        /tmp/pb626-build/panel-install/usr/bin/matchbox-panel \
-        /tmp/pb626-build/panel-install/usr/bin/mb-applet-battery
-'
+    bash scripts/compile-debian-native.sh "$build" "$kernel" "$work"
     mkdir -p "$compiled_cache"
     sudo tar --numeric-owner -C "$build/tmp/pb626-build" -czf "$compiled_cache/compiled.tar.gz" \
         pb626-epd pb626-x11-epd pb626-charge \
