@@ -1,5 +1,7 @@
 # Install, back up and restore PocketBook 626 Linux
 
+The new paired Debian flash kit automates this manual procedure; see [FLASH-KIT.md](FLASH-KIT.md). This document remains the manual fallback.
+
 This guide uses Windows 10/11 and Ubuntu in WSL2. You do not need to compile Linux or the desktop.
 
 > [!CAUTION]

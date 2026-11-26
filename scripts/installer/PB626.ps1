@@ -45,7 +45,7 @@ function WslPath([string]$Path) {
 }
 function Run-Linux([string[]]$Arguments) {
     if ($IsWindows) { & wsl.exe -d $Distro -u root -- @Arguments }
-    else { & $Arguments[0] @($Arguments | Select-Object -Skip 1) }
+    else { $exe=$Arguments[0]; $tail=@($Arguments | Select-Object -Skip 1); & $exe @tail }
     if ($LASTEXITCODE -ne 0) { throw "Linux command failed (exit $LASTEXITCODE)" }
 }
 function LinuxPath([string]$Path) {

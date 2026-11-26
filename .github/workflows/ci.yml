@@ -63,6 +63,10 @@ jobs:
           for f in boot/pb626-native-{desktop,console} boot/native/init.d/* boot/native/pb626-* display/pb626-{desktop,xsession}; do sh -n "$f"; done
           bash -n scripts/build-native-rootfs.sh
           bash -n scripts/build-debian-rootfs.sh
+          bash -n scripts/build-debian-recovery.sh
+          bash -n scripts/prepare-install.sh
+          sh -n boot/recovery/init
+          sh -n scripts/installer/pb626.sh
           sh -n boot/debian/pb626-admin
           sh -n boot/debian/pb626-user-session
           sh tests/test-native-services.sh
@@ -82,7 +86,7 @@ jobs:
       - name: Parse Windows FEL launchers
         run: |
           pwsh -NoProfile -Command '
-            foreach ($file in @("scripts/Start-PB626.ps1", "scripts/Start-PB626Desktop.ps1")) {
+            foreach ($file in @("scripts/Start-PB626.ps1", "scripts/Start-PB626Desktop.ps1", "scripts/installer/PB626.ps1", "scripts/restore/Backup-PB626Fast.ps1", "scripts/restore/Restore-PB626Fast.ps1")) {
               $tokens = $errors = $null
               [void][System.Management.Automation.Language.Parser]::ParseFile(
                 "$PWD/$file", [ref]$tokens, [ref]$errors)
