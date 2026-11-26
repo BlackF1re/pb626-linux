@@ -220,15 +220,23 @@ static void test_stock_sleep(void)
 		for (size_t i = 0; i < PIXELS; i++) assert(output[i] == WHITE);
 		memset(input, 0, sizeof(input));
 		sleep_compose(input, output, bitmap, size, rotation);
-		for (size_t i = 0; i < PIXELS; i++) assert(output[i] == 7);
+		/* Independent OpenCV reference on a black frame after DimArea:
+		 * white checkerboard sites: 240*(86*86+4*85*85)/65536
+		 * -> 133 -> level 8; other sites -> 107 -> level 6.
+		 * Reflect-101 preserves parity, including at the panel edges. */
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++)
+				assert(output[panel_index(rotation, x, y)] ==
+				       (((x + y) & 1) ? 6 : 8));
 		bitmap[8] = 0x2d;
 		bitmap[8 + stride * h] = 0xc0;
 		sleep_compose(input, output, bitmap, size, rotation);
 		assert(output[panel_index(rotation, 0, 0)] == 2);
 		assert(output[panel_index(rotation, 1, 0)] == 13);
-		assert(output[panel_index(rotation, 2, 0)] == 7);
+		assert(output[panel_index(rotation, 2, 0)] == 8);
+		assert(output[panel_index(rotation, 3, 0)] == 6);
 		sleep_compose(input, output, bitmap, size - 1, rotation);
-		assert(output[panel_index(rotation, 0, 0)] == 7);
+		assert(output[panel_index(rotation, 0, 0)] == 8);
 	}
 	assert(panel_index(PB_ROT_90, 0, 0) == WIDTH - 1);
 	assert(panel_index(PB_ROT_270, 0, 0) == (HEIGHT - 1) * WIDTH);
