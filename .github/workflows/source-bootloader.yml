@@ -1,0 +1,31 @@
+name: Source-built PocketBook bootloader candidates
+on:
+  push:
+    branches: [enhance/native-reliability]
+    paths:
+      - 'BT0-uncaged/build-from-source.sh'
+      - 'BT0-uncaged/prepare-source-hook.py'
+      - 'BT0-uncaged/fel-entry.S'
+      - '.github/workflows/source-bootloader.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-linux-gnueabihf \
+            libc6-dev-armhf-cross bc bison flex libssl-dev python3-pyelftools \
+            python3-setuptools device-tree-compiler libusb-1.0-0-dev pkg-config
+      - name: Build independently from pinned source
+        run: bash BT0-uncaged/build-from-source.sh source-boot-candidates
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-source-boot-candidates-NOT-FOR-FLASH
+          path: source-boot-candidates/
+          if-no-files-found: error
