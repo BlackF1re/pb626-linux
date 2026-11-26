@@ -425,6 +425,7 @@ jobs:
 
   bootloader:
     uses: ./.github/workflows/source-bootloader.yml
+    secrets: inherit
 
   diagnostics:
     name: Terminal diagnostics (standalone)

@@ -99,6 +99,7 @@ grep -Fx 'CONFIG_MMC_SUNXI_SLOT_EXTRA=2' .config
 cp .config "$out/native.config"
 make -j"$(nproc)" spl/u-boot-spl.bin spl/sunxi-spl.bin
 cp spl/sunxi-spl.bin "$out/BT0-uncaged-source-candidate.bin"
+cp spl/u-boot-spl "$out/spl.elf"
 "${CROSS_COMPILE}nm" spl/u-boot-spl | grep -E 'pb626_menu_hook|save_boot_params' >"$out/native-symbols.txt"
 grep -q pb626_menu_hook "$out/native-symbols.txt"
 "${CROSS_COMPILE}objdump" -d spl/u-boot-spl >"$out/native-disassembly.txt"
@@ -141,6 +142,7 @@ mkdir -p "$out/deep-resume"
 python3 "$here/prepare-source-resume.py" "$PWD"
 make -j"$(nproc)" spl/u-boot-spl.bin spl/sunxi-spl.bin
 cp spl/sunxi-spl.bin "$out/deep-resume/BT0-uncaged-deep-candidate.bin"
+cp spl/u-boot-spl "$out/deep-resume/spl.elf"
 python3 - "$out/deep-resume/BT0-uncaged-deep-candidate.bin" <<'PY'
 import pathlib,struct,sys
 p=pathlib.Path(sys.argv[1])
@@ -158,5 +160,5 @@ git diff >"$out/deep-resume/uboot-source-changes.patch"
 "${CROSS_COMPILE}nm" -n spl/u-boot-spl >"$out/deep-resume/all-symbols.txt"
 for symbol in pb626_led_boot_start pb626_led_boot_tick pb626_led_error; do grep -Eq " [Tt] $symbol$" "$out/deep-resume/all-symbols.txt"; done
 cp .config "$out/deep-resume/native.config"
-(cd "$out/deep-resume" && sha256sum *.bin *.patch *.txt *.config >SHA256SUMS)
+(cd "$out/deep-resume" && sha256sum *.bin *.elf *.patch *.txt *.config >SHA256SUMS)
 echo 'SOURCE CANDIDATES ONLY: no flash approval; no demonstrated deep resume'

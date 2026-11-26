@@ -16,6 +16,9 @@ on:
       - '.github/workflows/source-bootloader.yml'
   workflow_dispatch:
   workflow_call:
+    secrets:
+      PB626_REFERENCE_SPL_B64:
+        required: false
 permissions:
   contents: read
 jobs:
@@ -39,7 +42,7 @@ jobs:
         id: cache
         with:
           path: source-boot-candidates
-          key: pb626-source-spl-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/build-from-source.sh', 'BT0-uncaged/prepare-source-hook.py', 'BT0-uncaged/prepare-source-led.py', 'BT0-uncaged/pb626-led.c', 'BT0-uncaged/pb626-led.h', 'BT0-uncaged/led-morse.h', 'BT0-uncaged/prepare-source-resume.py', 'BT0-uncaged/early-menu.S', 'BT0-uncaged/fel-entry.S', 'patches/sunxi-fel-keep-mmu-off.patch') }}
+          key: pb626-source-spl-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/build-from-source.sh', 'BT0-uncaged/prepare-source-hook.py', 'BT0-uncaged/prepare-source-led.py', 'BT0-uncaged/pb626-led.c', 'BT0-uncaged/pb626-led.h', 'BT0-uncaged/led-morse.h', 'BT0-uncaged/prepare-source-resume.py', 'BT0-uncaged/early-menu.S', 'BT0-uncaged/fel-entry.S', 'patches/sunxi-fel-keep-mmu-off.patch') }}
       - name: Build independently from pinned source
         if: steps.cache.outputs.cache-hit != 'true'
         run: bash BT0-uncaged/build-from-source.sh source-boot-candidates
@@ -52,3 +55,41 @@ jobs:
           name: pb626-source-boot-candidates-NOT-FOR-FLASH
           path: source-boot-candidates/
           if-no-files-found: error
+
+  emulate:
+    name: Cortex-A8 differential boot contract (not full board)
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-source-boot-candidates-NOT-FOR-FLASH
+          path: source-boot-candidates
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: BT0-uncaged/emulator/requirements.txt
+      - run: python -m pip install -r BT0-uncaged/emulator/requirements.txt
+      - name: Execute reference and candidates on the same Cortex-A8 model
+        env:
+          PB626_REFERENCE_SPL_B64: ${{ secrets.PB626_REFERENCE_SPL_B64 }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "$PB626_REFERENCE_SPL_B64" ]; then
+            umask 077
+            printf '%s' "$PB626_REFERENCE_SPL_B64" | base64 -d > "$RUNNER_TEMP/reference-spl.bin"
+            args+=(--reference "$RUNNER_TEMP/reference-spl.bin")
+          fi
+          unset PB626_REFERENCE_SPL_B64
+          trap 'rm -f "$RUNNER_TEMP/reference-spl.bin"' EXIT
+          python BT0-uncaged/emulator/validate.py "${args[@]}" --candidates source-boot-candidates --report emulation.json --require-reference
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pb626-spl-emulation-report
+          path: emulation.json
+          if-no-files-found: warn
