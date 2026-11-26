@@ -82,8 +82,51 @@ Qt does not have a universal monochrome setting in this Matchbox session;
 select a verified monochrome palette when adding a Qt application.
 The new settings require visual acceptance testing on the RAM desktop.
 
-No claim that scanout ACK alone establishes optical quality. Stock
-advanced HQ/shadow filters and full optical calibration remain unimplemented.
+No claim that scanout ACK alone establishes optical quality. The stock
+HQ/Shadow mechanisms have now been identified at the transition-mask
+level; their opt-in adaptations below are not a full factory driver port.
+
+### Optional white halo filters (experimental)
+
+Evidence: factory epdc.ko SHA-256
+9e1c18a44cd79679ad776213e38b734d52305dd905cc81e866bfb35fae8556d2.
+The unstripped ARM ELF uses two interleaved byte planes in blocks of
+eight pixels. enqueue_ur_neon (0x3d24) compares the old high nibble of
+the transition plane with the new framebuffer high nibble; on enqueue
+it stores the old level in the low nibble and target in the high nibble,
+and writes the active LUT selector into the other plane. The scan
+routine at 0x3c4c masks each waveform lookup by equality of that selector
+to the current LUT number. Zeroing the selector therefore suppresses
+the selected update rather than changing the stored image.
+
+HQ (0x47e8) combines horizontal neighbour bytes with vertical neighbour
+bytes; VSLI #4 takes their low nibbles into the test for FF. It clears
+the selector for white-to-white pixels surrounded by old white.
+Shadow (0x48b8) ANDs the transition plane against the table at 0x496c,
+then clears the selector where the result equals FF. Four stages
+alternate which row and which byte parity are kept; the alternating
+mask shifts by one byte per eight source pixels and per row pair.
+The stock update call site selects HQ or Shadow, not both.
+
+The bridge's candidate adapts these rules only to **optional same-level
+white halos** of its existing local GC16 cleanup. Pixels whose fast
+transition count reached the mandatory threshold are always scrubbed.
+Changed pixels, INIT, RESET, SETTLE, sleep and the power-off image are
+unaffected. Nonwhite halo behavior is unchanged. HQ conservatively
+keeps panel-border pixels; Shadow anchors the pattern to physical
+gate/source coordinates rather than the stock rectangle origin and
+advances only after ACK. These are deliberate differences from the
+factory multi-LUT engine, whose scheduling and overlapping updates
+have not been replicated.
+
+Default: no filter. To opt into a measured candidate after qualification,
+create /etc/pb626/halo-filter-qualified and set
+PB626_EPD_HALO_FILTER=hq or shadow in a desktop service drop-in,
+then restart the desktop. Remove the marker or set none to revert.
+Compare residual edge shadows and white reflectance after repeated
+typing, scrolling and manual cleanup; never qualify from scanout ACK
+or host tests alone. Host tests prove each white pixel belongs to one
+of four retained phases and mandatory scrub cannot be suppressed.
 
 ### Bounded grayscale starvation
 

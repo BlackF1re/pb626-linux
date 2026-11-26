@@ -304,6 +304,42 @@ static void test_stock_sleep(void)
 	puts("Stock sleep filter, overlay mask and all four rotations passed");
 }
 
+static void test_optional_halo_filters(void)
+{
+	static uint8_t panel[PACKED_PIXELS];
+	memset(panel, 0xff, sizeof(panel));
+	assert(!halo_allowed(panel, 7, 11, HALO_HQ, 0));
+	assert(halo_allowed(panel, 0, 11, HALO_HQ, 0));
+	nibble_set(panel, 11 * WIDTH + 6, 0);
+	assert(halo_allowed(panel, 7, 11, HALO_HQ, 0));
+	assert(halo_allowed(panel, 6, 11, HALO_HQ, 0));
+	assert(halo_allowed(panel, 6, 11, HALO_SHADOW, 0));
+	nibble_set(panel, 11 * WIDTH + 6, WHITE);
+	for (int y = 0; y < HEIGHT; y++)
+		for (int x = 0; x < WIDTH; x++) {
+			unsigned int total = 0;
+			for (unsigned int stage = 0; stage < 4; stage++)
+				total += halo_allowed(panel, x, y, HALO_SHADOW, stage);
+			assert(total == 1);
+		}
+	/* Mandatory cleanup remains eligible in both modes, regardless of
+	 * surrounding white and phase. */
+	const int x = 15, y = 17;
+	nibble_set(fast_changes, y * WIDTH + x, CLEAN_AFTER);
+	for (unsigned int stage = 0; stage < 4; stage++) {
+		shadow_stage = stage;
+		cleanup_filter = HALO_SHADOW;
+		assert(needs_scrub(panel, x, y));
+	}
+	cleanup_filter = HALO_HQ;
+	assert(needs_scrub(panel, x, y));
+	assert(!needs_scrub(panel, x + 1, y));
+	cleanup_filter = HALO_NONE;
+	assert(needs_scrub(panel, x + 1, y));
+	nibble_set(fast_changes, y * WIDTH + x, 0);
+	shadow_stage = 0;
+}
+
 int main(void)
 {
 	if (getenv("PB626_TEST_X11")) {
@@ -317,6 +353,7 @@ int main(void)
 	test_gray();
 	test_contrast_row();
 	test_stock_sleep();
+	test_optional_halo_filters();
 	assert(binding_index(KEY_LEFT) == 0 && binding_index(KEY_RIGHT) == 1);
 	assert(binding_index(KEY_HOME) == 2 && binding_index(KEY_MENU) == 3);
 	assert(binding_index(KEY_POWER) == -1);

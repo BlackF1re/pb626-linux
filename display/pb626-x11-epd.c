@@ -1110,6 +1110,36 @@ static uint8_t fast_changes[PACKED_PIXELS];
 _Static_assert(CLEAN_AFTER <= 15, "ghosting counter fits a nibble");
 static uint16_t cleanup_pixels[TILE_ROWS][TILE_COLS];
 static int clean_halo = 1;
+enum halo_filter { HALO_NONE, HALO_HQ, HALO_SHADOW };
+static enum halo_filter cleanup_filter;
+static unsigned int shadow_stage;
+
+/* Factory-inspired white->white pulse suppression, only for the optional
+ * same-level halo. Never skip a changed pixel or a mandatory scrub.
+ * Anchor the Shadow mask in physical panel coordinates, not the damage
+ * rectangle, so overlapping XDamage regions cannot move the pattern. */
+static int halo_allowed(const uint8_t *panel, int x, int y,
+			enum halo_filter filter, unsigned int stage)
+{
+	if (filter == HALO_NONE || nibble_get(panel, y * WIDTH + x) != WHITE)
+		return 1;
+	if (filter == HALO_HQ) {
+		/* No assumptions about the stock driver's padded border. */
+		if (!x || x == WIDTH - 1 || !y || y == HEIGHT - 1)
+			return 1;
+		size_t i = y * WIDTH + x;
+		return nibble_get(panel, i - 1) != WHITE ||
+		       nibble_get(panel, i + 1) != WHITE ||
+		       nibble_get(panel, i - WIDTH) != WHITE ||
+		       nibble_get(panel, i + WIDTH) != WHITE;
+	}
+	/* The stock LUT is gate-major, with alternating mask bytes on
+	 * one row and all FF on the other. It shifts the alternating
+	 * mask by one byte per eight sources and per pair of gates. */
+	unsigned int gate = WIDTH - 1 - x, source = y;
+	return (gate & 1) == ((stage >> 1) & 1) &&
+	       ((source ^ (source / 8) ^ (gate / 2) ^ stage) & 1);
+}
 
 static int cleanup_near_tile(int tx, int ty)
 {
@@ -1127,7 +1157,7 @@ static int needs_scrub(const uint8_t *panel, int x, int y)
 	size_t pixel = y * WIDTH + x;
 	if (nibble_get(fast_changes, pixel) == CLEAN_AFTER)
 		return 1;
-	if (!clean_halo)
+	if (!clean_halo || !halo_allowed(panel, x, y, cleanup_filter, shadow_stage))
 		return 0;
 
 	/* The reference chart showed a residual outline just beyond the changed
@@ -1262,6 +1292,8 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 				}
 			dirty_tiles[ty][tx] = differs;
 		}
+	if (command == CLEAN && cleanup_filter == HALO_SHADOW)
+		shadow_stage = (shadow_stage + 1) & 3;
 }
 
 /* Root-only socket in the existing root-owned runtime directory. The
@@ -1506,6 +1538,18 @@ int main(int argc, char **argv)
 	struct rect pointer = {0};
 	const char *halo = getenv("PB626_EPD_CLEAN_HALO");
 	clean_halo = !halo || strcmp(halo, "0");
+	const char *filter = getenv("PB626_EPD_HALO_FILTER");
+	if (filter && strcmp(filter, "none")) {
+		if (access("/etc/pb626/halo-filter-qualified", F_OK)) {
+			fprintf(stderr, "pb626: ignoring unqualified halo filter\n");
+		} else if (!strcmp(filter, "hq")) {
+			cleanup_filter = HALO_HQ;
+		} else if (!strcmp(filter, "shadow")) {
+			cleanup_filter = HALO_SHADOW;
+		} else {
+			fprintf(stderr, "pb626: unknown halo filter; using unfiltered cleanup\n");
+		}
+	}
 	XShmSegmentInfo shm = {0};
 	setup_shm(display, &shm);
 	int precleared = init_sent && await_ack(&worker, INIT_PANEL) == 0;
