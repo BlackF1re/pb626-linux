@@ -10,6 +10,7 @@
 #include <linux/input.h>
 #include <linux/netlink.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -93,7 +94,13 @@ static int make_marker(const char *path)
     return close(fd);
 }
 
-static int command(const char *program, char *const args[])
+static int64_t now_ms(void);
+
+enum { COMMAND_TIMEOUT = -2 };
+
+/* Only poll while a helper is running. An uninterruptible kernel ioctl
+ * cannot be repaired here; do not launch another renderer after timeout. */
+static int command(const char *program, char *const args[], int limit_ms)
 {
     pid_t child = fork();
     if (child < 0) return -1;
@@ -102,15 +109,36 @@ static int command(const char *program, char *const args[])
         _exit(127);
     }
     int status;
-    while (waitpid(child, &status, 0) < 0)
-        if (errno != EINTR) return -1;
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+    int64_t deadline = now_ms() + limit_ms;
+    bool expired = false;
+    for (;;) {
+        pid_t got = waitpid(child, &status, WNOHANG);
+        if (got == child)
+            return expired ? COMMAND_TIMEOUT :
+                   WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+        if (got < 0 && errno != EINTR)
+            return -1;
+        if (now_ms() >= deadline) {
+            if (expired) {
+                /* PID 1 owns the remaining service cgroup. Never retry
+                 * an un-reaped renderer or acquire a second panel owner. */
+                kill(child, SIGKILL);
+                return COMMAND_TIMEOUT;
+            }
+            fprintf(stderr, "PB626 charge: helper timed out: %s\n", program);
+            kill(child, SIGKILL);
+            expired = true;
+            deadline = now_ms() + 3000;
+        }
+        struct timespec delay = {0, 50000000};
+        nanosleep(&delay, NULL);
+    }
 }
 
 static int systemctl(const char *verb, const char *unit)
 {
     char *args[] = {"/usr/bin/systemctl", "--no-block", (char *)verb, (char *)unit, NULL};
-    return command(args[0], args);
+    return command(args[0], args, 15000);
 }
 
 static int select_normal(void)
@@ -237,13 +265,13 @@ static int render(int percent, bool full)
     if (fclose(f)) ok = 0;
     char *args[] = {"/usr/bin/pb626-epd", "/lib/firmware/pb626/default.wbf",
         full ? "full" : "partial", path, NULL};
-    int ret = ok ? command(args[0], args) : -1;
-    if (ret && ok && !full) {
+    int ret = ok ? command(args[0], args, 45000) : -1;
+    if (ret && ret != COMMAND_TIMEOUT && ok && !full) {
         /* The chosen factory waveform can reject a transition in partial
          * mode. Reacquire the panel through the ordinary full-quality
          * recovery path instead of abandoning the charging session. */
         args[2] = "full";
-        ret = command(args[0], args);
+        ret = command(args[0], args, 45000);
     }
     unlink(path);
     return ret;
@@ -428,6 +456,12 @@ static int run_charge(void)
 
 static void self_test(void)
 {
+    char *ok[] = {"/bin/sh", "-c", "exit 0", NULL};
+    char *bad[] = {"/bin/sh", "-c", "exit 7", NULL};
+    char *slow[] = {"/bin/sleep", "5", NULL};
+    assert(command(ok[0], ok, 2000) == 0);
+    assert(command(bad[0], bad, 2000) == -1);
+    assert(command(slow[0], slow, 100) == COMMAND_TIMEOUT);
     assert(parse_percent("0") == 0 && parse_percent("100") == 100);
     assert(parse_percent("101") == -1 && parse_percent("-1") == -1 &&
            parse_percent("5x") == -1 && parse_percent("") == -1);
