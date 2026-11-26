@@ -105,9 +105,9 @@ if [ -f /proc/device-tree/chosen/pb626,emmc-root ]; then
     # stop the separate cgroup before desktop shutdown or restart.
     (
         printf '%s\n' -500 >/proc/self/oom_score_adj || :
-        if [ -f /etc/debian_version ] && [ "${PB626_RESOURCE_SCOPE:-1}" = 1 ]; then
+        if [ "$managed" = yes ] && [ -f /etc/debian_version ] && [ "${PB626_RESOURCE_SCOPE:-1}" = 1 ]; then
             exec systemd-run --scope --quiet --collect --expand-environment=no \
-                --unit="pb626-renderer-$.scope" --slice=pb626.slice \
+                --unit="pb626-renderer-$$.scope" --slice=pb626.slice \
                 --property=BindsTo=pb626-desktop.service \
                 --property=After=pb626-desktop.service \
                 --property=CPUWeight=200 --property=MemoryLow=16M \

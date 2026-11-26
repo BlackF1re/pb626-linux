@@ -366,7 +366,7 @@ lock-indicator)
 suspend)
     [ "$#" -eq 1 ] || exit 2
     [ -f /etc/pb626/suspend-qualified ] || { echo "Suspend not qualified on this board" >&2; exit 1; }
-    exec systemctl --no-block suspend
+    exec systemctl --no-block --check-inhibitors=yes suspend
     ;;
 wifi-on)
     [ "$#" -eq 1 ] || exit 2
@@ -409,8 +409,11 @@ battery-check)
     lock_state
     read_battery
     if ! capacity=$(battery_capacity); then
-        rm -f /run/pb626-battery-warning /run/pb626-battery-critical
-        systemctl --no-block stop pb626-battery-confirm.timer || :
+        rm -f /run/pb626-battery-warning
+        if [ -e /run/pb626-battery-critical ]; then
+            rm -f /run/pb626-battery-critical
+            systemctl --no-block stop pb626-battery-confirm.timer || :
+        fi
         exit 0
     fi
     if [ "$capacity" -le "$warning" ]; then
@@ -434,7 +437,10 @@ battery-check)
         case "$first" in ''|*[!0-9]*)
                 printf '%s\n' "$now" >/run/pb626-battery-critical
                 # One extra sample only when needed, not a faster polling loop.
-                systemctl --no-block start pb626-battery-confirm.timer
+                if ! systemctl --no-block start pb626-battery-confirm.timer; then
+                    rm -f /run/pb626-battery-critical
+                    exit 1
+                fi
                 ;;
             *) if [ "$now" -ge "$((first+10))" ]; then
                    # Recheck charger state immediately before asking PID 1.

@@ -105,3 +105,23 @@ power measurements and scan latency.
 Only create /etc/pb626/suspend-qualified after the physical tests.
 Deep sleep needs separate SPL/DRAM-retention qualification. CI and
 QEMU cannot certify the PMIC or real device wake.
+
+## Wi-Fi and USB runtime power management
+
+In the pinned Arnavion kernel `facc87117511221bb61410e3f92ad8579697f736`,
+`drivers/net/wireless/realtek/rtl8xxxu/core.c` registers a USB driver
+without `.supports_autosuspend`, `.suspend`, `.resume` or `.reset_resume`.
+It does not advertise mac80211 `SUPPORTS_PS`. Writing `auto` to the USB
+power-control sysfs node cannot supply these missing driver operations.
+The USB core unbinds interfaces lacking PM callbacks at system suspend
+and rebinds them at resume. iwd may reconnect but this must be measured.
+Do not force autosuspend, unbind the radio while browsing, or add dummy
+callbacks. The stock RTL8188EU module has its own LPS/IPS and USB suspend
+implementation; porting this requires real driver work and link tests.
+The pinned MUSB core already implements runtime suspend/resume and a
+500 ms autosuspend delay. Keep its native policy; do not override active
+USB gadget or VBUS handling. Settings power requests now explicitly honor
+logind sleep inhibitors. A display-idle timer is opt-in and cannot infer
+whether a terminal job is important: use `systemd-inhibit --what=sleep
+--mode=block <command>` for work that must not be interrupted. No automatic
+suspend is enabled by default.

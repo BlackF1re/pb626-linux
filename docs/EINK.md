@@ -65,9 +65,16 @@ PIN32 is required: the first 85 data clocks assert G_CLK and first/subsequent ga
 
 ### Application-level high contrast
 
-Keep the original Xorg 24-bit visual, grayscale profiles and all 16 physical
-levels. Do not force binary quantization: pictures, antialiased text and
-gray UI states must retain their luminance. Instead, publish neutral X11
+Keep Xorg color visuals and all 16 physical levels by default. The optional
+`mono` profile, selectable in Settings, thresholds the entire X11 image
+at luminance 128, disables dithering and contrast analysis, and emits only
+black and white. Use it for terminal work or text-heavy UI; switch back to
+`balanced` or `photo` for pictures and antialiased content. Sleep and
+shutdown images are composed separately and retain grayscale. Settings
+also exposes `du`, `auto`, `a2`, and `du4` fast waveform policies. The
+default remains DU; `auto` selects A2 only for compatible binary transitions
+when the temperature-specific waveform is shorter, otherwise uses DU.
+Neither this selector nor the mono profile requires application changes. Instead, publish neutral X11
 resource defaults using xrdb before launching desktop clients
 (`/etc/X11/pb626.Xresources`), including XTerm, NEdit and XCalc. The
 existing Matchbox theme, keyboard patch, `mc -b` and `htop -C` remain.
