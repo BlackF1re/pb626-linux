@@ -154,6 +154,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth tk \
             xserver-xorg-dev xutils-dev libpciaccess-dev autoconf automake libtool pkg-config
+      - name: Validate hardware patches against exact pinned kernel sources
+        run: |
+          set -euo pipefail
+          root=$(mktemp -d)
+          for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
+            while IFS= read -r path; do
+              mkdir -p "$root/$(dirname "$path")"
+              curl -fsSL --retry 3 "https://raw.githubusercontent.com/Arnavion/linux/facc87117511221bb61410e3f92ad8579697f736/$path" -o "$root/$path"
+            done < <(sed -n 's|^--- a/||p' "$patch")
+            (cd "$root" && git apply --check "$GITHUB_WORKSPACE/$patch" && git apply "$GITHUB_WORKSPACE/$patch")
+          done
       - name: Fetch pinned kernel UAPI and test renderer
         run: |
           set -euo pipefail
