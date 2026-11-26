@@ -46,6 +46,15 @@ in_build() { sudo chroot "$build" "$@"; }
 test "$(in_root dpkg --print-architecture)" = armhf
 in_root grep -qx 'VERSION_CODENAME=trixie' /etc/os-release
 
+# The cache contains only the tested target executables and required license
+# files. Package assembly always runs against the current checkout.
+compiled_cache=${4:-"$work/compiled-cache"}
+mkdir -p "$pkg/usr/bin" "$pkg/usr/libexec/pb626/bin"
+sudo install -d "$build/tmp/pb626-build"
+if [ -f "$compiled_cache/SHA256SUMS" ]; then
+    (cd "$compiled_cache" && sha256sum -c SHA256SUMS)
+    sudo tar --numeric-owner -xzf "$compiled_cache/compiled.tar.gz" -C "$build/tmp/pb626-build"
+else
 sudo install -d "$build/tmp/pb626-build" "$pkg/usr/bin" "$pkg/usr/libexec/pb626/bin"
 sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
 sudo cp -a "$kernel/uapi" "$build/tmp/pb626-build/uapi"
@@ -108,6 +117,17 @@ in_build /bin/bash -euc '
         /tmp/pb626-build/panel-install/usr/bin/matchbox-panel \
         /tmp/pb626-build/panel-install/usr/bin/mb-applet-battery
 '
+    mkdir -p "$compiled_cache"
+    sudo tar --numeric-owner -C "$build/tmp/pb626-build" -czf "$compiled_cache/compiled.tar.gz" \
+        pb626-epd pb626-x11-epd pb626-charge \
+        xserver-xorg-video-dummy-0.4.0/src/.libs/dummy_drv.so \
+        xserver-xorg-video-dummy-0.4.0/debian/copyright \
+        xserver-xorg-video-dummy-0.4.0/COPYING \
+        keyboard-install/usr/bin/matchbox-keyboard \
+        panel-install/usr/bin/matchbox-panel panel-install/usr/bin/mb-applet-battery
+    sudo chown "$(id -u):$(id -g)" "$compiled_cache/compiled.tar.gz"
+    (cd "$compiled_cache" && sha256sum compiled.tar.gz >SHA256SUMS)
+fi
 built="$build/tmp/pb626-build"
 sudo install -m 755 "$built"/{pb626-epd,pb626-x11-epd} "$pkg/usr/bin/"
 sudo install -D -m 755 "$built/pb626-charge" "$pkg/usr/libexec/pb626-charge"
