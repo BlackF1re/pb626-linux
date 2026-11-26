@@ -65,6 +65,48 @@ proc wifi {} {
         }
     }
 }
+proc buttonSettings {} {
+    if {[winfo exists .bindings]} {raise .bindings; return}
+    if {[catch {query button-bindings-status} data] || [llength $data] != 12} {return}
+    toplevel .bindings
+    wm title .bindings "Physical button bindings"
+    set actions {none Left Right Up Down Page_Up Page_Down Home End Escape Return BackSpace Tab space Menu F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 keyboard refresh light-toggle}
+    label .bindings.note -text "Send ordinary X11 keys or system actions.\nDouble click delays single click only when assigned." -justify left
+    grid .bindings.note -row 0 -columnspan 4 -pady 8
+    set col 1
+    foreach title {Short Long Double} {
+        label .bindings.h$col -text $title
+        grid .bindings.h$col -row 1 -column $col
+        incr col
+    }
+    set i 0
+    set row 2
+    foreach key {Left Right Home Menu} {
+        label .bindings.key$row -text $key
+        grid .bindings.key$row -row $row -column 0 -padx 4 -pady 12
+        for {set col 1} {$col <= 3} {incr col} {
+            set ::bindAction($i) [lindex $data $i]
+            tk_optionMenu .bindings.a$i ::bindAction($i) {*}$actions
+            .bindings.a$i configure -width 10 -pady 8
+            grid .bindings.a$i -row $row -column $col -padx 2
+            incr i
+        }
+        incr row
+    }
+    button .bindings.save -text "Save bindings" -command {
+        set values {}
+        for {set i 0} {$i < 12} {incr i} {lappend values $::bindAction($i)}
+        if {[act button-bindings {*}$values]} {
+            destroy .bindings
+            tk_messageBox -message "Saved. Restart desktop to apply."
+        }
+    }
+    button .bindings.reset -text "Restore defaults" -command {
+        if {[act button-bindings-reset]} {destroy .bindings; tk_messageBox -message "Restart desktop to apply."}
+    }
+    grid .bindings.save -row $row -columnspan 4 -sticky ew -padx 8 -pady 5
+    grid .bindings.reset -row [expr {$row+1}] -columnspan 4 -sticky ew -padx 8 -pady 5
+}
 proc batterySettings {} {
     if {[winfo exists .battery]} {raise .battery; return}
     if {[catch {query battery-status} result]} {return}
@@ -210,8 +252,10 @@ set p .tabs.keys
 choose $p arrows "Left / Right" buttons {arrows pages}
 choose $p home "Home button" home {keyboard home}
 choose $p menu "Menu short press" menu {menu escape}
-label $p.note -text "Hold Menu for a full E-Ink refresh.\nF12 toggles the keyboard.\nWithout touch, hardware pointer controls remain available." -justify left -wraplength 620
+label $p.note -text "Advanced bindings override these defaults.\nWithout touch, hardware pointer controls remain available." -justify left -wraplength 620
 pack $p.note -pady 10
+button $p.bindings -text "Advanced button bindings…" -command buttonSettings
+pack $p.bindings -fill x -padx 12 -pady 5
 button $p.save -text "Save button settings" -command desktopApply
 button $p.restart -text "Restart desktop" -command desktopRestart
 pack $p.save $p.restart -fill x -padx 12 -pady 5

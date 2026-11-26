@@ -97,6 +97,12 @@ admin power-key s2idle
 test "$(admin power-key-status)" = s2idle
 admin desktop-settings arrows home menu balanced 24 30
 admin desktop-status | grep -qx PB626_IDLE_MINUTES=30
+test "$(admin button-bindings-status)" = 'Left none none Right none none Home none none Menu refresh none'
+admin button-bindings Page_Up none F1 Page_Down none F2 keyboard Home none Escape refresh light-toggle
+test "$(admin button-bindings-status)" = 'Page_Up none F1 Page_Down none F2 keyboard Home none Escape refresh light-toggle'
+if admin button-bindings Left none none Right none none Home none none Menu refresh 'sh -c bad'; then exit 1; fi
+admin button-bindings-reset
+test "$(admin button-bindings-status)" = 'Left none none Right none none Home none none Menu refresh none'
 test "$(admin battery-status)" = '10 3'
 admin battery-settings 15 4
 test "$(admin battery-status)" = '15 4'

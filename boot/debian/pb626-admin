@@ -179,6 +179,21 @@ read_battery() {
         if [ -z "$extra" ] && valid_battery "$a" "$b"; then warning=$a critical=$b; fi
     fi
 }
+valid_button_action() {
+    case "$1" in
+        none|Left|Right|Up|Down|Page_Up|Page_Down|Home|End|Escape|Return|BackSpace|Tab|space|Menu|F[1-9]|F1[012]|keyboard|refresh|light-toggle) return 0 ;;
+        *) return 2 ;;
+    esac
+}
+button_defaults() {
+    left=Left right=Right home=keyboard menu=Menu
+    if [ -r "$state/desktop.conf" ]; then
+        if grep -qx PB626_BUTTONS=pages "$state/desktop.conf"; then left=Page_Up right=Page_Down; fi
+        if grep -qx PB626_HOME_KEY=home "$state/desktop.conf"; then home=Home; fi
+        if grep -qx PB626_MENU_KEY=escape "$state/desktop.conf"; then menu=Escape; fi
+    fi
+    printf '%s\n' "$left none none $right none none $home none none $menu refresh none"
+}
 case "${1:-}" in
 frontlight|light-level|light-on|light-off|light-toggle)
     if [ "$1" = frontlight ]; then
@@ -349,6 +364,22 @@ wifi-off)
     [ "$#" -eq 1 ] || exit 2
     rfkill block wifi
     systemctl disable --now iwd.service
+    ;;
+button-bindings-status)
+    [ "$#" -eq 1 ] || exit 2
+    if [ -r "$state/button-bindings" ]; then cat "$state/button-bindings"; else button_defaults; fi
+    ;;
+button-bindings)
+    [ "$#" -eq 13 ] || exit 2
+    shift
+    for action in "$@"; do valid_button_action "$action" || exit 2; done
+    lock_state
+    atomic_save button-bindings "$*"
+    ;;
+button-bindings-reset)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    rm -f "$state/button-bindings"
     ;;
 battery-status)
     [ "$#" -eq 1 ] || exit 2

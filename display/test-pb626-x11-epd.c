@@ -281,6 +281,18 @@ int main(void)
 	test_gray();
 	test_contrast_row();
 	test_stock_sleep();
+	assert(binding_index(KEY_LEFT) == 0 && binding_index(KEY_RIGHT) == 1);
+	assert(binding_index(KEY_HOME) == 2 && binding_index(KEY_MENU) == 3);
+	assert(binding_index(KEY_POWER) == -1);
+	assert(valid_button_action("Page_Up") && valid_button_action("light-toggle"));
+	assert(!valid_button_action("sh -c anything") && !valid_button_action("F13"));
+	struct controls buttons = {0};
+	assert(binding_deadline(&buttons) == UINT64_MAX);
+	buttons.bindings[0].pending = 1;
+	buttons.bindings[0].deadline = 1234;
+	assert(binding_deadline(&buttons) == 1234);
+	buttons.bindings[0].down = 1;
+	assert(binding_deadline(&buttons) == UINT64_MAX);
 	static struct shared_frame frame;
 	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
 	const size_t pixel = 100 * WIDTH + 50;

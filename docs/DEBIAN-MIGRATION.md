@@ -317,3 +317,16 @@ a single valid battery in Discharging state and no reported online
 external supply. Unknown telemetry fails safe; poweroff uses PID 1, not
 a direct PMIC cutoff. The physical AXP209 emergency hold is unchanged.
 Verify real battery/charger telemetry and poweroff before relying on it.
+
+## Physical button bindings
+
+Settings > Buttons > Advanced button bindings assigns separate short,
+long and double actions for Left, Right, Home and Menu. Ordinary X11
+keysyms go to the currently focused window, not a particular launcher
+or application; refresh, keyboard toggle and frontlight are platform
+actions. The privileged helper accepts a fixed allowlist, not commands.
+The bridge waits for a second click only when one is configured; keys
+with only a short action retain repeat. The old defaults and no-touch
+pointer fallback remain, and the power key retains its separate
+qualified suspend policy. Keyboard toggle uses the existing Matchbox
+protocol; alternative sessions can bind a normal key instead.
