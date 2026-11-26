@@ -462,8 +462,13 @@ jobs:
           sudo update-binfmts --enable qemu-arm
           test -r /proc/sys/fs/binfmt_misc/qemu-arm
           arch-test armhf
+      - uses: actions/cache@v4
+        id: native-binaries
+        with:
+          path: debian-compiled-cache
+          key: pb626-debian-compiled-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('debian-base/SHA256SUMS', 'kernel-stage/uapi/linux/sun5i-eink.h', 'scripts/build-debian-rootfs.sh', 'display/*.c', 'display/*.h', 'display/*.patch', 'boot/debian/pb626-charge.c') }}
       - name: Build and verify Debian rootfs and paired firmware
-        run: bash scripts/build-debian-rootfs.sh kernel-stage debian-dist debian-base
+        run: bash scripts/build-debian-rootfs.sh kernel-stage debian-dist debian-base debian-compiled-cache
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-native-debian13-armhf
