@@ -40,7 +40,7 @@ change(spl,
        '\t\t\tpb626_led_error(PB626_ERR_PAYLOAD_CRC);\n'
        '\t\t\tret = -EINVAL;')
 change(spl,
-       'puts(SPL_TPL_PROMPT "failed to boot from all boot devices\\n");\n\t\t hang();',
+       'puts(SPL_TPL_PROMPT "failed to boot from all boot devices\\n");\n\t\thang();',
        'puts(SPL_TPL_PROMPT "failed to boot from all boot devices\\n");\n'
        '\t\t pb626_led_error(PB626_ERR_MMC_FIND);')
 
