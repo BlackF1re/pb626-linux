@@ -8,7 +8,8 @@ param(
     [switch]$SkipBackup,
     [string]$StockDir,
     [string]$ImageDir,
-    [switch]$EnableRecoverySD
+    [switch]$EnableRecoverySD,
+    [switch]$SD
 )
 $ErrorActionPreference='Stop'
 $kit=$PSScriptRoot
@@ -23,12 +24,22 @@ if (!$Action) {
     Write-Host '4 - Read-only preflight of a verified dump'
     Write-Host '5 - Install new Debian build (reuse existing verified dump; no new backup)'
     Write-Host '6 - Flash an already assembled firmware (no backup)'
-    $Action=switch (Read-Host 'Choose 1-6') {
+    Write-Host '7 - Backup microSD (experimental MMC0 profile)'
+    Write-Host '8 - Restore microSD (experimental MMC0 profile)'
+    Write-Host '9 - Preflight microSD restore'
+    $Action=switch (Read-Host 'Choose 1-9') {
         '1' {'Install'} '2' {'Backup'} '3' {'Restore'} '4' {'Preflight'}
         '5' {$SkipBackup=$true; 'Install'}
         '6' {'Flash'}
+        '7' {$SD=$true; 'Backup'}
+        '8' {$SD=$true; 'Restore'}
+        '9' {$SD=$true; 'Preflight'}
         default {throw 'Cancelled'}
     }
+}
+if ($SD) {
+    if ($Action -notin @('Backup','Restore','Preflight')) { throw 'SD supports Backup, Restore, Preflight; native firmware installs only to eMMC' }
+    $EnableRecoverySD=$true
 }
 if ($SkipBackup -and $Action -ne 'Install') { throw '-SkipBackup applies only to Install' }
 if ($Action -eq 'Install' -and $SkipBackup) {
@@ -129,9 +140,9 @@ if ($Action -eq 'Install') {
 } elseif ($Action -eq 'Backup') {
     $null=New-Item -ItemType Directory -Force -Path $DataDir
     $target=Join-Path $DataDir ('backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
-    & $backup -Port $port -BackupDir $target
+    & $backup -Port $port -BackupDir $target -SD:$SD
 } else {
     $target=if ($ImageDir) { $ImageDir } else { Read-Host 'Full path to a verified image/backup directory' }
-    & $restore -Port $port -BackupDir $target -Write:($Action -in @('Restore','Flash'))
+    & $restore -Port $port -BackupDir $target -Write:($Action -in @('Restore','Flash')) -SD:$SD
 }
 Write-Host 'Operation complete. Only after successful verification may you disconnect the reader.'

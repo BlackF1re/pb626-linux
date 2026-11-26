@@ -7,7 +7,8 @@ param(
     [string]$BackupDir = $PSScriptRoot,
     [string]$ExpectedCid,
     [switch]$Write,
-    [switch]$AllowOtherCard
+    [switch]$AllowOtherCard,
+    [switch]$SD
 )
 
 $ErrorActionPreference = 'Stop'
@@ -111,7 +112,9 @@ function Get-ChunksToWrite($Image) {
 
 function Send-ImageBlock($Image, [int]$Index, [byte[]]$Buffer) {
     $Image.Stream.Position = [long]$Index * $blockSize
-    $Image.Stream.ReadExactly($Buffer, 0, $blockSize)
+    $length = [int][Math]::Min([long]$blockSize, $Image.Bytes - [long]$Index * $blockSize)
+    if ($length -ne $Buffer.Length) { $Buffer = [byte[]]::new($length) }
+    $Image.Stream.ReadExactly($Buffer, 0, $length)
     $encoded = [IO.MemoryStream]::new()
     try {
         $gzip = [IO.Compression.GZipStream]::new(
@@ -136,7 +139,7 @@ function Send-ImageBlock($Image, [int]$Index, [byte[]]$Buffer) {
 }
 
 $manifest = Read-Checksums (Join-Path $BackupDir 'SHA256SUMS')
-$cidName = 'pb626-emmc-cid.txt'
+$cidName = if ($SD) { 'pb626-sd-cid.txt' } else { 'pb626-emmc-cid.txt' }
 $cidPath = Join-Path $BackupDir $cidName
 if (Test-Path -LiteralPath $cidPath) {
     if ((Get-FileHash -LiteralPath $cidPath).Hash -ne $manifest[$cidName]) {
@@ -158,11 +161,20 @@ $scanner = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot $scannerName))
 if ((Get-Sha256 $scanner) -ne $tools[$scannerName]) {
     throw 'ARM recovery helper checksum mismatch.'
 }
-$extName = 'pb626-emmc-ext-csd.bin'
-$extPath = Join-Path $BackupDir $extName
-if ((Get-Item -LiteralPath $extPath).Length -ne 512 -or
-    (Get-FileHash -LiteralPath $extPath).Hash -ne $manifest[$extName]) {
-    throw 'EXT_CSD snapshot checksum or size mismatch.'
+if ($SD) {
+    if (!(Test-Path -LiteralPath $cidPath -PathType Leaf)) { throw 'SD backup must contain its verified CID' }
+    $size = (Get-Item -LiteralPath (Join-Path $BackupDir 'pb626-sd.img')).Length
+    if ($size -lt 512 -or $size % 512 -ne 0 -or $size -gt 1TB) { throw 'Invalid SD image size' }
+    $sectors = [long]($size / 512)
+    $images = @(@{ Region='sd'; Name='pb626-sd.img'; Blocks=[int][Math]::Ceiling($size / $blockSize); Bytes=$size })
+} else {
+    $extName = 'pb626-emmc-ext-csd.bin'
+    $extPath = Join-Path $BackupDir $extName
+    if ((Get-Item -LiteralPath $extPath).Length -ne 512 -or
+        (Get-FileHash -LiteralPath $extPath).Hash -ne $manifest[$extName]) {
+        throw 'EXT_CSD snapshot checksum or size mismatch.'
+    }
+    foreach ($image in $images) { $image.Bytes = [long]$image.Blocks * $blockSize }
 }
 
 $serial = [IO.Ports.SerialPort]::new($Port, 115200)
@@ -173,7 +185,7 @@ try {
             (Join-Path $BackupDir $image.Name), [IO.FileMode]::Open, [IO.FileAccess]::Read,
             [IO.FileShare]::Read
         )
-        if ($image.Stream.Length -ne ([long]$image.Blocks * $blockSize)) {
+        if ($image.Stream.Length -ne $image.Bytes) {
             throw "Unexpected image size: $($image.Name)"
         }
         Write-Host "Checking $($image.Name)..."
@@ -183,9 +195,17 @@ try {
         )
         try {
             for ($index = 0; $index -lt $image.Blocks; $index++) {
-                $image.Stream.ReadExactly($buffer, 0, $blockSize)
-                $full.AppendData($buffer)
-                $image.BlockHashes[$index] = Get-Sha256 $buffer
+                $length = [int][Math]::Min([long]$blockSize, $image.Bytes - [long]$index * $blockSize)
+                if ($length -eq $blockSize) {
+                    $image.Stream.ReadExactly($buffer, 0, $length)
+                    $full.AppendData($buffer)
+                    $image.BlockHashes[$index] = Get-Sha256 $buffer
+                } else {
+                    $tail = [byte[]]::new($length)
+                    $image.Stream.ReadExactly($tail, 0, $length)
+                    $full.AppendData($tail)
+                    $image.BlockHashes[$index] = Get-Sha256 $tail
+                }
             }
             if ([Convert]::ToHexString($full.GetHashAndReset()) -ne $manifest[$image.Name]) {
                 throw "Image checksum mismatch: $($image.Name)"
@@ -210,10 +230,17 @@ try {
     }
     $codeHash = (Get-Sha256 ([Text.Encoding]::UTF8.GetBytes($code))).ToLowerInvariant()
     $null = Invoke-Device "base64 -d $destination.b64 > $destination && echo '$codeHash  $destination' | sha256sum -c - && rm $destination.b64"
-    $probe = @(Invoke-Device "$remote probe" | Where-Object { $_ -match '^CID=[a-f0-9]{32}$' })
+    $probeCommand = if ($SD) { "$remote sd-info" } else { "$remote probe" }
+    $info = @(Invoke-Device $probeCommand)
+    $probe = @($info | Where-Object { $_ -cmatch '^CID=[a-f0-9]{32}$' })
     if ($probe.Count -ne 1) { throw 'No valid eMMC CID received.' }
     $cid = $probe[0].Substring(4)
-    Write-Host "Target eMMC CID $cid"
+    $medium = if ($SD) { 'SD' } else { 'eMMC' }
+    Write-Host "Target $medium CID $cid"
+    if ($SD) {
+        if ($info -notcontains "SECTORS=$sectors") { throw 'SD geometry differs from the image' }
+        $remote = "PB626_SD_CID=$cid PB626_SD_SECTORS=$sectors $remote"
+    }
     if ($cid -ne $backupCid -and !$AllowOtherCard) {
         throw 'Different eMMC CID. See README.md before using -AllowOtherCard.'
     }
@@ -225,20 +252,21 @@ try {
     Write-Host 'Testing binary USB transfer of 4 MiB to RAM...'
     $test = @(Invoke-Device "$remote test-transfer $blockSize $testHash" -Payload $buffer -TimeoutSeconds 120)
     if ($test -notcontains "BLOCK 0 $testHash") { throw 'RAM transfer or scanner verification failed.' }
-    $diskTest = @(Invoke-Device "$remote test-disk")
+    $diskTest = @(Invoke-Device "$remote $(if ($SD) {'sd-test-disk'} else {'test-disk'})")
     if (!($diskTest -match '^BLOCK 0 [a-f0-9]{64}$')) { throw 'User area read test failed.' }
-    Write-Host 'Preflight passed. No eMMC writes performed.'
+    Write-Host 'Preflight passed. No storage writes performed.'
     if (!$Write) { return }
 
     if ($cid -ne $backupCid) {
         Write-Warning 'Different eMMC. This copies the original reader data, including device-specific data.'
     }
-    Write-Warning 'This overwrites the entire user area and both boot areas. Keep the USB cable connected.'
+    if ($SD) { Write-Warning 'This overwrites the whole SD card, not eMMC. Do not remove the card or USB cable.' }
+    else { Write-Warning 'This overwrites the entire user area and both boot areas. Keep the USB cable connected.' }
     $confirmation = "RESTORE $cid"
     if ((Read-Host "Type $confirmation to continue") -cne $confirmation) {
         throw 'Confirmation did not match. No eMMC writes performed.'
     }
-    if ((Invoke-Device "$remote probe") -notcontains "CID=$cid") {
+    if ((Invoke-Device $probeCommand) -notcontains "CID=$cid") {
         throw 'The eMMC CID changed during preflight.'
     }
 
@@ -273,10 +301,10 @@ try {
             throw "Readback verification failed: $region"
         }
     }
-    if ((Invoke-Device "$remote probe") -notcontains "CID=$cid") {
+    if ((Invoke-Device $probeCommand) -notcontains "CID=$cid") {
         throw 'Final eMMC safety check failed.'
     }
-    Write-Host 'All three eMMC regions match SHA256SUMS. The reader can be powered off.'
+    Write-Host 'All selected regions match SHA256SUMS. The reader can be powered off.'
 } finally {
     $serial.Dispose()
     foreach ($image in $images) {

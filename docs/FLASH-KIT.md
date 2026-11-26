@@ -71,3 +71,34 @@ Both the kit and recovery are pre-hardware-test candidates. The original
 manual procedure remains in INSTALL.md. A source-reproducible SPL and
 independent hardware recovery remain prerequisites for public one-click
 distribution without private inputs.
+
+## Updating without a fresh backup
+
+Menu item 5 (or `-Action Install -SkipBackup -StockDir PATH`) creates
+a new Debian image from a verified existing same-device dump without
+reading another backup from the device. The original is not overwritten;
+each build gets a unique linux-* output directory. The existing dump
+supplies the factory partitions, calibration and identity. This is a
+destructive reinstall of p1, not an in-place package upgrade. It can
+restore preserved partitions to the state of that dump. No new backup
+is needed if you already have one. Menu item 6 (or `-Action Flash
+-ImageDir PATH`) flashes an already assembled image with no new backup.
+Neither option bypasses manifest, board, CID or write confirmation.
+
+## microSD
+
+The default recovery DTB remains eMMC-only because MMC0 I/O previously
+stalled on this board. Menu items 7–9 (or `-Action Backup -SD`,
+`-Action Restore -SD`, `-Action Preflight -SD`) explicitly select
+the SD-capable recovery DTB, with a 12.5 MHz limit and no 1.8 V switching.
+This is the same RAM initramfs and kernel, not a second OS. It resolves
+the removable SD card on physical MMC0, not eMMC, locks it read-only
+and requires matching CID and exact capacity for each transfer. Card
+images have pb626-sd.img, pb626-sd-cid.txt and SHA256SUMS, including any
+partial final 4 MiB block. Restore checks the complete hash and only
+unlocks the chosen card for writes. Never remove the card mid-operation.
+An existing image can be restored to another identical-size SD only with
+the explicit low-level -AllowOtherCard option and target CID confirmation.
+For eMMC plus SD diagnostic access, use -EnableRecoverySD. The native
+Debian MMC0 default is unchanged. If SD hangs, return to cold FEL and
+use the ordinary eMMC-only profile. SD hardware stability is unqualified.

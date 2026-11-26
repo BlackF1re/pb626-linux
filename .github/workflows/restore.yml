@@ -63,6 +63,19 @@ jobs:
             echo 'Short read unexpectedly succeeded' >&2
             exit 1
           fi
+          # A real SD card need not end on a 4 MiB boundary.
+          cp sample.img partial.img
+          truncate -s $((4194304+1536)) partial.img
+          {
+            printf 'BLOCK 0 '
+            head -c 4194304 partial.img | sha256sum | cut -d ' ' -f1
+            printf 'BLOCK 1 '
+            tail -c 1536 partial.img | sha256sum | cut -d ' ' -f1
+          } >expected-partial
+          qemu-arm ./pb626-restore-scan scan partial.img 2 1536 | diff -u expected-partial -
+          printf 'SHA256 %s\n' "$(sha256sum partial.img | cut -d ' ' -f1)" >expected-full-partial
+          qemu-arm ./pb626-restore-scan verify partial.img 2 1536 | tail -n1 | diff -u expected-full-partial -
+          if qemu-arm ./pb626-restore-scan scan partial.img 2 513; then exit 1; fi
           truncate -s 7818182656 sample.img
           qemu-arm ./pb626-restore-scan verify sample.img 1864 | tail -n1 >actual-large
           printf 'SHA256 %s\n' "$(sha256sum sample.img | cut -d ' ' -f1)" | diff -u - actual-large
