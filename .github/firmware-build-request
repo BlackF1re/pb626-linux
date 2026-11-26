@@ -1,1 +1,2 @@
 Qualification build requested after recovery, SD transport, installer and charging changes.
+Rebuild with corrected AXP209 devm_device_add_group API and diagnostic recovery ACM.

@@ -40,6 +40,8 @@ storage_init() {
     if [ ! -e /run/pb626-emmc-ready ]; then
         echo 'PB626 recovery: eMMC unavailable or preflight failed; ACM diagnostic access remains' >/dev/kmsg
     fi
+}
+sd_init() {
     if [ -e /sys/firmware/devicetree/base/chosen/pb626,sd-backup ]; then
         ok=yes
         for card in /sys/bus/mmc/devices/mmc0:*/block/mmcblk*; do
@@ -76,6 +78,7 @@ done
 test "$bound" = yes || fatal 'no UDC'
 # USB enumerates first; storage failure cannot prevent a shell.
 storage_init &
+sd_init &
 for led in /sys/class/leds/*; do
     [ -w "$led/trigger" ] && echo heartbeat >"$led/trigger" || :
 done

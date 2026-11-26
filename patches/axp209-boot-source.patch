@@ -60,7 +60,7 @@ diff --git a/drivers/mfd/axp20x-i2c.c b/drivers/mfd/axp20x-i2c.c
 +	&dev_attr_pb626_external_present.attr,
 +	NULL,
 +};
-+ATTRIBUTE_GROUPS(pb626_power);
++static const struct attribute_group pb626_power_group = { .attrs = pb626_power_attrs };
 +
 +static int axp20x_i2c_probe(struct i2c_client *i2c)
  {
@@ -84,7 +84,7 @@ diff --git a/drivers/mfd/axp20x-i2c.c b/drivers/mfd/axp20x-i2c.c
 +	if (ret)
 +		return ret;
 +	if (axp20x->variant == AXP209_ID) {
-+		ret = devm_device_add_groups(axp20x->dev, pb626_power_groups);
++		ret = devm_device_add_group(axp20x->dev, &pb626_power_group);
 +		if (ret)
 +			dev_warn(axp20x->dev, "boot source attributes unavailable: %d\n", ret);
 +	}

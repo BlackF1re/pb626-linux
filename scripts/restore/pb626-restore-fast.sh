@@ -165,14 +165,21 @@ shift
 # diagnostic shell for an authorized block-transfer session.
 if test -r /etc/pb626-image-id && grep -qx pb626-debian13-recovery-v1 /etc/pb626-image-id &&
    test "${PB626_STORAGE_INIT:-}" != 1; then
+    ready=
     case "$operation:${1:-}" in
-        sd-info:*|sd-test-disk:*|*:sd)
-            test -e /run/pb626-sd-ready || fail "SD recovery not ready"
-            ;;
+        sd-info:*|sd-test-disk:*|*:sd) ready=/run/pb626-sd-ready ;;
         probe:*|backup-info:*|test-disk:*|backup-read:*|backup-read-packed:*|backup-hash:*|scan:*|verify:*|write:*)
-            test -e /run/pb626-emmc-ready || fail "eMMC recovery not ready"
-            ;;
+            ready=/run/pb626-emmc-ready ;;
     esac
+    if test -n "$ready"; then
+        # The host may open ACM while the boot-time storage check is still
+        # in progress. This is a bounded readiness wait, not a retry of I/O.
+        for attempt in $(seq 1 35); do
+            test ! -e "$ready" || break
+            sleep 1
+        done
+        test -e "$ready" || fail "Storage recovery not ready: $ready"
+    fi
 fi
 case "$operation" in
     probe) probe ;;
