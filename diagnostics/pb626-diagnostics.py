@@ -202,19 +202,24 @@ def battery_sample(seconds):
 def sleep_test():
     if os.geteuid() or not Path("/etc/pb626/suspend-qualified").exists():
         return {"status": "blocked", "reason": "root and existing hardware qualification required"}
-    if "[s2idle]" not in (read("/sys/power/mem_sleep") or "") or (read("/sys/power/pm_test") not in (None, "[none] core processors platform devices freezer")):
-        # pm_test token order varies; only reject a selected non-none value.
-        mode = read("/sys/power/mem_sleep") or ""
-        pmtest = read("/sys/power/pm_test") or "[none]"
-        if "[s2idle]" not in mode or "[none]" not in pmtest:
-            return {"status": "blocked", "reason": "requires selected s2idle and pm_test none"}
+    mode = read("/sys/power/mem_sleep") or ""
+    pmtest = read("/sys/power/pm_test") or "[none]"
+    if "[s2idle]" not in mode or "[none]" not in pmtest:
+        return {"status": "blocked", "reason": "requires selected s2idle and pm_test none"}
+    before = read("/sys/power/suspend_stats/success")
     start, awake = time.clock_gettime(time.CLOCK_BOOTTIME), time.monotonic()
-    r = command(["systemctl", "suspend"], timeout=180)
+    r = command(["systemctl", "start", "suspend.target"], timeout=180)
     r["boottime_delta_s"] = time.clock_gettime(time.CLOCK_BOOTTIME)-start
     r["monotonic_delta_s"] = time.monotonic()-awake
     r["estimated_suspended_s"] = max(0, r["boottime_delta_s"]-r["monotonic_delta_s"])
     r["journal"] = command(["journalctl", "-b", "-u", "systemd-suspend.service", "-o", "short-monotonic", "-n", "40", "--no-pager"])
-    r["limit"] = "systemctl may return before suspend completes; validate journal and counters; no forced wake"
+    r["success_counter_before"] = before
+    after = read("/sys/power/suspend_stats/success")
+    r["success_counter_after"] = after
+    r["confirmed"] = bool(before and after and before.isdecimal() and after.isdecimal() and int(after) > int(before))
+    if r["status"] == "ok" and not r["confirmed"]:
+        r["status"] = "unconfirmed"
+    r["limit"] = "systemd unit completion plus kernel counters; no forced wake or optical verification"
     return r
 
 def input_test(seconds):
