@@ -100,4 +100,16 @@ make -C "$work/sunxi-tools" sunxi-fel
 cp "$work/sunxi-tools/sunxi-fel" "$out/"
 printf '%s\n' "$toolsrev" >"$out/SUNXI-TOOLS-REV"
 (cd "$out" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum >SHA256SUMS)
+# Build the experimental deep-resume variant separately. The ordinary
+# source-built candidates and their manifest remain intact if this fails.
+cd "$work/u-boot"
+mkdir -p "$out/deep-resume"
+python3 "$here/prepare-source-resume.py" "$PWD"
+make -j"$(nproc)" spl/u-boot-spl.bin spl/sunxi-spl.bin
+cp spl/sunxi-spl.bin "$out/deep-resume/BT0-uncaged-deep-candidate.bin"
+test "$(stat -c '%s' "$out/deep-resume/BT0-uncaged-deep-candidate.bin")" -eq 24576
+git diff >"$out/deep-resume/uboot-source-changes.patch"
+"${CROSS_COMPILE}nm" spl/u-boot-spl | grep -E 'pb626_menu_hook|save_boot_params|pb626_try_resume|dramc_init' >"$out/deep-resume/symbols.txt"
+cp .config "$out/deep-resume/native.config"
+(cd "$out/deep-resume" && sha256sum *.bin *.patch *.txt *.config >SHA256SUMS)
 echo 'SOURCE CANDIDATES ONLY: no flash approval; no demonstrated deep resume'

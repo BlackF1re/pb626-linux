@@ -5,6 +5,7 @@ on:
     paths:
       - 'BT0-uncaged/build-from-source.sh'
       - 'BT0-uncaged/prepare-source-hook.py'
+      - 'BT0-uncaged/prepare-source-resume.py'
       - 'BT0-uncaged/fel-entry.S'
       - '.github/workflows/source-bootloader.yml'
   workflow_dispatch:

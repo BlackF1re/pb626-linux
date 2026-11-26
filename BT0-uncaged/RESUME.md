@@ -45,3 +45,21 @@ or insert a generic cold-init sequence into the qualified binary.
 This document deliberately does not add a selectable resume binary or relax
 the exact-hash gate in build.py. The current working idle and s2idle paths
 are independent of this missing SPL resume support.
+
+## Source-level retained-DRAM candidate
+
+The historical Megi U-Boot source is now recoverable from the repository's
+own prior build recipe. See SOURCE.md. The separate prepare-source-resume.py
+modifies the pinned A13 DRAM helper before compilation. It consumes the
+RTC SUSP magic, validates address/alignment and 256 MiB single-rank DDR3
+geometry, requires retained pads, restores DCR/ZQ, avoids DDR3 RESET
+and RAM sizing, exits self-refresh using the vendor sequence, runs the
+DQS training whose first 64 bytes Linux saves, and jumps to cpu_resume
+with MMU and D-cache off. It arms a rescue watchdog. The early Menu
+hook remains first; eGON.FEL never resumes a retained image. This is
+a cross-source experimental implementation, not verified A13 resume.
+The vendor sequence was reviewed against hno/allwinner-boot
+boot0/drv/init_dram/dram_init.c and the pinned kernel's sleep-sun5i.S.
+Neither this SPL nor the matching deep-capable kernel is enabled by
+default. A failed retention test or watchdog reset can lose unsaved
+data; do not flash this candidate without independent recovery.
