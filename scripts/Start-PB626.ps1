@@ -27,6 +27,7 @@ param(
     [ValidateSet('elan-display','elan-emmc-backup')][string]$Variant='elan-display',
     [ValidateSet('standard','diagnostic')][string]$Profile='standard',
     [string]$Distro='Ubuntu',
+    [string]$LabDir,
     [switch]$NoExecute
 )
 
@@ -90,7 +91,12 @@ param(
     $argsLinux=@($wslLinuxScript,$wslBundle,$Variant,$Profile)
     if ($NoExecute) { $argsLinux+='--no-execute' }
     Write-Host "Starting RAM-only Megi: variant=$Variant profile=$Profile"
-    & wsl.exe -d $Distro -u root -- bash @argsLinux
+    if ($LabDir) {
+        $lab=ConvertTo-WslPath $LabDir
+        & wsl.exe -d $Distro -u root -- env "PB626_LAB_DIR=$lab" "PB626_FEL_TOOL=$lab/sunxi-fel" bash @argsLinux
+    } else {
+        & wsl.exe -d $Distro -u root -- bash @argsLinux
+    }
     $exit=$LASTEXITCODE
     Write-Host "`nFEL loader exit: $exit (NOT proof of Linux boot)"
     if ($exit -ne 0) { throw "FEL upload/verification failed: exit $exit" }

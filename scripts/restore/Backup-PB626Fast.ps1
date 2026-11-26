@@ -1,7 +1,7 @@
 #Requires -Version 7.4
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidatePattern('^COM[1-9][0-9]*$')][string]$Port,
+    [Parameter(Mandatory)][ValidatePattern('^(COM[1-9][0-9]*|/dev/ttyACM[0-9]+)$')][string]$Port,
     [Parameter(Mandatory)][string]$BackupDir
 )
 $ErrorActionPreference = 'Stop'

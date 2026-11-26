@@ -103,6 +103,7 @@ run=$(mktemp -d)
 trap 'rm -rf "$run"' EXIT
 
 echo '===== 1. VERIFY FEL AT COLD BOOT ====='
+[[ $(lsusb -d 1f3a:efe8 | wc -l) -eq 1 ]] || { echo 'Expected exactly one cold FEL device' >&2; exit 14; }
 timeout 15s "$fel" -v version
 
 echo '===== 2. INITIALIZE DRAM: ONE SPL ONLY ====='

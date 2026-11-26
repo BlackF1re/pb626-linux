@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidatePattern('^COM[1-9][0-9]*$')]
+    [ValidatePattern('^(COM[1-9][0-9]*|/dev/ttyACM[0-9]+)$')]
     [string]$Port,
     [string]$BackupDir = $PSScriptRoot,
     [string]$ExpectedCid,
@@ -246,6 +246,13 @@ try {
         $region = $image.Region
         Write-Host "Scanning $region..."
         $changed = @(Get-ChunksToWrite $image)
+        # The first user-area block contains the tested SPL and raw kernel
+        # header. Write it only after other changed user blocks are sent.
+        # This is not an atomic upgrade: the independent FEL path is still
+        # required, and the original verified dump must be retained.
+        if ($region -eq 'user' -and $changed -contains 0) {
+            $changed = @($changed | Where-Object { $_ -ne 0 }) + @(0)
+        }
         Write-Host "Restoring $region ($($changed.Count) of $($image.Blocks) blocks)..."
         $done = 0
         try {
