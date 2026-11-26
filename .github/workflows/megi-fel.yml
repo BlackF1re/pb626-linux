@@ -580,8 +580,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mmdebstrap debian-archive-keyring \
             gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user cpio device-tree-compiler
+      - name: Fingerprint recovery payload inputs
+        id: recovery-tools
+        run: |
+          fingerprint=$(dpkg-query -W -f='${Version}\n' gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross | sha256sum | cut -c1-20)
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: recovery-payload
+        with:
+          path: recovery-payload
+          key: pb626-recovery-payload-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.recovery-tools.outputs.week }}-${{ steps.recovery-tools.outputs.fingerprint }}-${{ hashFiles('scripts/build-debian-recovery.sh', 'scripts/restore/pb626-restore-scan.c') }}
       - name: Build the minimal recovery
-        run: bash scripts/build-debian-recovery.sh kernel-stage flash-kit
+        run: bash scripts/build-debian-recovery.sh kernel-stage flash-kit recovery-payload
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-debian-recovery
