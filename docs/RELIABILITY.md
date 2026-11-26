@@ -107,3 +107,6 @@ pressure on the physical board, then restart the desktop. Remove the
 marker to restore the known persistent-queue behavior. Do not qualify
 the experiment on QEMU alone. Record CmaFree, MemAvailable and refresh
 latency before/after; a failing ioctl follows existing worker recovery.
+
+See [first hardware qualification](HARDWARE-QUALIFICATION.md) for the
+read-only measurement procedure, recovery acceptance and opt-in tests.
