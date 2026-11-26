@@ -2,12 +2,15 @@
 Description=PocketBook X11 desktop and E Ink renderer
 ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
 Wants=pb626-board.service
-After=local-fs.target systemd-udev-trigger.service pb626-board.service
+BindsTo=dev-video0.device
+After=local-fs.target systemd-udev-trigger.service pb626-board.service dev-video0.device
 StartLimitIntervalSec=120
 StartLimitBurst=3
 
 [Service]
 Type=simple
+RuntimeDirectory=pb626-desktop
+RuntimeDirectoryMode=0750
 ExecStart=/usr/sbin/pb626-native-desktop
 ExecStopPost=-/usr/sbin/pb626-admin lock-indicator awake
 Restart=always

@@ -10,13 +10,19 @@ fi
 waveform=$(realpath "$waveform")
 umask 077
 work=/run/pb626-desktop
-mkdir "$work"
+managed=no
+if [ "${RUNTIME_DIRECTORY:-}" = "$work" ]; then
+    [ -d "$work" ] || exit 1
+    managed=yes
+else
+    mkdir "$work"
+fi
 bridge_pid=
 xinit_pid=
 cleanup() {
     if [ -n "$xinit_pid" ]; then kill "$xinit_pid" 2>/dev/null || :; wait "$xinit_pid" || :; fi
     if [ -n "$bridge_pid" ]; then kill "$bridge_pid" 2>/dev/null || :; wait "$bridge_pid" || :; fi
-    rm -rf "$work"
+    if [ "$managed" = no ]; then rm -rf "$work"; fi
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM

@@ -27,4 +27,10 @@ grep -Fxq 'MemoryLow=16M' "$unitdir/pb626.slice"
 grep -Fq -- '--property=CPUWeight=200 --property=MemoryLow=16M' display/pb626-desktop
 grep -Fq -- '--property=BindsTo=pb626-desktop.service' display/pb626-desktop
 grep -Fq -- '--property=After=pb626-desktop.service' display/pb626-desktop
+# Device readiness is a bounded PID 1 dependency; no Debian video polling.
+grep -Fxq 'BindsTo=dev-video0.device' "$unitdir/pb626-desktop.service"
+grep -Fq 'dev-video0.device' "$unitdir/pb626-desktop.service"
+grep -Fxq 'RuntimeDirectory=pb626-desktop' "$unitdir/pb626-desktop.service"
+grep -Fxq 'JobTimeoutSec=30s' "$unitdir/dev-video0.device.d/60-pb626.conf"
+grep -Fq 'ENV{SYSTEMD_WANTS}+="pb626-desktop.service"' boot/debian/rootfs/usr/lib/udev/rules.d/72-pb626-display.rules
 echo "Native service contracts passed"

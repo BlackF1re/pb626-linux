@@ -4,14 +4,18 @@ export PB626_EPD_RENDER=indexed
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin HOME=/root TERM=linux
 wave=/lib/firmware/pb626/default.wbf
 [ -s "$wave" ] || { echo 'PB626: missing factory waveform' >&2; exit 1; }
-for n in $(seq 1 30); do
-    [ -c /dev/video0 ] && break
-    sleep 1
-done
-[ -c /dev/video0 ] || { echo 'PB626: no E Ink video device' >&2; exit 1; }
-if [ -d /run/pb626-desktop ]; then
-    if pidof Xorg >/dev/null; then exit 1; fi
-    rm -rf /run/pb626-desktop
+# Native Debian's device unit and RuntimeDirectory are owned by PID 1.
+# Retain the bounded legacy path for Alpine and manual rescue launches.
+if [ "${RUNTIME_DIRECTORY:-}" != /run/pb626-desktop ]; then
+    for n in $(seq 1 30); do
+        [ -c /dev/video0 ] && break
+        sleep 1
+    done
+    if [ -d /run/pb626-desktop ]; then
+        if pidof Xorg >/dev/null; then exit 1; fi
+        rm -rf /run/pb626-desktop
+    fi
 fi
+[ -c /dev/video0 ] || { echo 'PB626: no E Ink video device' >&2; exit 1; }
 cd /root
 exec /usr/bin/pb626-desktop "$wave"

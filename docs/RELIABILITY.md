@@ -46,6 +46,19 @@ acquires the panel. For diagnostic recovery, set PB626_RESOURCE_SCOPE=0
 in the desktop service environment and restart; this restores the
 previous same-service behavior. Alpine/FEL are unchanged.
 
+## Device-driven desktop lifetime
+
+Debian's desktop binds to dev-video0.device and orders after it. A udev
+rule tags video0 for systemd and requests the desktop when it appears,
+including delayed registration. The device job is bounded at 30 s:
+missing E Ink must not block the independent USB rescue console forever.
+The worker still verifies the sun5i-eink driver and format before output.
+PID 1 creates/removes the existing runtime directory; no Debian loop
+polls for video0 or manually deletes the service-owned directory.
+The legacy Alpine/manual startup path keeps its original bounded wait.
+ELAN startup still has a short bounded discovery window for the pointer
+fallback; no claim of dynamic touch hotplug support.
+
 ## Next steps and hardware gates
 
 - Verify normal and intentionally interrupted refreshes, service restarts,
