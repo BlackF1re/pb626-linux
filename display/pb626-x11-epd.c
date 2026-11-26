@@ -2010,6 +2010,10 @@ int main(int argc, char **argv)
 				fputs("ready\n", ready);
 				if (fclose(ready))
 					goto failed;
+				/* One boot/recovery milestone, independent of expensive
+				 * per-update profiling. Monotonic kernel-relative time. */
+				fprintf(stderr, "pb626: first_frame_ack mono_us=%llu\n",
+					(unsigned long long)now_us());
 			}
 			has_frame = 1;
 			failures = 0;
