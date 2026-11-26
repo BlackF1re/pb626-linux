@@ -121,7 +121,8 @@ jobs:
       - name: Install X11 test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth tk
+          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth tk \
+            xserver-xorg-dev xutils-dev libpciaccess-dev autoconf automake libtool pkg-config
       - name: Fetch pinned kernel UAPI and test renderer
         run: |
           set -euo pipefail
@@ -134,3 +135,18 @@ jobs:
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x24' /tmp/test-pb626-x11-epd
           xvfb-run -a -s '-screen 0 760x1024x16' wish tests/test-debian-settings.tcl
+      - name: Compile the optional shared DDX against host Xorg headers
+        run: |
+          set -euo pipefail
+          git init -q /tmp/pb626-ddx
+          git -C /tmp/pb626-ddx fetch -q --depth 1 https://github.com/X11Libre/xf86-video-dummy.git 68e02860d9ee6d65733457e689d180653fc9829f
+          git -C /tmp/pb626-ddx checkout -q --detach FETCH_HEAD
+          test "$(git -C /tmp/pb626-ddx rev-parse HEAD)" = 68e02860d9ee6d65733457e689d180653fc9829f
+          cp display/pb626-ddx-fb.h /tmp/pb626-ddx/src/
+          patch --fuzz=0 -d /tmp/pb626-ddx -p1 < display/xorg-dummy-pb626-shared.patch
+          cd /tmp/pb626-ddx
+          autoreconf -fi
+          ./configure --prefix=/usr
+          make -j2
+          test -s src/.libs/dummy_drv.so
+          # Compilation only: this runner need not have a real Xorg VT.

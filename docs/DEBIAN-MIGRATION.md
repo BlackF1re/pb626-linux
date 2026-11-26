@@ -241,7 +241,7 @@ systemd-suspend.service requires pb626-sleep.service, which sends a
 root-only bounded IPC request, waits for the physical ACK before
 sleep.target, and lets kernel system PM synchronously park the E Ink
 controller and shut down its supplies. No fixed userspace sleep delay.
-Its stop-post requests a fresh desktop after resume or failure. Power
+Its stop-post requests the bridge's acknowledged restore transaction after resume or failure. Power
 key s2idle, xidle, Settings and normal systemctl suspend use this path.
 The short power press uses the same systemd transaction instead of
 preemptively locking the screen. A pending system sleep suppresses
@@ -260,7 +260,8 @@ OpenCV 4.x reconstruction; exact 2.4.13 rounding is not yet qualified.
 
 The existing /etc/pb626/suspend-qualified gate remains for Settings,
 power key and idle timer; do not create it before real wake testing.
-Explicit root systemctl suspend requires the running bridge and its ACK.
+Explicit root systemctl suspend also requires the qualification marker,
+a running bridge and its ACK.
 Verify key, timer, non-power wake, repeated cycles, suspend failures,
 panel power shutdown and actual s2idle current. This is a convenience
 lock, not authentication. Deep sleep needs a resume-aware SPL.
@@ -308,7 +309,8 @@ accepts only an exact-size raw grayscale stream on stdin and atomically
 writes a root-owned PGM. There is no privileged image decoder or resident
 picker. No selection means a white screen. A poweroff.target oneshot
 runs after desktop shutdown (not on reboot), uses the standalone renderer
-with GC16 scrubbing, and allows panel rail shutdown before power removal.
+with GC16 scrubbing. The paired kernel attempts synchronous Runtime PM
+on renderer close and also parks the controller at device shutdown.
 Verify the ordering and shutdown time on real hardware.
 
 Settings > Power configures low battery warning (default 10%) and

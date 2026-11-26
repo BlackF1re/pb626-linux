@@ -131,3 +131,22 @@ logind sleep inhibitors. A display-idle timer is opt-in and cannot infer
 whether a terminal job is important: use `systemd-inhibit --what=sleep
 --mode=block <command>` for work that must not be interrupted. No automatic
 suspend is enabled by default.
+
+### Confirmed limits of the stock radio and boot inputs
+
+The supplied archive contains rootfs/lib/modules/8188eu.ko, including
+rtw_suspend (0x3e588), rtw_resume (0x3e7a0), rtw_suspend_common,
+rtw_resume_common, LPS_Enter/Leave and ips_enter/leave. Module metadata
+lists rtw_power_mgnt, rtw_ips_mode and rtw_low_power. Its symbol table
+does not contain usb_autopm_get/put_interface or usb_enable_autosuspend;
+the existence of LPS/IPS and system sleep entry points is not proof
+that stock USB runtime autosuspend was enabled. Keep radio association
+and USB rescue usable; do not force an unsupported PM state.
+
+The archive contains boot.axf, bImage, script.bin and vendor modules,
+but neither the exact private pb626-spl.bin input nor the source tree
+that produced it. Public U-Boot v2026.07 dram_sun4i.c explicitly clears
+SDR_DPCR and performs cold initialization, discarding retained data.
+It cannot substitute for a resume-aware SPL. A new source-reproducible
+SPL needs board-specific non-destructive training, resume handoff and
+cold Menu FEL validation independently of this Debian userspace.
