@@ -1,2 +1,2 @@
-Qualification build requested after recovery, SD transport, installer and charging changes.
-Rebuild with corrected AXP209 devm_device_add_group API and diagnostic recovery ACM.
+Debian qualification build: terminal diagnostics, independent cached chroots, source SPL and parallel recovery.
+Inputs: db9481976956d6a42602a902d22a302f408b0a15
