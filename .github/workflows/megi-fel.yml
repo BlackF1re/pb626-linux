@@ -16,6 +16,10 @@ on:
       - 'scripts/build-megi-desktop.sh'
       - 'scripts/build-native-rootfs.sh'
       - 'scripts/build-debian-rootfs.sh'
+      - 'scripts/build-debian-base.sh'
+      - 'diagnostics/**'
+      - 'BT0-uncaged/**'
+      - '.github/workflows/source-bootloader.yml'
       - 'scripts/Start-PB626*.ps1'
       - 'scripts/fel-boot.sh'
       - 'scripts/inspect-live.sh'
@@ -47,7 +51,7 @@ on:
 
 concurrency:
   group: megi-fel-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -294,7 +298,8 @@ jobs:
           name: pb626-kernel-stage
           path: kernel-stage/
           if-no-files-found: error
-          retention-days: 1
+          compression-level: 0
+          retention-days: 14
 
   bundle:
     name: Final RAM bundle (no kernel rebuild)
@@ -396,9 +401,46 @@ jobs:
           path: native-dist/
           if-no-files-found: error
 
+  debian-base:
+    name: Debian runtime and compiler chroots (independent cache)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache epoch (weekly Debian security refresh)
+        id: epoch
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: base
+        with:
+          path: debian-base
+          key: pb626-debian-base-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.epoch.outputs.week }}-${{ hashFiles('scripts/build-debian-base.sh') }}
+      - name: Install bootstrap tools on miss
+        if: steps.base.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mmdebstrap debian-archive-keyring qemu-user-static binfmt-support arch-test
+          sudo update-binfmts --enable qemu-arm
+          arch-test armhf
+      - name: Build base on cache miss
+        if: steps.base.outputs.cache-hit != 'true'
+        run: bash scripts/build-debian-base.sh debian-base
+      - name: Check base integrity
+        run: (cd debian-base && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-debian-base-stage
+          path: debian-base/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+  bootloader:
+    uses: ./.github/workflows/source-bootloader.yml
+
   debian-native:
     name: Debian 13 armhf native firmware candidate
-    needs: [kernel]
+    needs: [kernel, debian-base]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -407,6 +449,10 @@ jobs:
         with:
           name: pb626-kernel-stage
           path: kernel-stage
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-debian-base-stage
+          path: debian-base
       - name: Install bootstrap and ARM execution tools
         run: |
           sudo apt-get update
@@ -417,17 +463,18 @@ jobs:
           test -r /proc/sys/fs/binfmt_misc/qemu-arm
           arch-test armhf
       - name: Build and verify Debian rootfs and paired firmware
-        run: bash scripts/build-debian-rootfs.sh kernel-stage debian-dist
+        run: bash scripts/build-debian-rootfs.sh kernel-stage debian-dist debian-base
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-native-debian13-armhf
           path: debian-dist/
+          compression-level: 0
           if-no-files-found: error
           retention-days: 14
 
-  flash-kit:
-    name: Minimal Debian recovery and unified flash kit
-    needs: [kernel, debian-native]
+  recovery:
+    name: Minimal Debian recovery (parallel with native rootfs)
+    needs: [kernel]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -436,10 +483,6 @@ jobs:
         with:
           name: pb626-kernel-stage
           path: kernel-stage
-      - uses: actions/download-artifact@v4
-        with:
-          name: pb626-native-debian13-armhf
-          path: native-stage
       - name: Install Debian recovery build tools
         run: |
           sudo apt-get update
@@ -447,6 +490,29 @@ jobs:
             gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user cpio device-tree-compiler
       - name: Build the minimal recovery
         run: bash scripts/build-debian-recovery.sh kernel-stage flash-kit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-debian-recovery
+          path: flash-kit/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  flash-kit:
+    name: Assemble same-run flash kit (no compilation)
+    needs: [debian-native, recovery]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-debian-recovery
+          path: flash-kit
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-native-debian13-armhf
+          path: native-stage
       - name: Assemble paired installation, backup and restore kit
         run: |
           set -euo pipefail
@@ -460,5 +526,6 @@ jobs:
         with:
           name: pb626-debian-flash-kit
           path: flash-kit/
+          compression-level: 0
           if-no-files-found: error
           retention-days: 14
