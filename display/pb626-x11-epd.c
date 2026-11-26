@@ -35,6 +35,98 @@ enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 180000, QUIET_US = 300000,
        LARGE_CLEAN_PIXELS = PIXELS / 16, CLEAN_AFTER = 8, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 
+/* Native power-key lock is an accidental-input lock, not authentication. */
+static int screen_locked;
+
+static uint8_t lock_level(uint8_t level, int x, int y)
+{
+	int dx = x - WIDTH / 2, dy = y - HEIGHT / 2;
+	if (dx >= -24 && dx < 24 && dy >= 0 && dy < 36)
+		return (dx >= -3 && dx < 3 && dy >= 10 && dy < 24) ? WHITE : 0;
+	if (dx >= -17 && dx < 17 && dy >= -26 && dy < 0 &&
+	    (dy < -19 || dx < -10 || dx >= 10))
+		return 0;
+	return (uint8_t)(8 + level / 2);
+}
+
+static int power_action(const char *action, const char *arg)
+{
+	pid_t pid = fork();
+	if (pid < 0)
+		return -1;
+	if (!pid) {
+		if (arg)
+			execl("/usr/sbin/pb626-admin", "pb626-admin", action, arg, (char *)NULL);
+		else
+			execl("/usr/sbin/pb626-admin", "pb626-admin", action, (char *)NULL);
+		_exit(127);
+	}
+	int status;
+	while (waitpid(pid, &status, 0) < 0)
+		if (errno != EINTR)
+			return -1;
+	return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+}
+
+enum power_policy { POWER_LOCK, POWER_S2IDLE, POWER_IGNORE, POWER_OFF };
+static enum power_policy power_policy(void)
+{
+	char value[32];
+	FILE *file = fopen("/var/lib/pb626/power-key", "r");
+	if (!file)
+		return POWER_LOCK;
+	int got = fscanf(file, "%31s", value);
+	fclose(file);
+	if (got != 1)
+		return POWER_LOCK;
+	if (!strcmp(value, "s2idle")) return POWER_S2IDLE;
+	if (!strcmp(value, "ignore")) return POWER_IGNORE;
+	if (!strcmp(value, "poweroff")) return POWER_OFF;
+	return POWER_LOCK;
+}
+
+static int grab_lock(Display *d, Window root)
+{
+	if (XGrabKeyboard(d, root, False, GrabModeAsync, GrabModeAsync, CurrentTime) != GrabSuccess)
+		return -1;
+	if (XGrabPointer(d, root, False, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+			 GrabModeAsync, GrabModeAsync, None, None, CurrentTime) != GrabSuccess) {
+		XUngrabKeyboard(d, CurrentTime);
+		XFlush(d);
+		return -1;
+	}
+	XFlush(d);
+	return 0;
+}
+
+static void release_lock(Display *d)
+{
+	XUngrabPointer(d, CurrentTime);
+	XUngrabKeyboard(d, CurrentTime);
+	XFlush(d);
+}
+
+/* A complete short press/release toggles. Repeats and orphan releases
+ * cannot initiate a sleep operation. */
+static int power_press(int fd, uint64_t *pressed)
+{
+	struct input_event e;
+	int count = 0;
+	while (read(fd, &e, sizeof(e)) == (ssize_t)sizeof(e)) {
+		if (e.type != EV_KEY || e.code != KEY_POWER)
+			continue;
+		uint64_t when = (uint64_t)e.input_event_sec * 1000000 + e.input_event_usec;
+		if (e.value == 1)
+			*pressed = when ? when : 1;
+		else if (e.value == 0) {
+			if (*pressed && when >= *pressed && when - *pressed < 1500000)
+				count++;
+			*pressed = 0;
+		}
+	}
+	return count;
+}
+
 struct controls {
 	int fallback, vertical, pointer_visible, clean_requested, keyboard_changed;
 	int page_keys, home_key, menu_escape;
@@ -98,7 +190,7 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 	int changed = 0;
 	struct input_event event;
 	while (read(fd, &event, sizeof(event)) == (ssize_t)sizeof(event)) {
-		if (event.type != EV_KEY)
+		if (event.type != EV_KEY || screen_locked)
 			continue;
 		/* A physical key is activity even when it only sends a client message. */
 		if (event.value)
@@ -494,8 +586,10 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 					next = quantize(value, contrast, x, output_y);
 				}
 				size_t i = (size_t)output_y * WIDTH + x;
-				if (draw_pointer)
+				if (draw_pointer && !screen_locked)
 					next = pointer_level(pointer, vertical, x, output_y, next);
+				if (screen_locked)
+					next = lock_level(next, x, output_y);
 				if (nibble_get(frame, i) != next) {
 					stats->changed++;
 					dirty_tiles[output_y / TILE][x / TILE] = 1;
@@ -989,7 +1083,7 @@ int main(int argc, char **argv)
 		.home_key = home && !strcmp(home, "home"),
 		.menu_escape = menu && !strcmp(menu, "escape"),
 	};
-	struct pollfd sources[3] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
+	struct pollfd sources[4] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
 	nfds_t source_count = 1;
 	const char *devices = getenv("PB626_BUTTON_DEVICES");
 	char *paths = devices ? strdup(devices) : NULL;
@@ -1000,6 +1094,17 @@ int main(int argc, char **argv)
 			sources[source_count++] = (struct pollfd){ .fd = fd, .events = POLLIN };
 	}
 	free(paths);
+	nfds_t power_index = 0;
+	const char *power_device = getenv("PB626_POWER_DEVICE");
+	if (power_device && source_count < sizeof(sources) / sizeof(sources[0])) {
+		int fd = open(power_device, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+		if (fd >= 0) {
+			power_index = source_count;
+			sources[source_count++] = (struct pollfd){ .fd = fd, .events = POLLIN };
+		}
+	}
+	uint64_t power_pressed = 0;
+	int lock_pending = 0, request_sleep = 0;
 	static uint8_t frame[PACKED_PIXELS], previous[PACKED_PIXELS];
 	const struct rect full = {0, 0, WIDTH, HEIGHT};
 	struct rect pointer = {0};
@@ -1037,21 +1142,44 @@ int main(int argc, char **argv)
 			if (damage && event.type == damage_event + XDamageNotify) {
 				if (profile && !damage_seen)
 					damage_seen = now_us();
-				dirty = 1;
+				if (!screen_locked || lock_pending) dirty = 1;
 			} else if (event.type == PropertyNotify && event.xproperty.atom == active)
 				focus_changed = 1;
-			else if (event.type == KeyPress && event.xkey.keycode == toggle) {
+			else if (!screen_locked && event.type == KeyPress && event.xkey.keycode == toggle) {
 				keyboard_command(display, root, keyboard, KEYBOARD_TOGGLE);
 				controls.keyboard_changed = 1;
 			}
 		}
-		if (focus_changed) {
+		if (focus_changed && !screen_locked) {
 			keyboard_focus(display, root, active, keyboard, &previous_window, &controls);
 			focus_changed = 0;
 		}
+		if (power_index && sources[power_index].fd >= 0) {
+			int presses = power_press(sources[power_index].fd, &power_pressed);
+			if (presses & 1) {
+				enum power_policy policy = power_policy();
+				if (screen_locked) {
+					screen_locked = 0;
+					release_lock(display);
+					request_sleep = 0;
+					(void)power_action("lock-indicator", "awake");
+					focus_changed = 1;
+					lock_pending = dirty = 1;
+				} else if (policy == POWER_OFF) {
+					(void)power_action("poweroff", NULL);
+				} else if (policy != POWER_IGNORE && !grab_lock(display, root)) {
+					screen_locked = 1;
+					controls.menu_pressed = 0;
+					lock_pending = dirty = 1;
+					request_sleep = policy == POWER_S2IDLE;
+				}
+				if (lock_pending)
+					next_capture = layout_until = 0;
+			}
+		}
 		int pointer_changed = 0;
 		for (nfds_t i = 1; i < source_count; i++)
-			if (sources[i].fd >= 0)
+			if (i != power_index && sources[i].fd >= 0)
 				pointer_changed |= handle_buttons(display, root, keyboard, sources[i].fd, &controls);
 		uint64_t now = now_us();
 		if (controls.keyboard_changed) {
@@ -1070,10 +1198,14 @@ int main(int argc, char **argv)
 		struct capture_stats stats = {0};
 		uint64_t capture_start = now, damage_wait = 0, ack = 0;
 		int captured = 0;
+		if (screen_locked && !lock_pending) {
+			dirty = pending = cleanup_count = 0;
+			goto wait_input;
+		}
 		if ((dirty || !damage) && now >= next_capture && now >= layout_until) {
 			struct rect areas[MAX_REGIONS];
 			int count = damage ? damage_regions(display, damage, region, offset, areas) : 0;
-			if (!has_frame || !damage || controls.clean_requested) {
+			if (!has_frame || !damage || controls.clean_requested || lock_pending) {
 				areas[0] = full;
 				count = 1;
 			}
@@ -1118,7 +1250,7 @@ int main(int argc, char **argv)
 		}
 
 		uint8_t command = captured && (!has_frame || controls.clean_requested) ? RESET :
-            automatic_command(now - last_damage, dirty || now < layout_until,
+            lock_pending && captured ? SETTLE : automatic_command(now - last_damage, dirty || now < layout_until,
                               captured, different, cleanup_count);
         if (command == PREVIEW && fast_mode == FAST_DU4)
             command = PREVIEW_DU4;
@@ -1175,6 +1307,18 @@ int main(int argc, char **argv)
 			/* Bound gray-only starvation from the last visible progress. */
 			pending_since = now_us();
 		}
+		if (lock_pending && captured && (command == SETTLE || command == RESET)) {
+			/* The worker has acknowledged the panel update, or the
+			 * target already matches the last acknowledged frame. */
+			lock_pending = 0;
+			if (screen_locked) {
+				(void)power_action("lock-indicator", "locked");
+				if (request_sleep) {
+					request_sleep = 0;
+					(void)power_action("suspend", NULL);
+				}
+			}
+		}
 		if (profile && (captured || changes))
 			fprintf(stderr, "x11-epd: mode=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu ipc_update_us=%llu total_us=%llu capture_mono_us=%llu damage_wait_us=%llu ack_mono_us=%llu\n",
 				command ? command : '-', stats.pixels, changes,
@@ -1190,7 +1334,7 @@ int main(int argc, char **argv)
 wait_input:
 		now = now_us();
 		uint64_t deadline = UINT64_MAX;
-		if (dirty || !damage)
+		if ((!screen_locked || lock_pending) && (dirty || !damage))
 			deadline = next_capture > layout_until ? next_capture : layout_until;
 		if ((pending || cleanup_count) && has_frame && !dirty) {
 			uint64_t settle = last_damage + (pending ? QUIET_US : cleanup_delay(cleanup_count));

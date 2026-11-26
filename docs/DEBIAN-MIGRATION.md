@@ -220,3 +220,23 @@ card, then insert a backed-up FAT32 card and verify enumeration and read
 I/O before any write. Keep the normal image as a rollback. This profile
 is not a claim that the earlier physical stall is fixed. Do not format
 or repair any device until its MMC0 host identity is checked.
+
+
+## Short power-key lock and sleep policy
+
+The native bridge reads axp20x-pek releases without another resident daemon.
+The default short press locks keyboard/pointer and physical navigation, then
+applies a lightening filter and a small lock glyph to the existing packed
+frame. This is an original visual approximation, not the proprietary stock
+filter or a password lock. The physical frame is frozen after ACK; the
+frontlight is temporarily disabled and PE8 uses a slow timer blink. A short
+press restores the screen and configured frontlight/LED policy. The normal
+LED default is heartbeat. A GPIO LED cannot provide a hardware breathing
+waveform and software blinking stops in actual suspend. Ignore and poweroff
+are also configurable. The s2idle choice is gated by /etc/pb626/suspend-qualified;
+never create this marker before physical wake testing. A failed sleep request
+leaves the reader locked but awake. Non-power wake leaves the visual lock in
+place until a short power press. The AXP209 emergency hold is unchanged.
+The bridge is an input convenience lock, not a security boundary against
+other X11 clients. Deep sleep is not enabled: SUN5I_PM requires a resume-aware
+SPL, while BT0-uncaged currently reconstructs a fixed cold-boot SPL.

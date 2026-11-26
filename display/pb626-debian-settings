@@ -147,7 +147,7 @@ foreach p [glob -nocomplain /sys/devices/system/cpu/cpufreq/policy*] {
 set ledMode unavailable
 if {![catch {query led-status} value]} {set ledMode $value}
 set host [info hostname]
-set powerKey ignore
+set powerKey lock
 if {![catch {query power-key-status} value]} {set powerKey $value}
 
 label .heading -text "PocketBook settings" -font {{Liberation Sans} 22 bold}
@@ -201,7 +201,7 @@ foreach w {on off cli dns} {pack $p.$w -fill x -padx 12 -pady 7}
 
 set p .tabs.power
 if {$ledMode ne "unavailable"} {
-    choose $p led "Power indicator" ledMode {on off}
+    choose $p led "Power indicator" ledMode {heartbeat on off}
     button $p.ledapply -text "Save indicator state" -command {act led $ledMode}
     pack $p.ledapply -fill x -padx 12 -pady 4
 }
@@ -210,9 +210,10 @@ if {[llength $governors]} {
     button $p.cpuapply -text "Apply CPU policy and save" -command {act governor $governor}
     pack $p.cpuapply -fill x -padx 12 -pady 4
 }
-set keyChoices {ignore poweroff}
+set keyChoices {lock ignore poweroff}
+if {$qualified} {lappend keyChoices s2idle}
 choose $p powerkey "Power key action" powerKey $keyChoices
-button $p.keyapply -text "Save power key (next boot)" -command {if {[act power-key $powerKey]} {tk_messageBox -message "Saved; applies on next boot."}}
+button $p.keyapply -text "Save power key action" -command {if {[act power-key $powerKey]} {tk_messageBox -message "Saved; applies to the next short press."}}
 pack $p.keyapply -fill x -padx 12 -pady 4
 if {$qualified} {
     choose $p idle "Sleep after minutes (0 = never)" idle {0 5 10 15 30 60}
@@ -221,7 +222,7 @@ if {$qualified} {
     pack $p.idleapply $p.sleep -fill x -padx 12 -pady 4
 } else {
     set idle 0
-    label $p.sleepnote -text "Automatic sleep is disabled until this board passes suspend/resume tests. No automatic frontlight timeout." -wraplength 620 -justify left
+    label $p.sleepnote -text "Lock is available now. Real s2idle is disabled until wakeup is qualified; deep sleep needs a resume-aware SPL." -wraplength 620 -justify left
     pack $p.sleepnote -padx 12 -pady 10
 }
 button $p.reboot -text "Restart reader" -command {power reboot}

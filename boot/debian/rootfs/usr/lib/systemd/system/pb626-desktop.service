@@ -9,6 +9,7 @@ StartLimitBurst=3
 [Service]
 Type=simple
 ExecStart=/usr/sbin/pb626-native-desktop
+ExecStopPost=-/usr/sbin/pb626-admin lock-indicator awake
 Restart=always
 RestartSec=5s
 TimeoutStopSec=20s

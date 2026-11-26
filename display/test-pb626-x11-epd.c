@@ -180,6 +180,10 @@ int main(void)
 	test_worker_deadlines();
 	test_packed_rgb565();
 	test_gray();
+	for (unsigned int i = 0; i <= WHITE; i++)
+		assert(lock_level(i, 0, 0) == 8 + i / 2);
+	assert(lock_level(WHITE, WIDTH / 2 - 20, HEIGHT / 2 + 10) == 0);
+	assert(lock_level(0, WIDTH / 2, HEIGHT / 2 + 15) == WHITE);
 	static struct shared_frame frame;
 	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
 	const size_t pixel = 100 * WIDTH + 50;
