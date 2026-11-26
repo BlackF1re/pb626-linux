@@ -141,6 +141,7 @@ def main():
     p.add_argument("--output", type=Path, required=True, help="New private directory")
     p.add_argument("--expected-cid", help="Original CID for a legacy backup")
     p.add_argument("--root-password-hash-file", type=Path, help="Private SHA-512 crypt hash file for noninteractive installation")
+    p.add_argument("--experimental-sd", action="store_true", help="Opt in to the unqualified native MMC0 SD profile; retain FEL recovery")
     p.add_argument("--accept-replace-p1", action="store_true", help="Replace p1 including all existing user data")
     a = p.parse_args()
     require(a.accept_replace_p1, "Explicit --accept-replace-p1 required")
@@ -174,10 +175,10 @@ def main():
     require(digest(a.spl) == SPL, "Not the hardware-tested SPL")
     require(digest(regular(a.waveform)) == WBF, "Not the validated factory waveform")
     syschecks = manifest(a.system)
-    raw = checked(a.system,syschecks,"raw-linux.img")
+    raw = checked(a.system,syschecks,"pb626-raw-linux-sd.img" if a.experimental_sd else "raw-linux.img")
     require(raw.stat().st_size <= 0x800000+512, "Raw image too large")
     validate_raw(raw.read_bytes())
-    dtb = checked(a.system,syschecks,"pb626-elan-emmc-native.dtb")
+    dtb = checked(a.system,syschecks,"pb626-elan-emmc-native-sd.dtb" if a.experimental_sd else "pb626-elan-emmc-native.dtb")
     kernel = checked(a.system,syschecks,"pb626-native-zImage")
     def padded(p):
         data=p.read_bytes()
@@ -185,9 +186,14 @@ def main():
     data=raw.read_bytes()
     n=struct.unpack_from(">I",data,12)[0]
     require(data[64:64+n].endswith(padded(kernel)+padded(dtb)), "Raw image/kernel/DTB mismatch")
-    for path,status in [("/soc/mmc@1c0f000","disabled"),("/soc/mmc@1c11000","okay")]:
+    for path,status in [("/soc/mmc@1c0f000","okay" if a.experimental_sd else "disabled"),("/soc/mmc@1c11000","okay")]:
         value=subprocess.check_output(["fdtget","-t","s",str(dtb),path,"status"],text=True).strip()
         require(value==status,"Unsafe native DTB storage configuration")
+    if a.experimental_sd:
+        node = "/soc/mmc@1c0f000"
+        require(subprocess.check_output(["fdtget","-t","u",str(dtb),node,"max-frequency"],text=True).strip() == "12500000", "Unexpected SD clock limit")
+        for prop in ("no-1-8-v","disable-wp","no-mmc","no-sdio"):
+            subprocess.run(["fdtget",str(dtb),node,prop],check=True)
     subprocess.run(["fdtget",str(dtb),"/chosen","pb626,emmc-root"],check=True)
     release=checked(a.system,syschecks,"KERNELRELEASE").read_text().strip()
     require(re.fullmatch(r"[A-Za-z0-9._+-]+",release),"Invalid kernel release")

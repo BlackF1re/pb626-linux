@@ -18,7 +18,7 @@ cd "$repo"
 
 # Fail before the expensive foreign-architecture bootstrap if a host
 # tool needed to package the final boot image is missing.
-for tool in mmdebstrap clang ld.lld fdtget depmod tic git python3; do
+for tool in mmdebstrap clang ld.lld fdtget fdtput depmod tic git python3; do
     command -v "$tool" >/dev/null || { echo "Missing host tool: $tool" >&2; exit 1; }
 done
 
@@ -330,6 +330,22 @@ sudo install -m 644 "$work/pb626-runtime.deb" "$out/pb626-runtime_armhf.deb"
 cp "$kernel/pb626-megi-zImage" "$out/pb626-native-zImage"
 cp "$kernel/"{pb626-elan-emmc-native.dtb,KERNELRELEASE,KERNEL-SOURCE.txt,pb626-megi.config} "$out/"
 python3 BT0-uncaged/pack-kernel.py "$out/pb626-native-zImage" "$out/pb626-elan-emmc-native.dtb" "$out/raw-linux.img"
+# Optional native-only SD qualification image. Preserve the original DTB,
+# eMMC alias/root path and all independent FEL safety contracts.
+sd_dtb="$out/pb626-elan-emmc-native-sd.dtb"
+cp "$out/pb626-elan-emmc-native.dtb" "$sd_dtb"
+sd_node=/soc/mmc@1c0f000
+fdtput -t s "$sd_dtb" "$sd_node" status okay
+fdtput -t u "$sd_dtb" "$sd_node" max-frequency 12500000
+for prop in no-1-8-v disable-wp no-mmc no-sdio; do
+    fdtput "$sd_dtb" "$sd_node" "$prop"
+done
+test "$(fdtget -t u "$sd_dtb" "$sd_node" bus-width)" = 4
+test "$(fdtget -t u "$sd_dtb" "$sd_node" max-frequency)" = 12500000
+test "$(fdtget -t s "$sd_dtb" /soc/mmc@1c11000 status)" = okay
+fdtget "$sd_dtb" "$sd_node" cd-gpios >/dev/null
+fdtget "$sd_dtb" "$sd_node" vmmc-supply >/dev/null
+python3 BT0-uncaged/pack-kernel.py "$out/pb626-native-zImage" "$sd_dtb" "$out/pb626-raw-linux-sd.img"
 git rev-parse HEAD > "$out/BUILD-COMMIT"
 (cd "$out" && sha256sum pb626-* KERNELRELEASE KERNEL-SOURCE.txt BUILD-COMMIT raw-linux.img DEBIAN-PACKAGES.txt > SHA256SUMS)
 echo "Debian 13 armhf rootfs (on eMMC): $(sudo du -sm "$root" | cut -f1) MiB"

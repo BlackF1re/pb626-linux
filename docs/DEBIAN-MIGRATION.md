@@ -202,3 +202,21 @@ Gallium/LLVM. Do not delete these libraries or bypass dpkg dependencies.
 GLX is disabled at both extension and module levels; verify Xorg maps/PSS
 and both visual depths on the reader before making any size or RAM claim.
 GTK3 is required by stock matchbox-desktop; GTK4 by iwgtk (on demand).
+
+
+## Experimental external microSD profile
+
+The factory script.bin mmc0_para enables a four-bit bus on PF0–PF5;
+MMC0_enable describes PE4 power and PG0 detection. Megi's board DTS
+already maps these to a fixed 3.3 V regulator (PE4 active low) and a
+PG0 active-low card detect. Previous hardware attempts stalled I/O, so
+normal native and both FEL DTBs stay unchanged. The Debian artifact
+also contains pb626-elan-emmc-native-sd.dtb and pb626-raw-linux-sd.img.
+These opt-in files enable MMC0 at at most 12.5 MHz, without 1.8 V switching,
+write-protect, SDIO or MMC probing. VFAT and exFAT are modules.
+Use build-native-image.py --experimental-sd in addition to the usual
+arguments, only with an independent verified FEL backup. Start with no
+card, then insert a backed-up FAT32 card and verify enumeration and read
+I/O before any write. Keep the normal image as a rollback. This profile
+is not a claim that the earlier physical stall is fixed. Do not format
+or repair any device until its MMC0 host identity is checked.
