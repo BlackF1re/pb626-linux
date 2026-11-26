@@ -94,7 +94,22 @@ if [ -f /proc/device-tree/chosen/pb626,emmc-root ]; then
     client=/usr/libexec/pb626-user-session
     if [ -f /etc/debian_version ]; then export PB626_SYSTEM_SLEEP=1; fi
     # Only the hardware bridge/worker inherit modest OOM protection.
-    (printf '%s\n' -500 >/proc/self/oom_score_adj || :; exec nice -n -3 env DISPLAY=:0 /usr/bin/pb626-x11-epd "$waveform" "$work/ready") &
+    # systemd-run --scope execs the command in place (systemd 257), so
+    # wait -n and the existing PID handoff remain valid. BindsTo/After
+    # stop the separate cgroup before desktop shutdown or restart.
+    (
+        printf '%s\n' -500 >/proc/self/oom_score_adj || :
+        if [ -f /etc/debian_version ] && [ "${PB626_RESOURCE_SCOPE:-1}" = 1 ]; then
+            exec systemd-run --scope --quiet --collect --expand-environment=no \
+                --unit="pb626-renderer-$.scope" --slice=pb626.slice \
+                --property=BindsTo=pb626-desktop.service \
+                --property=After=pb626-desktop.service \
+                --property=CPUWeight=200 --property=MemoryLow=16M \
+                --property=OOMPolicy=stop --property=TimeoutStopSec=10s \
+                --nice=-3 env DISPLAY=:0 /usr/bin/pb626-x11-epd "$waveform" "$work/ready"
+        fi
+        exec nice -n -3 env DISPLAY=:0 /usr/bin/pb626-x11-epd "$waveform" "$work/ready"
+    ) &
     bridge_pid=$!
     export PB626_EPD_BRIDGE_PID="$bridge_pid"
 fi

@@ -302,7 +302,7 @@ in_root /bin/bash -euc '
   done
   rm /tmp/pb626-ldd
   test -x /usr/lib/xorg/Xorg || test -x /usr/bin/Xorg
-  for exe in iwgtk iwctl systemctl wish mupdf xterm matchbox-desktop xrestop xidle; do command -v "$exe"; done
+  for exe in iwgtk iwctl systemctl systemd-run wish mupdf xterm matchbox-desktop xrestop xidle; do command -v "$exe"; done
   for unexpected in apk gcc; do
     if command -v "$unexpected" >/dev/null; then
       echo "Unexpected executable in Debian rootfs: $unexpected" >&2

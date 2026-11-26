@@ -16,6 +16,7 @@ TimeoutStopSec=20s
 KillMode=control-group
 OOMPolicy=continue
 MemoryAccounting=yes
+Slice=pb626.slice
 Environment=MALLOC_ARENA_MAX=2
 EnvironmentFile=-/var/lib/pb626/desktop.conf
 StandardOutput=journal

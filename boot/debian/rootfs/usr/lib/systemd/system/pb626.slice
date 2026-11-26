@@ -1,0 +1,9 @@
+[Unit]
+Description=PocketBook desktop and critical display processes
+
+[Slice]
+# Propagate the renderer's soft reclaim preference through its parent.
+# This is not a physical reservation or an application memory limit.
+MemoryLow=16M
+MemoryAccounting=yes
+CPUAccounting=yes

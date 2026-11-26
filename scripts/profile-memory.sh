@@ -19,3 +19,14 @@ for pressure in cpu memory io; do
     printf '\nPSI %s:\n' "$pressure"
     cat "/proc/pressure/$pressure" 2>/dev/null || :
 done
+
+# Optional cgroup v2 diagnostics: no writes and no background monitoring.
+for group in /sys/fs/cgroup/pb626.slice /sys/fs/cgroup/pb626.slice/pb626-desktop.service /sys/fs/cgroup/pb626.slice/pb626-renderer-*.scope; do
+    [ -d "$group" ] || continue
+    printf '\nCgroup %s:\n' "${group##*/}"
+    for field in memory.current memory.low memory.events memory.pressure cpu.weight cpu.pressure io.pressure; do
+        [ -r "$group/$field" ] || continue
+        printf '%s:\n' "$field"
+        cat "$group/$field" 2>/dev/null || :
+    done
+done

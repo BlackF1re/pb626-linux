@@ -19,4 +19,12 @@ sleep_unit=boot/debian/rootfs/usr/lib/systemd/system/pb626-sleep.service
 grep -Fxq "AssertPathExists=/etc/pb626/suspend-qualified" "$sleep_unit"
 grep -Fxq "Requisite=pb626-desktop.service" "$sleep_unit"
 grep -Fxq "Requires=pb626-sleep.service" boot/debian/rootfs/usr/lib/systemd/system/systemd-suspend.service.d/pb626.conf
+# Renderer isolation must not protect the entire app service by accident.
+unitdir=boot/debian/rootfs/usr/lib/systemd/system
+grep -Fxq 'Slice=pb626.slice' "$unitdir/pb626-desktop.service"
+grep -Fxq 'MemoryLow=16M' "$unitdir/pb626.slice"
+! grep -q '^MemoryLow=' "$unitdir/pb626-desktop.service"
+grep -Fq -- '--property=CPUWeight=200 --property=MemoryLow=16M' display/pb626-desktop
+grep -Fq -- '--property=BindsTo=pb626-desktop.service' display/pb626-desktop
+grep -Fq -- '--property=After=pb626-desktop.service' display/pb626-desktop
 echo "Native service contracts passed"

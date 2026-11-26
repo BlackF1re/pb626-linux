@@ -25,13 +25,34 @@ The renderer gets modest OOM preference; ordinary apps do not inherit it.
 Run pb626-profile-memory as root before and after a workload. Record
 PSS, MemAvailable, CMA, zram and PSI; PSS alone excludes kernel memory.
 
+## Debian renderer resource isolation
+
+The desktop service and the transient renderer scope are sibling units in
+pb626.slice. systemd-run --scope (Debian systemd 257) retains the launcher
+environment and execs the bridge in place; its child worker inherits the
+same cgroup. BindsTo and After tie the scope lifetime to the desktop.
+The scope has CPUWeight=200 (desktop default 100), MemoryLow=16M,
+OOMPolicy=stop and a bounded stop timeout. The parent slice has the
+same MemoryLow allocation so the soft reclaim preference propagates.
+This is not a 16 MiB reservation, a guarantee against OOM, or a hard
+limit on browsers. No system-wide OOM daemon is added. OOMScoreAdjust
+and nice preference are retained only for the renderer.
+
+Verify the scope exists and contains only bridge/worker processes;
+record memory.current, memory.low, memory.events, pressure and CPU
+weight with pb626-profile-memory while compiling, browsing, sleeping
+and restarting. Confirm the old scope disappears before a new owner
+acquires the panel. For diagnostic recovery, set PB626_RESOURCE_SCOPE=0
+in the desktop service environment and restart; this restores the
+previous same-service behavior. Alpine/FEL are unchanged.
+
 ## Next steps and hardware gates
 
 - Verify normal and intentionally interrupted refreshes, service restarts,
   USB login, delayed input registration, missing WBF and temperature failures.
   Live input hotplug and uninterruptible kernel faults require further testing.
-- Test bounded tmpfs and separate cgroup limits against real application usage;
-  avoid arbitrary hard limits or disabling the OOM killer.
+- Test bounded tmpfs and the renderer's soft cgroup preference against real
+  application usage; avoid arbitrary hard limits or disabling the OOM killer.
 - Measure Wi-Fi power/runtime PM and module dependencies before unloading.
 - RGB565, smaller XShm strips, packed levels/transitions, SIMD and shared
   framebuffer need correctness and latency comparisons; do not combine
