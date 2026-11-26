@@ -8,12 +8,13 @@ usage() {
     cat <<'EOF'
 Usage: pb626-diagnostics [--output FILE] [--interval SECONDS]
        [--bench] [--panel ROUNDS] [--input EVENT SECONDS]
-       [--ping HOST] [--suspend]
+       [--ping HOST] [--suspend] [--trace-suspend]
 Default: read-only inventory and battery/idle snapshots.
 --bench: SHA256 and 32 MiB direct MMC reads (no writes).
 --panel: INIT, DU, A2, DU4, GL16, GC16; root, stopped desktop required.
 --input: operator exercises one /dev/input/eventN; evtest required.
 --suspend: qualified s2idle only; wake manually. May disconnect SSH.
+--trace-suspend: same test plus isolated kernel PM trace, if available.
 No option enables a qualification marker or changes firmware.
 EOF
 }
@@ -43,7 +44,7 @@ self_test() (
     done
     echo 'PGM self-test passed'
 )
-out= interval=10 bench=0 rounds=0 input= input_seconds=0 host= suspend=0
+out= interval=10 bench=0 rounds=0 input= input_seconds=0 host= suspend=0 trace_suspend=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --help|-h) usage; exit 0;;
@@ -55,6 +56,7 @@ while [ "$#" -gt 0 ]; do
         --input) [ "$#" -ge 3 ] && number "$3" 1 60 || die 'input EVENT SECONDS (1..60)'; input=$2; input_seconds=$3; shift 2;;
         --ping) [ "$#" -ge 2 ] || die 'missing host'; case "$2" in ''|-*) die 'invalid host';; esac; host=$2; shift;;
         --suspend) suspend=1;;
+        --trace-suspend) suspend=1; trace_suspend=1;;
         *) die "unknown argument: $1";;
     esac
     shift
@@ -161,6 +163,44 @@ panel() (
     done
     echo 'Panel test changes visible image. Restart desktop manually after inspection.'
 )
+trace_dir=
+trace_cleanup() {
+    if [ -n "$trace_dir" ]; then
+        printf '0\n' >"$trace_dir/tracing_on" 2>/dev/null || :
+        rmdir "$trace_dir" 2>/dev/null || :
+        trace_dir=
+    fi
+}
+trace_begin() {
+    base=/sys/kernel/tracing/instances
+    if [ ! -d "$base" ]; then base=/sys/kernel/debug/tracing/instances; fi
+    if [ ! -d "$base" ]; then echo 'trace_status=unavailable tracefs instances'; return 0; fi
+    name="$base/pb626-diag-$"
+    if ! mkdir "$name"; then echo 'trace_status=unavailable create instance'; return 0; fi
+    trace_dir=$name
+    trap 'trace_cleanup' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    # No global tracing state or existing trace buffer is modified.
+    if ! printf '0\n' >"$trace_dir/tracing_on"; then trace_cleanup; return 0; fi
+    if grep -qw boot "$trace_dir/trace_clock"; then printf 'boot\n' >"$trace_dir/trace_clock" || :; fi
+    read_file "$trace_dir/trace_clock"
+    printf '128\n' >"$trace_dir/buffer_size_kb" || :
+    for event in suspend_resume device_pm_callback_start device_pm_callback_end; do
+        f="$trace_dir/events/power/$event/enable"
+        if [ -w "$f" ]; then printf '1\n' >"$f" || :; else echo "trace_event_unavailable=$event"; fi
+    done
+    if printf '1\n' >"$trace_dir/tracing_on"; then echo 'trace_status=started'; else trace_cleanup; fi
+}
+trace_end() {
+    if [ -n "$trace_dir" ]; then
+        printf '0\n' >"$trace_dir/tracing_on" || :
+        section 'kernel suspend/device callback trace (check overflow)'
+        cat "$trace_dir/trace" || :
+        for f in "$trace_dir"/per_cpu/cpu*/stats; do read_file "$f"; done
+        trace_cleanup
+    fi
+}
 section 'PB626 diagnostic report schema=3'
 date -u
 uname -a
@@ -217,6 +257,7 @@ if [ -n "$host" ]; then section 'network latency'; run timeout 20 ping -c 5 -W 2
 if [ "$suspend" = 1 ]; then
     section 'qualified s2idle (manual wake; use local/USB console)'
     if [ "$(id -u)" = 0 ] && [ -f /etc/pb626/suspend-qualified ] && grep -q '\[s2idle\]' /sys/power/mem_sleep && { [ ! -e /sys/power/pm_test ] || grep -q '\[none\]' /sys/power/pm_test; }; then
+        [ "$trace_suspend" = 0 ] || trace_begin
         before=$(cat /sys/power/suspend_stats/success 2>/dev/null || echo unknown)
         start=$(clock)
         printf "before_boottime_ns_monotonic_raw_ns=%s\n" "$(stamp)"
@@ -232,6 +273,7 @@ if [ "$suspend" = 1 ]; then
             if [ "$before" != unknown ] && [ "$after" != unknown ] && [ "$after" -gt "$before" ]; then echo 'status=confirmed'; else echo 'status=unconfirmed'; fi
             awk -v a="$start" -v b="$(clock)" 'BEGIN {printf "elapsed_including_sleep_seconds=%.2f\n",b-a}'
         else echo 'status=error suspend request rejected'; fi
+        trace_end
         run timeout 15 journalctl -b -u systemd-suspend.service -o short-monotonic --no-pager -n 40
     else echo 'status=blocked requires root, qualified s2idle and pm_test none'; fi
 fi
