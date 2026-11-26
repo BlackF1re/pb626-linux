@@ -1106,6 +1106,25 @@ static uint8_t automatic_command(uint64_t idle_us, int capture_pending, int capt
 	return captured && different ? PREVIEW : 0;
 }
 
+/* A continuous stream of fast ACKs must not indefinitely starve gray
+ * pixels. A completed binary preview clears the pending age, while an
+ * incomplete preview keeps the age of the unresolved frame. */
+static uint8_t bound_preview(uint8_t command, uint64_t age_us)
+{
+	if ((command == PREVIEW || command == PREVIEW_DU4) && age_us >= MAX_PENDING_US)
+		return SETTLE;
+	return command;
+}
+
+static int dirty_tiles_pending(void)
+{
+	for (int y = 0; y < TILE_ROWS; y++)
+		for (int x = 0; x < TILE_COLS; x++)
+			if (dirty_tiles[y][x])
+				return 1;
+	return 0;
+}
+
 static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8_t *panel,
 			    struct shared_frame *frame)
 {
@@ -1696,16 +1715,9 @@ int main(int argc, char **argv)
         if (command == PREVIEW && fast_mode == FAST_DU4)
             command = PREVIEW_DU4;
 
+		command = bound_preview(command, pending ? now - pending_since : 0);
 		uint64_t prepare_start = now_us();
 		unsigned int changes = command ? prepare(command, frame, previous, worker.frame) : 0;
-		/* Gray-only activity may have no useful DU transitions. Bound its
-		 * wait without interrupting motion that DU can still show.
-		 */
-		if (!changes && (command == PREVIEW || command == PREVIEW_DU4) &&
-            now >= pending_since + MAX_PENDING_US) {
-			command = SETTLE;
-			changes = prepare(command, frame, previous, worker.frame);
-		}
 		/* A2 only when every changed pixel is an exact binary transition. */
         if (changes && command == PREVIEW && (fast_mode == FAST_A2 || fast_mode == FAST_AUTO) &&
             a2_eligible(worker.frame, previous))
@@ -1755,8 +1767,11 @@ int main(int argc, char **argv)
 			has_frame = 1;
 			failures = 0;
 			controls.clean_requested = 0;
-			/* Bound gray-only starvation from the last visible progress. */
-			pending_since = now_us();
+			/* ACK is progress, but only a fully resolved frame clears
+			 * the starvation deadline. Binary-only motion remains fast. */
+			pending = dirty_tiles_pending();
+			if (!pending)
+				pending_since = 0;
 		}
 		if (lock_pending && captured && command == RESET && !screen_locked) {
 			lock_pending = 0;

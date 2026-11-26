@@ -85,6 +85,18 @@ The new settings require visual acceptance testing on the RAM desktop.
 No claim that scanout ACK alone establishes optical quality. Stock
 advanced HQ/shadow filters and full optical calibration remain unimplemented.
 
+### Bounded grayscale starvation
+
+An incomplete fast preview keeps its pending age even when other pixels
+are successfully updated. After 850 ms of unresolved changes, the next
+preview candidate becomes SETTLE (GL16, with the existing GC16 fallback).
+A fully resolved binary frame clears that age, so continuous binary
+typing does not itself force periodic grayscale updates. The deadline is
+a scheduling bound, not a physical latency guarantee: capture and scanout
+take time. This deliberately trades some motion responsiveness for eventual
+gray accuracy in mixed-content animation. No changes to waveform tables,
+transition eligibility, panel timing or the ghosting counters.
+
 ### Packed waveform temperature cache
 
 Keep the original WBF two-bit transition signals in the six decoded mode

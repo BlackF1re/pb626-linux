@@ -308,11 +308,13 @@ int main(void)
 	assert(nibble_get(panel, pixel) == WHITE);
 	acknowledge(PREVIEW, &frame, desired, panel);
 	assert(nibble_get(panel, pixel) == 0 && dirty_tiles[ty][tx]);
+	assert(dirty_tiles_pending());
 	assert(prepare(PREVIEW, desired, panel, &frame) == 0);
 	assert(dirty_tiles[ty][tx]);
 	assert(prepare(SETTLE, desired, panel, &frame) == 1);
 	acknowledge(SETTLE, &frame, desired, panel);
 	assert(nibble_get(panel, pixel) == 6 && !dirty_tiles[ty][tx]);
+	assert(!dirty_tiles_pending());
 
 	for (int i = 0; i < CLEAN_AFTER + 2; i++) {
 		nibble_set(desired, pixel, nibble_get(desired, pixel) ? 0 : WHITE);
@@ -322,6 +324,11 @@ int main(void)
 	}
 	assert(nibble_get(fast_changes, pixel) == CLEAN_AFTER && cleanup_pixels[ty][tx] == 1);
 	assert(automatic_command(100000, 0, 1, 1, 1) == PREVIEW);
+	assert(bound_preview(PREVIEW, MAX_PENDING_US - 1) == PREVIEW);
+	assert(bound_preview(PREVIEW, MAX_PENDING_US) == SETTLE);
+	assert(bound_preview(PREVIEW_DU4, MAX_PENDING_US) == SETTLE);
+	assert(bound_preview(CLEAN, MAX_PENDING_US) == CLEAN);
+	assert(bound_preview(0, MAX_PENDING_US) == 0);
 	assert(automatic_command(200000, 0, 0, 1, 1) == 0);
 	assert(automatic_command(QUIET_US, 0, 0, 1, 1) == SETTLE);
 	assert(automatic_command(CLEAN_QUIET_US - 1, 0, 0, 0, 1) == 0);
