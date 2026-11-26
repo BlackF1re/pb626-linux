@@ -13,15 +13,36 @@ if ! xrdb -nocpp -merge /etc/X11/pb626.Xresources; then
     echo 'PB626: xrdb failed; using session resource file' >&2
     export XENVIRONMENT=/etc/X11/pb626.Xresources
 fi
+# Restart accessory clients independently; losing the WM or desktop ends
+# the session. Bound consecutive short-lived restarts.
+supervise_client() (
+    child=
+    trap 'if [ -n "$child" ]; then kill "$child" 2>/dev/null || :; fi; exit 0' HUP INT TERM
+    failures=0
+    while [ "$failures" -lt 3 ]; do
+        started=$(date +%s)
+        "$@" &
+        child=$!
+        wait "$child" || :
+        child=
+        ended=$(date +%s)
+        if [ "$((ended - started))" -ge 60 ]; then failures=0; fi
+        failures=$((failures + 1))
+        echo "PB626: $1 exited; retry $failures/3" >&2
+        sleep 2
+    done
+    echo "PB626: $1 restart budget exhausted" >&2
+    exit 1
+)
 matchbox-window-manager -theme PB626 -use_titlebar yes &
 wm=$!
 panel=
 if command -v matchbox-panel >/dev/null; then
-    matchbox-panel --orientation south --size 48 --bgcolor white --no-session \
+    supervise_client matchbox-panel --orientation south --size 48 --bgcolor white --no-session \
         --default-apps 'mb-applet-menu-launcher,mb-applet-launcher --desktop /etc/pb626/keyboard.desktop,mb-applet-battery,mb-applet-clock' &
     panel=$!
 fi
-matchbox-keyboard --daemon us &
+supervise_client matchbox-keyboard --daemon us &
 keyboard=$!
 screen=
 if [ -z "${PB626_EPD_BRIDGE_PID:-}" ]; then
@@ -32,9 +53,10 @@ matchbox-desktop --bg col-solid:white --font 'Sans bold 18px' \
     --fontcol black --no-outline --no-title --icon-size 112 --icon-padding 8 &
 desktop=$!
 trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} 2>/dev/null || true' EXIT
+trap 'exit 1' HUP INT TERM
 if [ -n "${PB626_EPD_BRIDGE_PID:-}" ]; then
     : > "${PB626_EPD_SESSION_STARTED:?}"
     (while [ -d "/proc/$PB626_EPD_BRIDGE_PID" ]; do sleep 1; done) &
     screen=$!
 fi
-wait -n "$desktop" "$screen"
+wait -n "$wm" "$desktop" "$screen" "$keyboard" ${panel:+"$panel"}

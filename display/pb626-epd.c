@@ -78,7 +78,7 @@ struct renderer {
 	struct update cache[DU4 + 1], planned;
 	bool driven[DU4 + 1][TRANSITIONS];
 	uint64_t temperature_checked;
-	uint32_t neutral[FRAME_WORDS];
+	uint32_t neutral_data[2][GROUPS];
 	uint8_t previous[PIXELS], target[PIXELS];
 	uint16_t transitions[PIXELS];
 	struct span_range rows[GATES];
@@ -133,14 +133,16 @@ static size_t table_ptr(const struct waveform *wbf, size_t offset, bool checked)
 	return addr;
 }
 
-static int temperature_mc(void)
+static bool read_temperature_mc(int *result)
 {
 	glob_t hwmon = {0};
 	int temperature = 0;
 	bool found = false;
 
-	if (glob("/sys/class/hwmon/hwmon*/name", 0, NULL, &hwmon))
-		fail("could not enumerate hwmon devices");
+	if (glob("/sys/class/hwmon/hwmon*/name", 0, NULL, &hwmon)) {
+		globfree(&hwmon);
+		return false;
+	}
 	for (size_t i = 0; i < hwmon.gl_pathc; i++) {
 		const char *name = hwmon.gl_pathv[i];
 		char id[32], path[256];
@@ -159,9 +161,22 @@ static int temperature_mc(void)
 		break;
 	}
 	globfree(&hwmon);
-	if (!found)
-		fail("could not read the TPS65185 panel temperature");
-	return temperature;
+	if (found)
+		*result = temperature;
+	return found;
+}
+
+/* Retry transient reads before driving the panel; never guess temperature. */
+static int temperature_mc(void)
+{
+	int temperature;
+	for (unsigned int attempt = 0; attempt < 5; attempt++) {
+		if (read_temperature_mc(&temperature))
+			return temperature;
+		if (attempt < 4)
+			usleep(250000);
+	}
+	fail("could not read the TPS65185 panel temperature after retries");
 }
 
 static void load_waveform(struct waveform *wbf, const char *path)
@@ -414,6 +429,16 @@ static void scan_template(uint32_t *frame)
 	span(out, 2 * CLOCKS, G_SP | S_SP);
 }
 
+/* Retain only the two data-row patterns used by render. */
+static void init_neutral_data(struct renderer *renderer)
+{
+	for (unsigned int row = 0; row < 2; row++) {
+		uint32_t data = BASE | (row ? S_OE : 0);
+		uint32_t *out = span(renderer->neutral_data[row], GATE_HIGH_CLOCKS, data | G_CLK);
+		span(out, GROUPS - GATE_HIGH_CLOCKS, data);
+	}
+}
+
 static uint32_t source_word(unsigned int data)
 {
 	return ((data & 0x1f) << 3) | ((data & 0xe0) << 5);
@@ -473,7 +498,7 @@ static void render(struct buffer *buffer, const struct renderer *renderer,
 		struct span_range row = reset ? (struct span_range){0, GROUPS} : renderer->rows[y];
 		size_t offset = HEADER_WORDS + (DATA_ROW + y) * CLOCKS + DATA_CLOCK;
 		uint32_t *out = buffer->data + offset;
-		const uint32_t *neutral = renderer->neutral + offset;
+		const uint32_t *neutral = renderer->neutral_data[y != 0];
 		if (old.end > old.first && row.end == row.first) {
 			memcpy(out + old.first, neutral + old.first, (old.end - old.first) * sizeof(*out));
 		} else if (row.end > row.first) {
@@ -533,7 +558,8 @@ static void allocate_queue(struct renderer *renderer)
 						 MAP_SHARED, renderer->fd, info.m.offset);
 		if (renderer->buffers[i].data == MAP_FAILED)
 			fail("could not map an E Ink scanout buffer");
-		memcpy(renderer->buffers[i].data, renderer->neutral, FRAME_BYTES);
+		memset(renderer->buffers[i].data, 0, FRAME_BYTES);
+		scan_template(renderer->buffers[i].data);
 	}
 }
 
@@ -781,7 +807,8 @@ static void save_state(const uint8_t *previous, uint8_t *scan_order)
 		fail("could not create screen state");
 	FILE *file = fdopen(tmp, "wb");
 	bool saved = file && fwrite(scan_order, 1, PIXELS, file) == PIXELS;
-	if (!file || fclose(file) || !saved || rename(pending, state_path)) {
+	int close_error = file ? fclose(file) : close(tmp);
+	if (!file || close_error || !saved || rename(pending, state_path)) {
 		unlink(pending);
 		fail("could not save screen state");
 	}
@@ -841,6 +868,10 @@ int main(int argc, char **argv)
 	else if (!strcmp(style, "indexed")) {
 		renderer.style = RENDER_INDEXED;
 		renderer.group_codes = malloc(GATES * GROUPS);
+		if (!renderer.group_codes) {
+			fprintf(stderr, "pb626-epd: indexed allocation failed, using staged renderer\n");
+			renderer.style = RENDER_STAGED;
+		}
 	} else {
 		fail("PB626_EPD_RENDER must be scalar, staged or indexed");
 	}
@@ -864,7 +895,7 @@ int main(int argc, char **argv)
 	};
 	if (retry_ioctl(fd, SUN5I_EINK_S_TIMING, &timing))
 		fail("could not select the factory WBF scan rate");
-	scan_template(renderer.neutral);
+	init_neutral_data(&renderer);
 	renderer.known = load_state(renderer.previous, renderer.target);
 
 	if (serve) {

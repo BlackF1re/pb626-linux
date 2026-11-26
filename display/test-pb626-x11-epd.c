@@ -5,6 +5,31 @@
 
 #include <assert.h>
 
+static void test_worker_deadlines(void)
+{
+	int fds[2];
+	assert(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
+	struct worker worker = { .socket = fds[0], .deadline = now_us() + 30000 };
+	assert(await_ack(&worker, RESET) == -1);
+	assert(write(fds[1], "R", 1) == 1);
+	worker.deadline = now_us() + 1000000;
+	assert(await_ack(&worker, RESET) == 0);
+	assert(write(fds[1], "X", 1) == 1);
+	assert(await_ack(&worker, RESET) == -1);
+	close(fds[1]);
+	assert(await_ack(&worker, RESET) == -1);
+	close(fds[0]);
+	pid_t child = fork();
+	assert(child >= 0);
+	if (!child) {
+		for (;;)
+			pause();
+	}
+	assert(wait_child(child, 30) == -1);
+	assert(kill(child, SIGKILL) == 0);
+	assert(wait_child(child, 1000) == 0);
+}
+
 static void test_gray(void)
 {
 	quant_reference = 1;
@@ -54,6 +79,7 @@ static void test_gray(void)
 
 int main(void)
 {
+	test_worker_deadlines();
 	test_gray();
 	static struct shared_frame frame;
 	static uint8_t desired[PIXELS], panel[PIXELS];

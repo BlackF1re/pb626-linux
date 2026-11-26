@@ -70,6 +70,7 @@ sudo install -m 644 boot/native/syslog "$root/etc/conf.d/syslog"
 sudo install -m 600 boot/native/sshd_config "$root/etc/ssh/sshd_config"
 sudo install -m 755 display/pb626-control-center "$root/usr/bin/"
 sudo install -m 755 display/pb626-open-document "$root/usr/bin/"
+sudo install -m 755 scripts/profile-memory.sh "$root/usr/sbin/pb626-profile-memory"
 sudo install -m 644 tests/check-control-center.tcl "$root/usr/libexec/pb626-check-tk.tcl"
 sudo install -m 644 display/native/*.desktop "$root/usr/share/applications/"
 # Native desktop settings are now provided by the control center.
@@ -79,7 +80,8 @@ printf 'pb626\n' | sudo tee "$root/etc/hostname" >/dev/null
 printf '127.0.0.1 localhost pb626\n::1 localhost\n' | sudo tee "$root/etc/hosts" >/dev/null
 printf 'auto lo\niface lo inet loopback\n' | sudo tee "$root/etc/network/interfaces" >/dev/null
 printf 'blacklist lima\n' | sudo tee "$root/etc/modprobe.d/pb626.conf" >/dev/null
-printf 'rtl8xxxu\n' | sudo tee "$root/etc/modules" >/dev/null
+# Standard device discovery handles RTL8XXXU; no redundant forced load.
+sudo touch "$root/etc/modules"
 printf '\n# PB626: independent USB and desktop startup\nrc_parallel="YES"\n' | sudo tee -a "$root/etc/rc.conf" >/dev/null
 printf '\nvm.swappiness=100\n' | sudo tee -a "$root/etc/sysctl.conf" >/dev/null
 sudo ln -snf /usr/share/zoneinfo/UTC "$root/etc/localtime"

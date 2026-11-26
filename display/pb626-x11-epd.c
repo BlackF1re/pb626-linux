@@ -535,6 +535,7 @@ struct worker {
 	int socket;
 	pid_t pid;
 	struct shared_frame *frame;
+	uint64_t deadline;
 };
 
 static int start_worker(struct worker *worker, const char *waveform)
@@ -579,34 +580,89 @@ static int start_worker(struct worker *worker, const char *waveform)
 	return 0;
 }
 
-static void stop_worker(struct worker *worker)
+enum { ACK_TIMEOUT_MS = 45000, EXIT_GRACE_MS = 1000, TERM_GRACE_MS = 2000, KILL_GRACE_MS = 2000 };
+
+static int wait_child(pid_t pid, unsigned int timeout_ms)
 {
-	close(worker->socket);
-	while (waitpid(worker->pid, NULL, 0) < 0 && errno == EINTR)
-		;
-	munmap(worker->frame, sizeof(*worker->frame));
+	uint64_t deadline = now_us() + (uint64_t)timeout_ms * 1000;
+	for (;;) {
+		pid_t done = waitpid(pid, NULL, WNOHANG);
+		if (done == pid || (done < 0 && errno == ECHILD))
+			return 0;
+		if (done < 0 && errno != EINTR)
+			return -1;
+		if (now_us() >= deadline)
+			return -1;
+		nanosleep(&(struct timespec){ .tv_nsec = 20000000L }, NULL);
+	}
 }
 
-static int send_command(const struct worker *worker, uint8_t command)
+static int stop_worker(struct worker *worker)
 {
-	ssize_t done;
-	do {
-		done = send(worker->socket, &command, 1, MSG_NOSIGNAL);
-	} while (done < 0 && errno == EINTR);
-	return done == 1 ? 0 : -1;
+	close(worker->socket);
+	int result = wait_child(worker->pid, EXIT_GRACE_MS);
+	if (result) {
+		kill(worker->pid, SIGTERM);
+		result = wait_child(worker->pid, TERM_GRACE_MS);
+	}
+	if (result) {
+		kill(worker->pid, SIGKILL);
+		result = wait_child(worker->pid, KILL_GRACE_MS);
+	}
+	munmap(worker->frame, sizeof(*worker->frame));
+	if (result)
+		fprintf(stderr, "pb626-x11-epd: worker cannot be reaped; refusing another panel owner\n");
+	return result;
+}
+
+static int socket_ready(int fd, short events, uint64_t deadline)
+{
+	struct pollfd p = { .fd = fd, .events = events };
+	for (;;) {
+		uint64_t now = now_us();
+		if (now >= deadline) {
+			errno = ETIMEDOUT;
+			return -1;
+		}
+		int ready = poll(&p, 1, (int)((deadline - now + 999) / 1000));
+		if (ready < 0 && errno == EINTR)
+			continue;
+		if (ready > 0 && (p.revents & events))
+			return 0;
+		errno = ready == 0 ? ETIMEDOUT : EIO;
+		return -1;
+	}
+}
+
+static int send_command(struct worker *worker, uint8_t command)
+{
+	worker->deadline = now_us() + (uint64_t)ACK_TIMEOUT_MS * 1000;
+	for (;;) {
+		if (socket_ready(worker->socket, POLLOUT, worker->deadline))
+			return -1;
+		ssize_t done = send(worker->socket, &command, 1, MSG_NOSIGNAL | MSG_DONTWAIT);
+		if (done < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
+			continue;
+		return done == 1 ? 0 : -1;
+	}
 }
 
 static int await_ack(const struct worker *worker, uint8_t command)
 {
-	ssize_t done;
-	uint8_t ack;
-	do {
-		done = read(worker->socket, &ack, 1);
-	} while (done < 0 && errno == EINTR);
-	return done == 1 && ack == command ? 0 : -1;
+	for (;;) {
+		if (socket_ready(worker->socket, POLLIN, worker->deadline)) {
+			fprintf(stderr, "pb626-x11-epd: ACK %c failed: %s\n", command, strerror(errno));
+			return -1;
+		}
+		uint8_t ack;
+		ssize_t done = recv(worker->socket, &ack, 1, MSG_DONTWAIT);
+		if (done < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
+			continue;
+		return done == 1 && ack == command ? 0 : -1;
+	}
 }
 
-static int submit(const struct worker *worker, uint8_t command)
+static int submit(struct worker *worker, uint8_t command)
 {
 	return send_command(worker, command) || await_ack(worker, command) ? -1 : 0;
 }
@@ -910,7 +966,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "preclear: %s mono_us=%llu\n",
 			precleared ? "INIT_ACK" : "FALLBACK_RESET", (unsigned long long)now_us());
 	if (marker && !precleared) {
-		stop_worker(&worker);
+		if (stop_worker(&worker))
+			return EXIT_FAILURE;
 		if (start_worker(&worker, argv[1]))
 			return EXIT_FAILURE;
 	}
@@ -1043,7 +1100,9 @@ int main(int argc, char **argv)
 			if (profile && !has_frame)
 				fprintf(stderr, "preclear: first wire=%c mono_us=%llu\n", wire, (unsigned long long)now_us());
 			if (submit(&worker, wire)) {
-				stop_worker(&worker);
+				unlink(argv[2]);
+				if (stop_worker(&worker))
+					return EXIT_FAILURE;
 				if (++failures >= 3)
 					return EXIT_FAILURE;
 				has_frame = 0;
@@ -1116,6 +1175,7 @@ wait_input:
 	}
 
 failed:
+	unlink(argv[2]);
 	stop_worker(&worker);
 	return EXIT_FAILURE;
 }

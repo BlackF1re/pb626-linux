@@ -29,8 +29,14 @@ static void test_sparse_scan(void)
 	struct buffer buffer = { .data = buffer_words };
 	const size_t row = HEADER_WORDS + DATA_ROW * CLOCKS + DATA_CLOCK;
 	struct phase phase = { .lut = { [0] = 1, [0xf0] = 2 }, .scans = 3 };
-	scan_template(renderer.neutral);
-	memcpy(buffer_words, renderer.neutral, sizeof(buffer_words));
+	static uint32_t neutral[FRAME_WORDS];
+	init_neutral_data(&renderer);
+	scan_template(neutral);
+	for (unsigned int y = 0; y < GATES; y++)
+		assert(!memcmp(renderer.neutral_data[y != 0],
+			       neutral + HEADER_WORDS + (DATA_ROW + y) * CLOCKS + DATA_CLOCK,
+			       GROUPS * sizeof(uint32_t)));
+	memcpy(buffer_words, neutral, sizeof(buffer_words));
 	assert(portrait_index(0, 0) == WIDTH - 1);
 	assert(portrait_index(GATES - 1, SOURCES - 1) == PIXELS - WIDTH);
 
@@ -39,20 +45,20 @@ static void test_sparse_scan(void)
 	renderer.transitions[3] = 1;
 	render(&buffer, &renderer, &phase, false);
 	assert(buffer_words[3] == htole32(2));
-	assert(buffer_words[row] == (renderer.neutral[row] | htole32(source_word(0x81))));
-	assert(buffer_words[row + 1] == renderer.neutral[row + 1]);
+	assert(buffer_words[row] == (neutral[row] | htole32(source_word(0x81))));
+	assert(buffer_words[row + 1] == neutral[row + 1]);
 
 	renderer.rows[0] = (struct span_range){ 2, 3 };
 	renderer.transitions[8] = 1;
 	render(&buffer, &renderer, &phase, false);
-	assert(buffer_words[row] == renderer.neutral[row]);
-	assert(buffer_words[row + 2] == (renderer.neutral[row + 2] | htole32(source_word(0x40))));
+	assert(buffer_words[row] == neutral[row]);
+	assert(buffer_words[row + 2] == (neutral[row + 2] | htole32(source_word(0x40))));
 
 	render(&buffer, &renderer, &phase, true);
-	assert(buffer_words[row] == (renderer.neutral[row] | htole32(source_word(0x55))));
+	assert(buffer_words[row] == (neutral[row] | htole32(source_word(0x55))));
 	renderer.rows[0] = (struct span_range){ 0, 0 };
 	render(&buffer, &renderer, &phase, false);
-	assert(!memcmp(buffer_words + HEADER_WORDS, renderer.neutral + HEADER_WORDS,
+	assert(!memcmp(buffer_words + HEADER_WORDS, neutral + HEADER_WORDS,
 		       FRAME_BYTES - SUN5I_EINK_HDR_SIZE));
 }
 
@@ -65,9 +71,9 @@ static void test_render_equivalence(void)
 	struct buffer candidate = { .data = candidate_words };
 	struct phase phase = { .scans = 4 };
 	renderer.group_codes = codes;
-	scan_template(renderer.neutral);
-	memcpy(reference_words, renderer.neutral, FRAME_BYTES);
-	memcpy(candidate_words, renderer.neutral, FRAME_BYTES);
+	init_neutral_data(&renderer);
+	scan_template(reference_words);
+	scan_template(candidate_words);
 	for (unsigned int pass = 0; pass < 12; pass++) {
 		memset(renderer.rows, 0, sizeof(renderer.rows));
 		memset(renderer.transitions, 0, sizeof(renderer.transitions));

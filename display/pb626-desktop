@@ -21,11 +21,23 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
+# Bound the wait for late ELAN registration; USB and buttons remain usable.
+for attempt in $(seq 1 20); do
+    found=no
+    for event in /sys/class/input/event*; do
+        [ -r "$event/device/name" ] || continue
+        case "$(cat "$event/device/name")" in
+            *[Ee][Ll][Aa][Nn]*) [ ! -c "/dev/input/${event##*/}" ] || found=yes ;;
+        esac
+    done
+    [ "$found" = no ] || break
+    sleep 0.25
+done
 count=0
 touch=no
 button_devices=
 for event in /sys/class/input/event*; do
-    [ -r "$event/device/name" ] || continue
+    [ -r "$event/device/name" ] && [ -c "/dev/input/${event##*/}" ] || continue
     name=$(cat "$event/device/name")
     case "$name" in
         *[Ee][Ll][Aa][Nn]*)
@@ -75,7 +87,8 @@ if [ -f /proc/device-tree/chosen/pb626,emmc-root ]; then
     export XDG_RUNTIME_DIR="$work/session"
     export PB626_EPD_SESSION_STARTED="$work/session/clients.started"
     client=/usr/libexec/pb626-user-session
-    DISPLAY=:0 /usr/bin/pb626-x11-epd "$waveform" "$work/ready" &
+    # Only the hardware bridge/worker inherit modest OOM protection.
+    (printf '%s\n' -500 >/proc/self/oom_score_adj || :; exec env DISPLAY=:0 /usr/bin/pb626-x11-epd "$waveform" "$work/ready") &
     bridge_pid=$!
     export PB626_EPD_BRIDGE_PID="$bridge_pid"
 fi
