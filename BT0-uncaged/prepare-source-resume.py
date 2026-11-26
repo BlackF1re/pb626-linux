@@ -11,6 +11,11 @@ import sys
 p = Path(sys.argv[1]) / "arch/arm/mach-sunxi/dram_sun4i.c"
 s = p.read_text()
 
+if "#include <pb626-led.h>" not in s:
+    if s.count("#include <common.h>") != 1:
+        raise SystemExit("Unknown DRAM include context")
+    s = s.replace("#include <common.h>", "#include <common.h>\\n#include <pb626-led.h>")
+
 def change(old, new):
     global s
     if s.count(old) != 1:
@@ -72,11 +77,10 @@ static void pb626_resume_watchdog(void)
 	writel((0x0a57U << 1) | 1U, PB626_WDOG_CTL);
 }
 
-static void __attribute__((noreturn)) pb626_resume_failed(void)
+static void __attribute__((noreturn)) pb626_resume_failed(unsigned int code)
 {
-	/* The magic was consumed before this path; watchdog reset is cold. */
-	for (;;)
-		asm volatile("wfi" ::: "memory");
+	/* Show the reason once, then the already-armed watchdog cold-resets. */
+	pb626_led_error(code);
 }
 
 static void pb626_try_resume(struct dram_para *para)
@@ -138,11 +142,11 @@ static void pb626_try_resume(struct dram_para *para)
 	para->bus_width = bus;
 	para->density = density;
 	if (dramc_init_helper(para, true, dcr, zq) != (256UL << 20))
-		pb626_resume_failed();
+		pb626_resume_failed(PB626_ERR_RESUME_DRAM);
 
 	asm volatile("mrc p15, 0, %0, c1, c0, 0" : "=r"(sctlr));
 	if (sctlr & 5)
-		pb626_resume_failed();
+		pb626_resume_failed(PB626_ERR_RESUME_CPU_STATE);
 	sctlr &= ~0x1800U;
 	asm volatile("cpsid if\n"
 		     "mcr p15, 0, %0, c1, c0, 0\n"
@@ -152,7 +156,7 @@ static void pb626_try_resume(struct dram_para *para)
 		     "dsb sy\nisb sy\n"
 		     "bx %1\n"
 		     : : "r"(sctlr), "r"(addr) : "r0", "memory");
-	pb626_resume_failed();
+	pb626_resume_failed(PB626_ERR_RESUME_CPU_STATE);
 }
 
 unsigned long dramc_init(struct dram_para *para)
