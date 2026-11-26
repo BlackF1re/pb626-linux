@@ -174,8 +174,21 @@ static void test_power_press(void)
 	};
 	assert(write(fds[1], events, sizeof(events)) == (ssize_t)sizeof(events));
 	close(fds[1]);
-	uint64_t pressed = 0;
-	assert(power_press(fds[0], &pressed) == 1 && !pressed);
+	struct power_input pressed = {0};
+	assert(power_press(fds[0], &pressed) == 1 && !pressed.pressed);
+	close(fds[0]);
+	assert(!pipe(fds));
+	struct input_event overflow[] = {
+		{ .type = EV_KEY, .code = KEY_POWER, .value = 1, .input_event_sec = 6 },
+		{ .type = EV_SYN, .code = SYN_DROPPED },
+		{ .type = EV_KEY, .code = KEY_POWER, .value = 1, .input_event_sec = 7 },
+		{ .type = EV_KEY, .code = KEY_POWER, .value = 0, .input_event_sec = 7 },
+		{ .type = EV_SYN, .code = SYN_REPORT },
+		{ .type = EV_KEY, .code = KEY_POWER, .value = 0, .input_event_sec = 8 },
+	};
+	assert(write(fds[1], overflow, sizeof(overflow)) == (ssize_t)sizeof(overflow));
+	close(fds[1]);
+	assert(power_press(fds[0], &pressed) == 0 && !pressed.pressed && !pressed.dropped);
 	close(fds[0]);
 }
 
