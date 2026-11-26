@@ -27,7 +27,7 @@ hook = hook.replace(
     1,
 )
 hook = hook.replace(
-    "pb626_finish:",
+    "finish:",
     """    cmp r7,#1
     beq 99f
     ldr r0,=0x01c208a0
