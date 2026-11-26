@@ -68,7 +68,7 @@ static void test_startup_handoff(void)
 
 static void test_error_cycle(unsigned code)
 {
-	unsigned period = code < 10 ? 10 : 20;
+	unsigned expected_code = (code < 1 || code > 13) ? PB626_ERR_DRAM_INIT : code;\n\tunsigned period = expected_code < 10 ? 10 : 20;
 	reset_model();
 	target = period;
 	if (!setjmp(escape))
@@ -76,7 +76,7 @@ static void test_error_cycle(unsigned code)
 	assert(writes == period && delays == period);
 	assert((cfg1 & 0xfU) == 1U);
 	for (unsigned phase = 0; phase < period; ++phase) {
-		int ticks = pb626_morse_step(code, phase);
+		int ticks = pb626_morse_step(expected_code, phase);
 		unsigned long expected = (unsigned long)(ticks > 0 ? ticks : -ticks) *
 					 PB626_MORSE_T_MS * 1000UL;
 		assert(on[phase] == (ticks > 0));
