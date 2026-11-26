@@ -1,51 +1,23 @@
 name: Build native Linux and FEL recovery
 
-# Main produces release artifacts. Feature branches build via Run workflow
-# or the explicitly requested Debian-only caller workflow.
-# Lightweight CI still checks PR commits.
+# Single full firmware pipeline. Main builds automatically; feature branches
+# use the explicit qualification request or Run workflow. All stage artifacts
+# are from this run, and the final gate requires every selected job.
 on:
   push:
     branches: [main]
     paths:
-      - '.github/workflows/megi-fel.yml'
-      - 'scripts/build-alpine-rootfs.sh'
-      - 'scripts/configure-megi-kernel.sh'
-      - 'scripts/build-megi-kernel.sh'
-      - 'scripts/build-megi-variants.sh'
-      - 'scripts/assemble-megi-ram.sh'
-      - 'scripts/build-desktop-base.sh'
-      - 'scripts/build-megi-desktop.sh'
-      - 'scripts/build-native-rootfs.sh'
-      - 'scripts/build-debian-rootfs.sh'
-      - 'scripts/build-debian-base.sh'
-      - 'scripts/compile-debian-native.sh'
-      - 'diagnostics/**'
+      - '.github/workflows/**'
       - 'BT0-uncaged/**'
-      - '.github/workflows/source-bootloader.yml'
-      - '.github/workflows/fel-host.yml'
-      - 'scripts/Start-PB626*.ps1'
-      - 'scripts/fel-boot.sh'
-      - 'scripts/inspect-live.sh'
-      - 'scripts/probe-device.sh'
-      - 'scripts/pb626-network.sh'
-      - 'BT0-uncaged/pack-kernel.py'
-      - 'BT0-uncaged/kernel-entry.S'
       - 'board/**'
       - 'boot/**'
       - 'display/**'
-      - 'patches/a13-mbus-dma-devlink.patch'
-      - 'patches/ektf2227-pocketbook-touch.patch'
-      - 'patches/pwm-backlight-disconnect-when-off.patch'
-      - 'patches/sun5i-eink-runtime-pm.patch'
-      - 'patches/sun4i-lradc-system-pm.patch'
-      - 'patches/axp209-boot-source.patch'
-      - 'scripts/build-debian-recovery.sh'
-      - 'scripts/prepare-install.sh'
-      - 'scripts/prepare-fel-inputs.py'
-      - 'patches/sunxi-fel-keep-mmu-off.patch'
-      - 'scripts/installer/**'
-      - 'scripts/restore/**'
-      - 'boot/recovery/**'
+      - 'diagnostics/**'
+      - 'patches/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'docs/FLASH-KIT.md'
+      - 'LICENSE'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -62,6 +34,10 @@ permissions:
   contents: read
 
 jobs:
+  host-checks:
+    uses: ./.github/workflows/ci.yml
+  restore-checks:
+    uses: ./.github/workflows/restore.yml
   alpine-base:
     if: ${{ !inputs.debian_only }}
     name: Alpine ARMv7 base (independent cache)
@@ -561,7 +537,7 @@ jobs:
 
   flash-kit:
     name: Assemble same-run flash kit (no compilation)
-    needs: [debian-native, recovery, diagnostics, fel-host]
+    needs: [debian-native, recovery, diagnostics, fel-host, bootloader, host-checks, restore-checks]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -582,6 +558,10 @@ jobs:
         with:
           name: pb626-fel-host-tools
           path: flash-kit/fel-host
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-spl-emulation-report
+          path: flash-kit/qualification
       - name: Assemble paired installation, backup and restore kit
         run: |
           set -euo pipefail
@@ -592,6 +572,10 @@ jobs:
           (cd flash-kit/tools && sha256sum -c SHA256SUMS)
           (cd flash-kit/diagnostics && sha256sum -c SHA256SUMS)
           (cd flash-kit/fel-host && sha256sum -c SHA256SUMS)
+          test "$(cat flash-kit/fel-host/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
+          python3 -c 'import json; r=json.load(open("flash-kit/qualification/emulation.json")); assert r["result"] == "tested contract passed" and isinstance(r["reference"],dict), r'
+          mkdir -p flash-kit/source/patches
+          cp patches/sunxi-fel-keep-mmu-off.patch flash-kit/source/patches/
           cp scripts/prepare-fel-inputs.py flash-kit/source/scripts/
           mv native-stage flash-kit/native
           cp docs/FLASH-KIT.md flash-kit/README.md
@@ -604,3 +588,36 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
+
+  qualification:
+    name: All selected builds and tests passed
+    needs: [host-checks, restore-checks, alpine-base, kernel, bundle, desktop, debian-base, bootloader, fel-host, diagnostics, debian-native, recovery, flash-kit]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected job and record build provenance
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          DEBIAN_ONLY: ${{ inputs.debian_only && 'true' || 'false' }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          jobs = {k: v["result"] for k, v in json.loads(os.environ["RESULTS"]).items()}
+          omitted = {"alpine-base", "bundle", "desktop"} if os.environ["DEBIAN_ONLY"] == "true" else set()
+          bad = {k: v for k, v in jobs.items() if v != ("skipped" if k in omitted else "success")}
+          report = {"commit": os.environ["GITHUB_SHA"], "run_id": os.environ["GITHUB_RUN_ID"],
+                    "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "jobs": jobs,
+                    "result": "FAILED" if bad else "PASS",
+                    "scope": "Compilation, packaging and host/model tests only; no hardware qualification"}
+          pathlib.Path("qualification.json").write_text(json.dumps(report, indent=2) + "\n")
+          print(json.dumps(report, indent=2))
+          if bad:
+              raise SystemExit("Required build or check did not pass: " + str(bad))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pb626-full-build-report
+          path: qualification.json
+          if-no-files-found: error

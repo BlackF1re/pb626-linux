@@ -1,4 +1,4 @@
-name: Requested Debian firmware qualification build
+name: Full firmware qualification (pre-merge)
 
 # No ordinary code commit triggers this expensive build.
 on:
@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 jobs:
-  debian:
+  full:
     uses: ./.github/workflows/megi-fel.yml
     secrets: inherit
     with:
-      debian_only: true
+      debian_only: false

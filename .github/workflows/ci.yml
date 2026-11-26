@@ -36,6 +36,7 @@ on:
       - '.github/workflows/request-firmware.yml'
       - '!**/*.md'
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -73,6 +74,8 @@ jobs:
           bash -n scripts/compile-debian-native.sh
           bash -n scripts/build-megi-kernel.sh
           bash -n BT0-uncaged/build-from-source.sh
+          bash -n BT0-uncaged/build-fel-host.sh
+          python3 -m py_compile scripts/prepare-fel-inputs.py
           python3 -m py_compile BT0-uncaged/prepare-source-resume.py BT0-uncaged/prepare-source-hook.py
           gcc -O2 -Wall -Wextra -Werror diagnostics/pb626-diag-clock.c -o /tmp/pb626-diag-clock
           /tmp/pb626-diag-clock resolution

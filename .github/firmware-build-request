@@ -1,2 +1,2 @@
-Qualification: native power management, panel regulator error handling, UI scrolling and input recovery, renderer milestone and patch checks.
-Inputs: 3dd6de2cacd1975692a8f4c5a10617f1511b0e5e
+Full pre-merge qualification: all firmware variants, reference SPL differential tests, FEL inputs, diagnostics, backup/restore and flash kit.
+Inputs: 12ba18618f4985d2308091e6b0b2e4cabc32627d

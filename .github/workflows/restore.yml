@@ -22,9 +22,10 @@ on:
       - 'scripts/prepare-install.sh'
       - '!scripts/restore/README.md'
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
-  group: restore-${{ github.ref }}
+  group: restore-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

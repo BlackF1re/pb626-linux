@@ -1,20 +1,5 @@
 name: Source-built PocketBook bootloader candidates
 on:
-  push:
-    branches: [enhance/native-reliability]
-    paths:
-      - 'BT0-uncaged/build-from-source.sh'
-      - 'BT0-uncaged/prepare-source-hook.py'
-      - 'BT0-uncaged/prepare-source-led.py'
-      - 'BT0-uncaged/pb626-led.*'
-      - 'BT0-uncaged/led-morse.h'
-      - 'BT0-uncaged/emulator/**'
-      - 'BT0-uncaged/test_hook.py'
-      - 'BT0-uncaged/prepare-source-resume.py'
-      - 'BT0-uncaged/fel-entry.S'
-      - 'BT0-uncaged/early-menu.S'
-      - 'patches/sunxi-fel-keep-mmu-off.patch'
-      - '.github/workflows/source-bootloader.yml'
   workflow_dispatch:
   workflow_call:
     secrets:
@@ -84,6 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           args=()
+          trap 'rm -f "$RUNNER_TEMP/reference-spl.bin"' EXIT
           if [ -n "$PB626_REFERENCE_SPL_B64" ]; then
             umask 077
             printf '%s' "$PB626_REFERENCE_SPL_B64" | base64 -d > "$RUNNER_TEMP/reference-spl.bin"
@@ -91,7 +77,6 @@ jobs:
             args+=(--reference "$RUNNER_TEMP/reference-spl.bin")
           fi
           unset PB626_REFERENCE_SPL_B64
-          trap 'rm -f "$RUNNER_TEMP/reference-spl.bin"' EXIT
           python BT0-uncaged/emulator/validate.py "${args[@]}" --candidates source-boot-candidates --report emulation.json --require-reference
       - uses: actions/upload-artifact@v4
         if: always()

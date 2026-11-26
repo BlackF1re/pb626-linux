@@ -196,3 +196,24 @@ or different, use the original lab uboot.bin locally with
 `python3 source/scripts/prepare-fel-inputs.py --host fel-host --output
 fel-inputs --uboot /path/to/uboot.bin`. The historical executable is not
 republished by the kit. Verify cold FEL RAM recovery before writing eMMC.
+
+## Unified full-build qualification
+
+The main firmware workflow builds Alpine RAM/native, Debian native and RAM
+recovery, source SPL candidates, recovered host FEL tools, diagnostics and
+backup/restore tools in one run. The explicit feature-branch request
+(`.github/firmware-build-request`) now invokes the same full graph before
+merge, not Debian-only. Individual FEL and SPL workflows are callable or
+manual-only. Lightweight PR checks remain independently available.
+The flash kit requires successful host, restore, reference SPL differential
+and recovered FEL checks; the final `All selected builds and tests passed`
+job additionally requires both Alpine variants when selected. Its
+`pb626-full-build-report` records the exact commit and every job result.
+
+Existing kernel, DTB, distribution, native binaries, rootfs and recovery
+payload caches are retained. Recovered FEL tools now have a separate
+verified compiler/source-keyed cache, without private SPL inputs. The
+historical author's SPL download is hash-checked each run, never published
+as part of CI. GitHub cache scopes and eviction still apply; a cache miss
+rebuilds from pinned sources. All downloadable firmware is still a
+hardware-unqualified candidate, with the qualified historical BT0 gate intact.
