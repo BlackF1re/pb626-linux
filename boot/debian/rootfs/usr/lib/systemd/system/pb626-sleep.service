@@ -1,6 +1,9 @@
 [Unit]
 Description=Prepare PocketBook E Ink sleep image and restore desktop on resume
 After=pb626-desktop.service
+# An assertion fails the required start job; a Condition would skip it.
+AssertPathExists=/etc/pb626/suspend-qualified
+Requisite=pb626-desktop.service
 Before=sleep.target systemd-suspend.service
 StopWhenUnneeded=yes
 

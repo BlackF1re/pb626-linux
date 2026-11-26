@@ -14,4 +14,9 @@ done
 for unit in systemd-journald systemd-resolved systemd-timesyncd; do
     grep -Fxq 'TimerSlackNSec=25ms' "boot/debian/rootfs/usr/lib/systemd/system/$unit.service.d/60-pb626-timers.conf"
 done
+# Direct systemctl suspend must fail, not silently skip the prepare unit.
+sleep_unit=boot/debian/rootfs/usr/lib/systemd/system/pb626-sleep.service
+grep -Fxq "AssertPathExists=/etc/pb626/suspend-qualified" "$sleep_unit"
+grep -Fxq "Requisite=pb626-desktop.service" "$sleep_unit"
+grep -Fxq "Requires=pb626-sleep.service" boot/debian/rootfs/usr/lib/systemd/system/systemd-suspend.service.d/pb626.conf
 echo "Native service contracts passed"

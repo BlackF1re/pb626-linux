@@ -13,7 +13,9 @@ software candidates, not evidence of successful physical sleep.
   when only WFI exists. Do not invent a deeper DT idle state.
 * s2idle: systemd suspend -> Linux freezer and device PM -> idle CPUs.
   DRAM remains powered, no SPL execution. The AXP20x power key has
-  existing IRQ-wake callbacks. Keep the user-facing qualification gate.
+  existing IRQ-wake callbacks. The required pb626-sleep.service uses an
+  AssertPathExists qualification gate (not a skippable Condition), including
+  direct systemctl suspend; an inactive desktop also rejects preparation.
 * deep: Megi SUN5I_PM is a PMIC-assisted SoC power cycle with retained
   DRAM, not a normal CPU idle state. The installed BT0-uncaged lacks
   a resume-aware SPL, so SUN5I_PM remains disabled.
