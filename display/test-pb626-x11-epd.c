@@ -453,7 +453,16 @@ int main(void)
     assert(prepare(PREVIEW, fd, fp, &ff) == 1);
     assert(a2_eligible(&ff, fp));
     nibble_set(fp, p, WHITE); nibble_set(fd, p, 9);
+    /* A dirty tile also contains unchanged gray. Never quantize it. */
+    nibble_set(fp, p + 1, 7); nibble_set(fd, p + 1, 7);
+    assert(!exact_du4_candidate(fd, fp));
+    nibble_set(fd, p, 10);
+    assert(exact_du4_candidate(fd, fp));
+    nibble_set(fd, p, 0);
+    assert(!exact_du4_candidate(fd, fp)); /* binary-only uses DU/A2 */
+    nibble_set(fd, p, 9);
     assert(prepare(PREVIEW_DU4, fd, fp, &ff) == 1);
+    assert(ff.pixels[p + 1] == KEEP);
     assert(ff.pixels[p] == 10 && !a2_eligible(&ff, fp));
     acknowledge(PREVIEW_DU4, &ff, fd, fp);
     assert(nibble_get(fp, p) == 10 && nibble_get(fast_changes, p) == 1);

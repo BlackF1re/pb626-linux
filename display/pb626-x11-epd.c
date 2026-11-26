@@ -1212,6 +1212,33 @@ static int dirty_tiles_pending(void)
 	return 0;
 }
 
+/* The factory DU4 supports arbitrary old levels but only four targets.
+ * Use it automatically only when it can represent every changed target
+ * exactly, including at least one nonbinary level. Unchanged gray
+ * pixels in a dirty tile must never be approximated. */
+static int exact_du4_candidate(const uint8_t *desired, const uint8_t *panel)
+{
+	int gray = 0;
+	for (int ty = 0; ty < TILE_ROWS; ty++)
+		for (int tx = 0; tx < TILE_COLS; tx++) {
+			if (!dirty_tiles[ty][tx])
+				continue;
+			int right, bottom;
+			tile_bounds(tx, ty, &right, &bottom);
+			for (int y = ty * TILE; y < bottom; y++)
+				for (int x = tx * TILE; x < right; x++) {
+					size_t i = y * WIDTH + x;
+					unsigned int target = nibble_get(desired, i);
+					if (target == nibble_get(panel, i))
+						continue;
+					if (target % 5)
+						return 0;
+					gray |= target != 0 && target != WHITE;
+				}
+		}
+	return gray;
+}
+
 static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8_t *panel,
 			    struct shared_frame *frame)
 {
@@ -1239,7 +1266,7 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 					if (command == PREVIEW || command == PREVIEW_A2)
                         level = abs(target - old) >= 3 ? preview_level(target, old) : old;
                     else if (command == PREVIEW_DU4)
-                        level = preview_level4(target);
+                        level = target != old ? preview_level4(target) : old;
 					if (scrub || (command != CLEAN && level != old)) {
 						frame->pixels[i] = level | (scrub ? SCRUB : 0);
 						frame->tiles[ty][tx] = 1;
@@ -1813,7 +1840,9 @@ int main(int argc, char **argv)
 		uint8_t command = captured && (!has_frame || controls.clean_requested || lock_pending) ? RESET :
             automatic_command(now - last_damage, dirty || now < layout_until,
                               captured, different, cleanup_count);
-        if (command == PREVIEW && fast_mode == FAST_DU4)
+        if (command == PREVIEW &&
+            (fast_mode == FAST_DU4 ||
+             (fast_mode == FAST_AUTO && exact_du4_candidate(frame, previous))))
             command = PREVIEW_DU4;
 
 		command = bound_preview(command, pending ? now - pending_since : 0);

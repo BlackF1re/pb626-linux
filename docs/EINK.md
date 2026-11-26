@@ -72,9 +72,14 @@ black and white. Use it for terminal work or text-heavy UI; switch back to
 `balanced` or `photo` for pictures and antialiased content. Sleep and
 shutdown images are composed separately and retain grayscale. Settings
 also exposes `du`, `auto`, `a2`, and `du4` fast waveform policies. The
-default remains DU; `auto` selects A2 only for compatible binary transitions
-when the temperature-specific waveform is shorter, otherwise uses DU.
-Neither this selector nor the mono profile requires application changes. Instead, publish neutral X11
+default remains DU. `auto` chooses DU4 when every changed target is
+exactly one of 0, 5, 10, 15 and at least one is gray. Otherwise it uses
+the DU preview, with A2 only for compatible binary transitions when the
+temperature-specific waveform is shorter. The worker still validates the
+actual WBF and falls back to GL16/GC16 for unsupported DU4 transitions.
+Unchanged gray pixels in dirty tiles are never quantized by DU4. Neither
+this selector nor the mono profile requires application changes. The
+session also publishes neutral X11
 resource defaults using xrdb before launching desktop clients
 (`/etc/X11/pb626.Xresources`), including XTerm, NEdit and XCalc. The
 existing Matchbox theme, keyboard patch, `mc -b` and `htop -C` remain.
