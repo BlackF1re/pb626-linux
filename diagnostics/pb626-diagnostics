@@ -82,6 +82,21 @@ fields() {
     done
 }
 clock() { awk '{print $1}' /proc/uptime; }
+clock_helper=$(command -v pb626-diag-clock || :)
+if [ -z "$clock_helper" ] && [ -x "$(dirname "$0")/pb626-diag-clock" ]; then
+    clock_helper="$(dirname "$0")/pb626-diag-clock"
+fi
+timed() {
+    if [ -n "$clock_helper" ]; then "$clock_helper" run "$@"
+    else
+        echo 'diag_time fallback=/proc/uptime resolution=10ms' >&2
+        t0=$(clock)
+        rc=0; "$@" || rc=$?
+        awk -v a="$t0" -v b="$(clock)" 'BEGIN {printf "fallback_wall_seconds=%.2f\n",b-a}' >&2
+        return "$rc"
+    fi
+}
+stamp() { if [ -n "$clock_helper" ]; then "$clock_helper" stamp; else echo 'unavailable'; fi; }
 snapshot() {
     section "snapshot $1"
     for f in /proc/uptime /proc/meminfo /proc/stat /proc/interrupts /proc/diskstats /proc/swaps /proc/modules /proc/net/dev /proc/pressure/* /sys/block/zram0/mm_stat /sys/power/state /sys/power/mem_sleep /sys/power/pm_test /sys/kernel/debug/wakeup_sources; do read_file "$f"; done
@@ -133,14 +148,12 @@ panel() (
         for pair in reset:none du:1 a2:white du4:4 partial:16 full:16; do
             mode=${pair%:*}; image=${pair#*:}
             printf '\nround=%s mode=%s\n' "$i" "$mode"
-            start=$(clock)
             if [ "$image" = none ]; then
-                if ! timeout 90 pb626-epd "$wbf" "$mode" >"$tmp/log" 2>&1; then cat "$tmp/log"; echo 'status=error'; exit 0; fi
+                if ! timed timeout 90 pb626-epd "$wbf" "$mode" >"$tmp/log" 2>&1; then cat "$tmp/log"; echo 'status=error'; exit 0; fi
             else
-                if ! timeout 90 pb626-epd "$wbf" "$mode" "$tmp/$image.pgm" >"$tmp/log" 2>&1; then cat "$tmp/log"; echo 'status=error'; exit 0; fi
+                if ! timed timeout 90 pb626-epd "$wbf" "$mode" "$tmp/$image.pgm" >"$tmp/log" 2>&1; then cat "$tmp/log"; echo 'status=error'; exit 0; fi
             fi
             cat "$tmp/log"
-            awk -v a="$start" -v b="$(clock)" 'BEGIN {printf "wall_seconds=%.2f\n",b-a}'
             if ! grep -q "^epd: mode=$mode scans=" "$tmp/log"; then echo 'status=unconfirmed no scan ACK'; exit 0; fi
             echo 'status=ok'
         done
@@ -148,15 +161,20 @@ panel() (
     done
     echo 'Panel test changes visible image. Restart desktop manually after inspection.'
 )
-section 'PB626 diagnostic report schema=2'
+section 'PB626 diagnostic report schema=3'
 date -u
 uname -a
+if [ -n "$clock_helper" ]; then "$clock_helper" resolution; else echo 'high_resolution_timer=unavailable'; fi
+read_file /sys/devices/system/clocksource/clocksource0/current_clocksource
+read_file /sys/devices/system/clocksource/clocksource0/available_clocksource
 section 'boot (kernel-relative; BootROM/SPL requires external timing)'
 run timeout 15 systemd-analyze time
 run timeout 15 systemd-analyze critical-chain
 run timeout 15 systemd-analyze blame
 run timeout 15 systemctl show pb626-desktop.service -p ActiveState -p ActiveEnterTimestampMonotonic -p ExecMainStartTimestampMonotonic
 run timeout 15 journalctl -b -u pb626-desktop.service -o short-monotonic --no-pager -n 100
+run timeout 15 journalctl -k -b -o short-monotonic --no-pager -n 300
+for f in /sys/kernel/tracing/events/power/suspend_resume/format /sys/kernel/tracing/events/power/device_pm_callback_start/format /sys/kernel/tracing/events/power/device_pm_callback_end/format; do read_file "$f"; done
 run timeout 10 v4l2-ctl -D -d /dev/video0
 run timeout 10 lsusb -t
 run timeout 10 iw dev
@@ -174,7 +192,7 @@ done
 if [ "$bench" = 1 ]; then
     section 'bounded CPU SHA256 benchmark: 32 MiB'
     start=$(clock)
-    if head -c 33554432 /dev/zero | sha256sum; then
+    if timed sh -c 'head -c 33554432 /dev/zero | sha256sum'; then
         awk -v a="$start" -v b="$(clock)" 'BEGIN {if(b>a) printf "seconds=%.2f MiB_s=%.2f\n",b-a,32/(b-a); else print "status=below timer resolution"}'
     fi
     section 'MMC direct read: 32 MiB each (no writes)'
@@ -184,7 +202,7 @@ if [ "$bench" = 1 ]; then
         [ -b "/dev/$n" ] || continue
         size=$(cat "$d/size" 2>/dev/null) || continue
         [ "$size" -ge 65536 ] || continue
-        run timeout 30 dd "if=/dev/$n" of=/dev/null bs=1M count=32 iflag=direct,fullblock
+        run timed timeout 30 dd "if=/dev/$n" of=/dev/null bs=1M count=32 iflag=direct,fullblock
     done
 fi
 [ "$rounds" = 0 ] || panel
@@ -201,6 +219,7 @@ if [ "$suspend" = 1 ]; then
     if [ "$(id -u)" = 0 ] && [ -f /etc/pb626/suspend-qualified ] && grep -q '\[s2idle\]' /sys/power/mem_sleep && { [ ! -e /sys/power/pm_test ] || grep -q '\[none\]' /sys/power/pm_test; }; then
         before=$(cat /sys/power/suspend_stats/success 2>/dev/null || echo unknown)
         start=$(clock)
+        printf "before_boottime_ns_monotonic_raw_ns=%s\n" "$(stamp)"
         if timeout 20 systemctl suspend; then
             i=0
             while [ "$i" -lt 180 ]; do
@@ -208,6 +227,7 @@ if [ "$suspend" = 1 ]; then
                 if [ "$before" != unknown ] && [ "$after" != unknown ] && [ "$after" -gt "$before" ]; then break; fi
                 sleep 1; i=$((i+1))
             done
+            printf "after_boottime_ns_monotonic_raw_ns=%s\n" "$(stamp)"
             printf 'success_before=%s success_after=%s\n' "$before" "$after"
             if [ "$before" != unknown ] && [ "$after" != unknown ] && [ "$after" -gt "$before" ]; then echo 'status=confirmed'; else echo 'status=unconfirmed'; fi
             awk -v a="$start" -v b="$(clock)" 'BEGIN {printf "elapsed_including_sleep_seconds=%.2f\n",b-a}'
