@@ -148,20 +148,35 @@ static void release_lock(Display *d)
 
 /* A complete short press/release toggles. Repeats and orphan releases
  * cannot initiate a sleep operation. */
-static int power_press(int fd, uint64_t *pressed)
+struct power_input { uint64_t pressed; int dropped; };
+
+static int power_press(int fd, struct power_input *state)
 {
 	struct input_event e;
 	int count = 0;
 	while (read(fd, &e, sizeof(e)) == (ssize_t)sizeof(e)) {
+		/* evdev requires discarding events up to the next SYN_REPORT
+		 * after overflow. Never act on an ambiguous power gesture. */
+		if (e.type == EV_SYN && e.code == SYN_DROPPED) {
+			state->pressed = 0;
+			state->dropped = 1;
+			count = 0;
+			continue;
+		}
+		if (state->dropped) {
+			if (e.type == EV_SYN && e.code == SYN_REPORT)
+				state->dropped = 0;
+			continue;
+		}
 		if (e.type != EV_KEY || e.code != KEY_POWER)
 			continue;
 		uint64_t when = (uint64_t)e.input_event_sec * 1000000 + e.input_event_usec;
 		if (e.value == 1)
-			*pressed = when ? when : 1;
+			state->pressed = when ? when : 1;
 		else if (e.value == 0) {
-			if (*pressed && when >= *pressed && when - *pressed < 1500000)
+			if (state->pressed && when >= state->pressed && when - state->pressed < 1500000)
 				count++;
-			*pressed = 0;
+			state->pressed = 0;
 		}
 	}
 	return count;
@@ -1060,7 +1075,7 @@ static int start_worker(struct worker *worker, const char *waveform)
 		return -1;
 	}
 	struct shared_frame *frame = mmap(NULL, sizeof(*frame), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if (frame == MAP_FAILED || socketpair(AF_UNIX, SOCK_STREAM, 0, sockets)) {
+	if (frame == MAP_FAILED || socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets)) {
 		if (frame != MAP_FAILED)
 			munmap(frame, sizeof(*frame));
 		close(fd);
@@ -1446,7 +1461,8 @@ static int sleep_listener(void)
 static int sleep_client(uint8_t request)
 {
 	struct sockaddr_un address = { .sun_family = AF_UNIX, .sun_path = SLEEP_SOCKET };
-	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+	/* A full listener backlog must reject suspend, not block connect. */
+	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
 	if (fd < 0) return EXIT_FAILURE;
 	uint8_t reply = 0;
 	int result = connect(fd, (struct sockaddr *)&address, sizeof(address)) ||
@@ -1652,7 +1668,7 @@ int main(int argc, char **argv)
 			sources[source_count++] = (struct pollfd){ .fd = fd, .events = POLLIN };
 		}
 	}
-	uint64_t power_pressed = 0;
+	struct power_input power_pressed = {0};
 	int lock_pending = 0, system_sleep = 0;
 	int sleep_fd = -1, geometry_changed = 0;
 	nfds_t sleep_index = 0;
@@ -1750,7 +1766,7 @@ int main(int argc, char **argv)
 					 * A release after wake without a new press cannot toggle. */
 					if (power_index && sources[power_index].fd >= 0)
 						(void)power_press(sources[power_index].fd, &power_pressed);
-					power_pressed = 0;
+					power_pressed.pressed = 0;
 					if (!screen_locked) {
 						screen_locked = 1;
 						lock_pending = 1;
@@ -1776,7 +1792,7 @@ int main(int argc, char **argv)
 						XResetScreenSaver(display);
 						if (power_index && sources[power_index].fd >= 0)
 							(void)power_press(sources[power_index].fd, &power_pressed);
-						power_pressed = 0;
+						power_pressed.pressed = 0;
 						focus_changed = 1;
 						lock_pending = dirty = 1;
 						geometry_changed = 1;
