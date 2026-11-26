@@ -119,6 +119,17 @@ admin lock-indicator awake
 test "$(cat "$tmp/leds/led/trigger")" = heartbeat
 test "$(cat "$tmp/backlight/panel/bl_power")" = 0
 test ! -e "$tmp/indicator"
+# A failed frontlight restoration must not skip restoring the LED.
+admin lock-indicator sleep
+rm "$tmp/backlight/panel/brightness"
+mkdir "$tmp/backlight/panel/brightness"
+if admin lock-indicator awake; then exit 1; fi
+test "$(cat "$tmp/leds/led/trigger")" = heartbeat
+test -e "$tmp/indicator"
+rmdir "$tmp/backlight/panel/brightness"
+touch "$tmp/backlight/panel/brightness"
+admin lock-indicator awake
+test ! -e "$tmp/indicator"
 touch "$tmp/qualified"
 admin power-key s2idle
 test "$(admin power-key-status)" = s2idle
@@ -139,6 +150,7 @@ done
 # Exercise the actual critical-battery transaction without the host's
 # power supplies or PID 1. No shutdown on a single sample or a charger.
 printf 'Battery\n' >"$tmp/power_supply/battery/type"
+printf '1\n' >"$tmp/power_supply/battery/present"
 printf 'Discharging\n' >"$tmp/power_supply/battery/status"
 printf '4\n' >"$tmp/power_supply/battery/capacity"
 printf 'USB\n' >"$tmp/power_supply/usb/type"
@@ -157,6 +169,12 @@ printf '112.00 0.00\n' >"$tmp/uptime"
 admin battery-check
 test ! -e "$tmp/run/pb626-battery-critical"
 ! grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+# Missing battery presence also fails closed.
+printf '0\n' >"$tmp/power_supply/battery/present"
+printf '0\n' >"$tmp/power_supply/usb/online"
+admin battery-check
+test ! -e "$tmp/run/pb626-battery-critical"
+printf '1\n' >"$tmp/power_supply/battery/present"
 # Missing charger telemetry also fails closed.
 rm "$tmp/power_supply/usb/online"
 admin battery-check
