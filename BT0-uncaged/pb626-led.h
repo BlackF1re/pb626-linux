@@ -1,0 +1,14 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+#ifndef PB626_LED_H
+#define PB626_LED_H
+
+#include "pb626-led-morse.h"
+
+/* Fatal SPL diagnostics never return. The watchdog remains armed on the
+ * experimental retained-DRAM path and will still perform its cold reset. */
+void pb626_led_error(unsigned int code) __attribute__((noreturn));
+
+/* Strong SPL hook: leave the active-low PE8 LED on for kernel takeover. */
+void spl_board_prepare_for_boot(void);
+
+#endif
