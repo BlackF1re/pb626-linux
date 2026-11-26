@@ -438,6 +438,27 @@ jobs:
   bootloader:
     uses: ./.github/workflows/source-bootloader.yml
 
+  diagnostics:
+    name: Terminal diagnostics (standalone)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sh -n diagnostics/pb626-diagnostics
+          sh diagnostics/pb626-diagnostics --self-test
+          mkdir diagnostic-dist
+          install -m 755 diagnostics/pb626-diagnostics diagnostic-dist/pb626-diagnostics
+          cp diagnostics/README.md diagnostic-dist/README.md
+          git rev-parse HEAD > diagnostic-dist/BUILD-COMMIT
+          (cd diagnostic-dist && sha256sum pb626-diagnostics README.md BUILD-COMMIT > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-diagnostics
+          path: diagnostic-dist/
+          if-no-files-found: error
+          retention-days: 14
+
   debian-native:
     name: Debian 13 armhf native firmware candidate
     needs: [kernel, debian-base]
@@ -505,7 +526,7 @@ jobs:
 
   flash-kit:
     name: Assemble same-run flash kit (no compilation)
-    needs: [debian-native, recovery]
+    needs: [debian-native, recovery, diagnostics]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -518,11 +539,19 @@ jobs:
         with:
           name: pb626-native-debian13-armhf
           path: native-stage
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-diagnostics
+          path: flash-kit/diagnostics
       - name: Assemble paired installation, backup and restore kit
         run: |
           set -euo pipefail
           test "$(cat native-stage/BUILD-COMMIT)" = "$(cat flash-kit/recovery/BUILD-COMMIT)"
+          test "$(cat native-stage/BUILD-COMMIT)" = "$(cat flash-kit/diagnostics/BUILD-COMMIT)"
           (cd native-stage && sha256sum -c SHA256SUMS)
+          (cd flash-kit/recovery && sha256sum -c SHA256SUMS)
+          (cd flash-kit/tools && sha256sum -c SHA256SUMS)
+          (cd flash-kit/diagnostics && sha256sum -c SHA256SUMS)
           mv native-stage flash-kit/native
           cp docs/FLASH-KIT.md flash-kit/README.md
           (cd flash-kit && find . -type f ! -path ./SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum > SHA256SUMS)
