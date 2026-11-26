@@ -71,11 +71,13 @@ jobs:
           bash -n scripts/build-debian-rootfs.sh
           bash -n scripts/build-debian-base.sh
           bash -n scripts/compile-debian-native.sh
+          bash -n scripts/build-megi-kernel.sh
           bash -n BT0-uncaged/build-from-source.sh
           python3 -m py_compile BT0-uncaged/prepare-source-resume.py BT0-uncaged/prepare-source-hook.py
           gcc -O2 -Wall -Wextra -Werror diagnostics/pb626-diag-clock.c -o /tmp/pb626-diag-clock
           /tmp/pb626-diag-clock resolution
           /tmp/pb626-diag-clock stamp
+          /tmp/pb626-diag-clock memory
           /tmp/pb626-diag-clock run sleep 0.05
           rc=0; /tmp/pb626-diag-clock run sh -c 'exit 7' || rc=$?; test "$rc" = 7
           sh -n diagnostics/pb626-diagnostics
