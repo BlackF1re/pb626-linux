@@ -104,16 +104,26 @@ sudo chmod 755 "$root/usr/sbin/policy-rc.d"
 # packages and temporary files from leaking into the device rootfs.
 sudo mkdir "$build"
 sudo cp -a "$root/." "$build/"
+# Source packages are enabled only in the disposable build chroot.
+# Obtain the matching Debian Xorg Dummy 0.4.0 source through authenticated APT.
+sudo tee "$build/etc/apt/sources.list.d/pb626-build.sources" >/dev/null <<'DDXSOURCE'
+Types: deb-src
+URIs: https://deb.debian.org/debian
+Suites: trixie
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+DDXSOURCE
 in_build apt-get update
 in_build env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   build-essential autoconf automake libtool pkg-config gettext autopoint intltool \
   libx11-dev libxext-dev libxft-dev libxrender-dev libxcursor-dev libxfixes-dev \
   libxtst-dev libxdamage-dev libxrandr-dev libpng-dev libjpeg-dev libexpat1-dev libfakekey-dev \
-  libmatchbox-dev libstartup-notification0-dev libcairo2-dev
+  libmatchbox-dev libstartup-notification0-dev libcairo2-dev \
+  xserver-xorg-dev xutils-dev libpciaccess-dev
 sudo install -d "$build/tmp/pb626-build" "$pkg/usr/bin" "$pkg/usr/libexec/pb626/bin"
 sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
 sudo cp -a "$kernel/uapi" "$build/tmp/pb626-build/uapi"
-sudo install -m 644 display/{matchbox-keyboard-eink.patch,matchbox-panel-power-supply.patch} "$build/tmp/pb626-build/"
+sudo install -m 644 display/{matchbox-keyboard-eink.patch,matchbox-panel-power-supply.patch,xorg-dummy-pb626-shared.patch} "$build/tmp/pb626-build/"
 
 fetch_source() {
     local name=$1 rev=$2 src="$work/src-$1"
@@ -137,6 +147,18 @@ in_build /bin/bash -euc '
   ./test-pb626-x11-epd
   test "$(./pb626-epd --protocol)" = pb626-epd-shm-4
   strip pb626-epd pb626-x11-epd
+  # Build against the actual target Xorg module ABI. The vendor package is
+  # retained unmodified, and the private module is not selected by default.
+  apt-get source --only-source xserver-xorg-video-dummy=1:0.4.0-1
+  cd xserver-xorg-video-dummy-0.4.0
+  cp ../pb626-ddx-fb.h src/
+  patch --fuzz=0 -p1 < ../xorg-dummy-pb626-shared.patch
+  autoreconf -fi
+  ./configure --prefix=/usr
+  make -j2
+  test -s src/.libs/dummy_drv.so
+  strip --strip-unneeded src/.libs/dummy_drv.so
+  cd ..
   export CFLAGS="-O2 -std=gnu17"
   cd matchbox-keyboard
   patch -p1 < ../matchbox-keyboard-eink.patch
@@ -158,6 +180,9 @@ in_build /bin/bash -euc '
 '
 built="$build/tmp/pb626-build"
 sudo install -m 755 "$built"/{pb626-epd,pb626-x11-epd} "$pkg/usr/bin/"
+sudo install -D -m 644 "$built/xserver-xorg-video-dummy-0.4.0/src/.libs/dummy_drv.so" "$pkg/usr/lib/pb626/xorg/drivers/dummy_drv.so"
+sudo install -D -m 644 "$built/xserver-xorg-video-dummy-0.4.0/debian/copyright" "$pkg/usr/share/doc/pb626-runtime/xorg-dummy-copyright"
+sudo install -D -m 644 "$built/xserver-xorg-video-dummy-0.4.0/COPYING" "$pkg/usr/share/doc/pb626-runtime/xorg-dummy-COPYING"
 sudo install -m 755 "$built/keyboard-install/usr/bin/matchbox-keyboard" \
   "$built/panel-install/usr/bin/matchbox-panel" \
   "$built/panel-install/usr/bin/mb-applet-battery" "$pkg/usr/libexec/pb626/bin/"
@@ -292,7 +317,7 @@ in_root /bin/bash -euc '
   test "$(/usr/bin/pb626-epd --protocol)" = pb626-epd-shm-4
   bash -n /usr/bin/pb626-xsession
   sh -n /usr/sbin/pb626-admin
-  for exe in /usr/bin/pb626-epd /usr/bin/pb626-x11-epd /usr/libexec/pb626/bin/*; do
+  for exe in /usr/bin/pb626-epd /usr/bin/pb626-x11-epd /usr/libexec/pb626/bin/* /usr/lib/pb626/xorg/drivers/dummy_drv.so; do
     ldd "$exe" > /tmp/pb626-ldd
     cat /tmp/pb626-ldd
     if grep -q "not found" /tmp/pb626-ldd; then

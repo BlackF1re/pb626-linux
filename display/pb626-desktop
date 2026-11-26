@@ -17,6 +17,14 @@ if [ "${RUNTIME_DIRECTORY:-}" = "$work" ]; then
 else
     mkdir "$work"
 fi
+# Opt-in only. Never allow a user session to select a privileged module
+# path. The packaged Xorg dummy remains installed and is the default.
+unset PB626_DDX_SHARED
+if [ "$managed" = yes ] && [ -f /etc/debian_version ] &&
+   [ -f /etc/pb626/ddx-shared-qualified ] &&
+   [ -f /usr/lib/pb626/xorg/drivers/dummy_drv.so ]; then
+    export PB626_DDX_SHARED=1
+fi
 bridge_pid=
 xinit_pid=
 cleanup() {
@@ -129,6 +137,9 @@ esac
 xorg=/usr/bin/Xorg
 if [ -f /etc/debian_version ] && [ -x /usr/lib/xorg/Xorg ]; then
     xorg=/usr/lib/xorg/Xorg
+fi
+if [ "${PB626_DDX_SHARED:-0}" = 1 ]; then
+    set -- "$@" -modulepath /usr/lib/pb626/xorg,/usr/lib/xorg/modules
 fi
 xinit "$client" "$waveform" "$work/ready" -- \
     "$xorg" :0 vt2 -nolisten tcp -nocursor -auth "$XAUTHORITY" "$@" \

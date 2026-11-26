@@ -176,3 +176,36 @@ The keyboard uses black backgrounds, white non-antialiased labels and a
 small white pressed outline. Existing DU and per-pixel cleanup apply to
 binary changes without a separate keyboard renderer. Benchmark Cortex-A8
 before claiming a speedup; the waveform and cleanup policy are unchanged.
+
+### Experimental shared-framebuffer DDX
+
+Trixie ships Dummy 0.4.0 (source package version 1:0.4.0-1). The native
+build fetches that signed Debian source, applies
+display/xorg-dummy-pb626-shared.patch without fuzzy matching and compiles
+against the target Xorg development headers. It installs the private
+dummy_drv.so under /usr/lib/pb626/xorg/drivers, leaving Debian's normal
+module untouched. Source licenses are retained in the runtime package.
+The existing Xorg software framebuffer is backed by a root-only shared
+file in the service RuntimeDirectory; no additional screen-sized buffer.
+The file is published atomically after ScreenInit, never truncated in
+place, and geometry/masks are updated on RandR resize. The bridge opens
+it read-only and verifies file ownership, size, ABI, geometry, bounds,
+color masks and depth. It grabs the X server only while processing a
+capture strip, not during waveform calculation or physical scanout.
+Invalid mappings fall back to XGetImage, and ordinary mode still uses
+MIT-SHM. The private module is not selected by default.
+
+Only the native Debian managed service can select it, via a root-owned
+/etc/pb626/ddx-shared-qualified marker. Removing the marker and restarting
+returns to the unmodified driver. A failed candidate must not be treated
+as proof that a different board's Xorg ABI is compatible. Host Xvfb tests
+exercise the bridge using a synthetic shared pixmap derived from XGetImage,
+with 16- and 24-bit depths, partial regions and nonzero offsets. This is
+not yet an actual private-module Xorg integration test. Before enabling
+by default, compare full and partial frames (including RandR, cursor,
+window exposure, fonts and lock/resume) with XGetImage on the real Xorg
+server. Measure PSS, capture/quantization latency, input delay during the
+server grab, and behavior on server restart. The mapped path removes the
+server-to-SHM copy and the ordinary SHM strip allocation when the mapping
+is present; X server grab duration can offset that benefit. No claim of
+speedup or physical validation is made.

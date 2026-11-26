@@ -33,4 +33,10 @@ grep -Fq 'dev-video0.device' "$unitdir/pb626-desktop.service"
 grep -Fxq 'RuntimeDirectory=pb626-desktop' "$unitdir/pb626-desktop.service"
 grep -Fxq 'JobTimeoutSec=30s' "$unitdir/dev-video0.device.d/60-pb626.conf"
 grep -Fq 'ENV{SYSTEMD_WANTS}+="pb626-desktop.service"' boot/debian/rootfs/usr/lib/udev/rules.d/72-pb626-display.rules
+# The private DDX must never replace the package driver by default.
+grep -Fq 'unset PB626_DDX_SHARED' display/pb626-desktop
+grep -Fq '/etc/pb626/ddx-shared-qualified' display/pb626-desktop
+grep -Fq -- '-modulepath /usr/lib/pb626/xorg,/usr/lib/xorg/modules' display/pb626-desktop
+grep -Fq 'apt-get source --only-source xserver-xorg-video-dummy=1:0.4.0-1' scripts/build-debian-rootfs.sh
+grep -Fq -- 'patch --fuzz=0 -p1 < ../xorg-dummy-pb626-shared.patch' scripts/build-debian-rootfs.sh
 echo "Native service contracts passed"
