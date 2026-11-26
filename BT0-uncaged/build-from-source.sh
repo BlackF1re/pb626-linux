@@ -59,6 +59,7 @@ git ls-remote --heads https://codeberg.org/megi/u-boot.git | grep -Ei 'sunxi|poc
 # Native candidate: use the existing raw uImage position and the
 # existing LRADC hook linked by symbols. Full flash remains gated.
 python3 "$here/prepare-source-hook.py" "$PWD"
+python3 "$here/prepare-source-led.py" "$PWD"
 # Native eMMC-only candidate: keep FEL magic detection, but choose MMC2
 # for cold native boot. Never apply this to the RAM FEL candidate above.
 python3 - <<'PY'
