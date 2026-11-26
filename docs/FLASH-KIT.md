@@ -156,3 +156,21 @@ manifest, UAPI, relevant source and build recipe. Source bootloader
 caches are keyed by source inputs and toolchain fingerprint. Final
 packages and kit are rebuilt from the current checkout. Main's historical
 Alpine jobs remain available; explicit Debian-only builds skip them.
+
+### Cache reuse and build provenance
+
+Complete verified kernel/DTB/UAPI content has an exact-input cache.
+On an exact hit no Linux source checkout is required. On a miss the
+separate kernel and DTB caches can still be reused. The expensive
+kernel recipe is a separate script; changes to unrelated workflow YAML
+do not change that cache. The native compiler recipe is similarly
+separate from rootfs packaging. A complete native image cache is keyed
+by kernel content (not the checkout stamp), Debian base manifest and
+actual native inputs. A hit skips the chroot/compiler/rootfs assembly.
+CONTENT-BUILD-COMMIT identifies the checkout that actually built the
+native content; BUILD-COMMIT identifies the current verified assembly.
+The final manifest is regenerated on reuse. Recovery reuses signed
+BusyBox and the ARM restore scanner independently. SPL keys include
+only actual source and patches, not its documentation or kernel packer.
+The diagnostic artifact includes the shell and native ARM timing helper.
+No cache hit substitutes for a first successful build or a hardware test.
