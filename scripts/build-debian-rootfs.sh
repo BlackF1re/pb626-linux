@@ -33,93 +33,19 @@ fdtget "$kernel/pb626-elan-emmc-native.dtb" /chosen pb626,emmc-root >/dev/null
 test "$(fdtget -t s "$kernel/pb626-elan-emmc-native.dtb" /soc/mmc@1c11000 status)" = okay
 test "$(fdtget -t s "$kernel/pb626-elan-emmc-native.dtb" /soc/mmc@1c0f000 status)" = disabled
 
-# Noble's packaged archive keyring predates Trixie. Obtain the updated
-# keyring from signed Bookworm metadata, never disable signature checks.
-sudo mmdebstrap --mode=root --variant=extract --architectures=amd64 \
-  --include=debian-archive-keyring \
-  --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
-  bookworm "$keys" "deb http://deb.debian.org/debian bookworm main"
-keyring="$keys/usr/share/keyrings/debian-archive-keyring.gpg"
-test -s "$keyring"
-
-# No full desktop task, display manager, NetworkManager, or recommended
-# packages. All ordinary programs remain managed by dpkg/APT.
-runtime=(
-  systemd-sysv systemd-resolved systemd-timesyncd systemd-zram-generator udev
-  dbus dbus-user-session libpam-systemd opendoas ca-certificates tzdata
-  iproute2 iw iwd iwgtk rfkill wireless-regdb firmware-realtek nftables
-  kmod procps psmisc util-linux util-linux-extra e2fsprogs usbutils i2c-tools
-  lm-sensors v4l-utils curl openssh-server nano htop mc xidle
-  xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-evdev
-  xinit xauth x11-xserver-utils x11-utils x11-apps x11-xkb-utils xkb-data xrestop
-  xfonts-base xfonts-utils xbitmaps fonts-liberation xdotool xterm nedit
-  matchbox-window-manager matchbox-desktop matchbox-keyboard matchbox-panel
-  matchbox-common libmatchbox1 tk python3-tk python3-pil.imagetk mupdf
-  libx11-6 libxext6 libxtst6 libxdamage1 libxfixes3 libxrandr2
-)
-includes=$(IFS=,; echo "${runtime[*]}")
-sudo env DEBIAN_FRONTEND=noninteractive mmdebstrap \
-  --mode=root --variant=minbase --architectures=armhf \
-  --include="$includes" --keyring="$keyring" \
-  --aptopt='APT::Install-Recommends "false";' \
-  --aptopt='APT::Install-Suggests "false";' \
-  --aptopt='Acquire::Languages "none";' \
-  trixie "$root" \
-  "deb http://deb.debian.org/debian trixie main non-free-firmware" \
-  "deb http://deb.debian.org/debian trixie-updates main non-free-firmware" \
-  "deb http://deb.debian.org/debian-security trixie-security main non-free-firmware"
-
+# Reuse a validated independent Debian base, or build it for local use.
+base=${3:-"$work/debian-base"}
+if [ "$#" -lt 3 ]; then bash scripts/build-debian-base.sh "$base"; fi
+(cd "$base" && sha256sum -c SHA256SUMS)
+sudo tar --numeric-owner --acls --xattrs -xzf "$base/debian-chroots.tar.gz" -C "$work"
+for d in "$root" "$build"; do
+    sudo cp -L /etc/resolv.conf "$d/etc/resolv.conf"
+done
 in_root() { sudo chroot "$root" "$@"; }
 in_build() { sudo chroot "$build" "$@"; }
 test "$(in_root dpkg --print-architecture)" = armhf
 in_root grep -qx 'VERSION_CODENAME=trixie' /etc/os-release
-# Use target-owned Debian archive keyring for future APT operations.
-sudo rm -f "$root/etc/apt/sources.list"
-sudo install -d "$root/etc/apt/sources.list.d"
-sudo tee "$root/etc/apt/sources.list.d/debian.sources" >/dev/null <<'SOURCES'
-Types: deb
-URIs: https://deb.debian.org/debian
-Suites: trixie trixie-updates
-Components: main non-free-firmware
-Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 
-Types: deb
-URIs: https://deb.debian.org/debian-security
-Suites: trixie-security
-Components: main non-free-firmware
-Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-SOURCES
-# Some mmdebstrap versions generate an additional legacy list. Remove only
-# bootstrap-managed files; the single Debian sources file is authoritative.
-sudo find "$root/etc/apt/sources.list.d" -maxdepth 1 -type f ! -name debian.sources -delete
-sudo rm -f "$root/etc/resolv.conf"
-sudo cp -L /etc/resolv.conf "$root/etc/resolv.conf"
-sudo tee "$root/usr/sbin/policy-rc.d" >/dev/null <<'POLICY'
-#!/bin/sh
-exit 101
-POLICY
-sudo chmod 755 "$root/usr/sbin/policy-rc.d"
-
-# A disposable build chroot prevents development dependencies, compiler
-# packages and temporary files from leaking into the device rootfs.
-sudo mkdir "$build"
-sudo cp -a "$root/." "$build/"
-# Source packages are enabled only in the disposable build chroot.
-# Obtain the matching Debian Xorg Dummy 0.4.0 source through authenticated APT.
-sudo tee "$build/etc/apt/sources.list.d/pb626-build.sources" >/dev/null <<'DDXSOURCE'
-Types: deb-src
-URIs: https://deb.debian.org/debian
-Suites: trixie
-Components: main
-Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-DDXSOURCE
-in_build apt-get update
-in_build env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  build-essential autoconf automake libtool pkg-config gettext autopoint intltool \
-  libx11-dev libxext-dev libxft-dev libxrender-dev libxcursor-dev libxfixes-dev \
-  libxtst-dev libxdamage-dev libxrandr-dev libpng-dev libjpeg-dev libexpat1-dev libfakekey-dev \
-  libmatchbox-dev libstartup-notification0-dev libcairo2-dev \
-  xserver-xorg-dev xutils-dev libpciaccess-dev
 sudo install -d "$build/tmp/pb626-build" "$pkg/usr/bin" "$pkg/usr/libexec/pb626/bin"
 sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
 sudo cp -a "$kernel/uapi" "$build/tmp/pb626-build/uapi"
@@ -199,6 +125,7 @@ sudo install -D -m 755 boot/debian/pb626-user-session "$pkg/usr/libexec/pb626-us
 sudo install -D -m 755 boot/pb626-native-desktop "$pkg/usr/sbin/pb626-native-desktop"
 sudo install -D -m 755 boot/native/pb626-usb "$pkg/usr/libexec/pb626-usb"
 sudo install -D -m 755 scripts/profile-memory.sh "$pkg/usr/sbin/pb626-profile-memory"
+sudo install -D -m 755 diagnostics/pb626-diagnostics "$pkg/usr/sbin/pb626-diagnostics"
 sudo install -D -m 755 scripts/inspect-live.sh "$pkg/usr/sbin/inspect-pb626"
 sudo install -D -m 755 scripts/probe-device.sh "$pkg/usr/sbin/probe-pb626"
 sudo install -m 755 display/pb626-open-document display/pb626-shutdown-picker "$pkg/usr/bin/"
@@ -230,7 +157,7 @@ Package: pb626-runtime
 Version: $version
 Architecture: armhf
 Maintainer: BlackF1re <55582873+BlackF1re@users.noreply.github.com>
-Depends: libc6, bash, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, libxrandr2, tk, python3-tk, python3-pil.imagetk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
+Depends: libc6, bash, evtest, iputils-ping, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, libxrandr2, tk, python3-tk, python3-pil.imagetk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
 Description: PocketBook 626 native E Ink desktop and hardware integration
  Includes the scanout worker, X11 bridge, patched Matchbox clients and
  board-specific systemd services. Uses the paired PB626 kernel and DTB.
