@@ -51,7 +51,7 @@ atomic_save() {
 lock_state() {
     mkdir -p "$state"
     exec 9>"$state/settings.lock"
-    flock -x 9
+    flock -x -w 5 9 || { echo "Board settings are busy; retry" >&2; exit 1; }
 }
 valid_governor() {
     case "$1" in ondemand|conservative|powersave|performance|schedutil) return 0 ;; *) return 2 ;; esac
@@ -164,6 +164,7 @@ battery_capacity() {
         esac
     done
     [ "$charger_seen" = 1 ] && [ -n "$battery" ] &&
+        [ "$(cat "$battery/present" 2>/dev/null)" = 1 ] &&
         [ "$(cat "$battery/status")" = Discharging ] || return 1
     capacity=$(cat "$battery/capacity") || return 1
     valid_percent "$capacity" || return 1
@@ -349,15 +350,19 @@ lock-indicator)
         ;;
     awake)
         [ -f /run/pb626-lock-indicator ] || exit 0
+        # Restore independent outputs even if one driver fails to resume.
+        # Leave the marker on error so service teardown/recovery can retry.
+        restore_error=0
         read_light
         for light in /sys/class/backlight/*; do
             [ -r "$light/max_brightness" ] || continue
-            apply_light || exit 1
+            apply_light || restore_error=1
             break
         done
         led_mode=heartbeat
-        if [ -r "$state/led" ]; then read -r led_mode <"$state/led"; fi
-        if led_path >/dev/null; then apply_led "$led_mode" || exit 1; fi
+        if [ -r "$state/led" ]; then read -r led_mode <"$state/led" || led_mode=heartbeat; fi
+        if led_path >/dev/null; then apply_led "$led_mode" || restore_error=1; fi
+        [ "$restore_error" = 0 ] || exit 1
         rm -f /run/pb626-lock-indicator
         ;;
     *) exit 2 ;;
