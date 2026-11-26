@@ -35,18 +35,21 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
-# Bound the wait for late ELAN registration; USB and buttons remain usable.
-for attempt in $(seq 1 20); do
-    found=no
-    for event in /sys/class/input/event*; do
-        [ -r "$event/device/name" ] || continue
-        case "$(cat "$event/device/name")" in
-            *[Ee][Ll][Aa][Nn]*) [ ! -c "/dev/input/${event##*/}" ] || found=yes ;;
-        esac
+# Debian uses a weak, bounded systemd device dependency for ELAN.
+# Manual/Alpine launches retain the existing bounded discovery window.
+if [ "$managed" = no ]; then
+    for attempt in $(seq 1 20); do
+        found=no
+        for event in /sys/class/input/event*; do
+            [ -r "$event/device/name" ] || continue
+            case "$(cat "$event/device/name")" in
+                *[Ee][Ll][Aa][Nn]*) [ ! -c "/dev/input/${event##*/}" ] || found=yes ;;
+            esac
+        done
+        [ "$found" = no ] || break
+        sleep 0.25
     done
-    [ "$found" = no ] || break
-    sleep 0.25
-done
+fi
 count=0
 touch=no
 button_devices=

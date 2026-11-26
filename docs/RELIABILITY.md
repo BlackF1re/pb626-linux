@@ -56,8 +56,12 @@ The worker still verifies the sun5i-eink driver and format before output.
 PID 1 creates/removes the existing runtime directory; no Debian loop
 polls for video0 or manually deletes the service-owned directory.
 The legacy Alpine/manual startup path keeps its original bounded wait.
-ELAN startup still has a short bounded discovery window for the pointer
-fallback; no claim of dynamic touch hotplug support.
+ELAN readiness uses the weak dev-input-pb626_touch.device dependency
+and a 5-second job timeout instead of a repeated sysfs scan in Debian.
+Absence permits the existing pointer fallback. Manual/Alpine startup
+keeps bounded discovery. Dynamic touch hotplug is not implemented.
+The Debian rootfs builder runs its own systemd-analyze verify and
+udevadm verify on installed units/rules before emitting an image.
 
 ## Critical battery confirmation
 

@@ -335,6 +335,15 @@ in_root /bin/bash -euc '
     fi
   done
   test -x /usr/bin/dbus-run-session
+  # Validate the installed target units/drop-ins with Debian's own
+  # systemd version, not the host runner's. No services are started.
+  systemd-analyze --man=no --generators=no --recursive-errors=one verify \
+    pb626.slice pb626-desktop.service pb626-board.service pb626-usb.service \
+    pb626-battery.service pb626-battery.timer pb626-battery-confirm.timer \
+    pb626-battery-warning.service pb626-poweroff-screen.service pb626-sleep.service \
+    systemd-suspend.service systemd-journald.service systemd-resolved.service systemd-timesyncd.service \
+    serial-getty@ttyGS0.service
+  udevadm verify /usr/lib/udev/rules.d/7*-pb626-*.rules
 '
 for unit in pb626-board.service pb626-desktop.service pb626-usb.service systemd-resolved.service; do
   test "$(ctl is-enabled "$unit")" = enabled

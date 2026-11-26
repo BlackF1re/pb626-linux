@@ -39,4 +39,10 @@ grep -Fq '/etc/pb626/ddx-shared-qualified' display/pb626-desktop
 grep -Fq -- '-modulepath /usr/lib/pb626/xorg,/usr/lib/xorg/modules' display/pb626-desktop
 grep -Fq 'apt-get source --only-source xserver-xorg-video-dummy=1:0.4.0-1' scripts/build-debian-rootfs.sh
 grep -Fq -- 'patch --fuzz=0 -p1 < ../xorg-dummy-pb626-shared.patch' scripts/build-debian-rootfs.sh
+# The optional ELAN device must not make missing touch a fatal dependency.
+grep -Fq 'Wants=pb626-board.service dev-input-pb626_touch.device' "$unitdir/pb626-desktop.service"
+grep -Fxq 'JobTimeoutSec=5s' "$unitdir/dev-input-pb626_touch.device.d/60-pb626.conf"
+grep -Fq 'ENV{SYSTEMD_ALIAS}+="/dev/input/pb626_touch"' boot/debian/rootfs/usr/lib/udev/rules.d/73-pb626-touch.rules
+! grep -q '^ExecStartPost=/bin/sleep' "$unitdir/pb626-poweroff-screen.service"
+grep -Fq 'systemd-analyze --man=no --generators=no --recursive-errors=one verify' scripts/build-debian-rootfs.sh
 echo "Native service contracts passed"

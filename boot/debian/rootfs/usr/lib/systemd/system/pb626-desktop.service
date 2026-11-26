@@ -1,9 +1,9 @@
 [Unit]
 Description=PocketBook X11 desktop and E Ink renderer
 ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
-Wants=pb626-board.service
+Wants=pb626-board.service dev-input-pb626_touch.device
 BindsTo=dev-video0.device
-After=local-fs.target systemd-udev-trigger.service pb626-board.service dev-video0.device
+After=local-fs.target systemd-udev-trigger.service pb626-board.service dev-video0.device dev-input-pb626_touch.device
 StartLimitIntervalSec=120
 StartLimitBurst=3
 
