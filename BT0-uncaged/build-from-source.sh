@@ -122,7 +122,7 @@ git diff >"$out/uboot-source-changes.patch"
 printf '%s\n' "$rev" >"$out/UBOOT-REV"
 # Build the other two formerly external FEL inputs from source.
 cd "$repo"
-"${CROSS_COMPILE}as" "$here/fel-entry.S" -o "$work/entry.o"
+"${CROSS_COMPILE}as" -march=armv7-a "$here/fel-entry.S" -o "$work/entry.o"
 "${CROSS_COMPILE}ld" -Ttext=0x41000000 -e _start "$work/entry.o" -o "$work/entry.elf"
 "${CROSS_COMPILE}objcopy" -O binary -j .text "$work/entry.elf" "$out/direct-entry-candidate.bin"
 (cd "$out" && echo "1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd  direct-entry-candidate.bin" | sha256sum -c -)

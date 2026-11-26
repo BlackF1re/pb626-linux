@@ -1,7 +1,7 @@
 #Requires -Version 7.4
 [CmdletBinding()]
 param(
-    [ValidateSet('Install','Backup','Restore','Preflight','Flash')][string]$Action,
+    [ValidateSet('Install','Backup','Restore','Preflight','Flash','Prepare')][string]$Action,
     [string]$DataDir,
     [string]$Distro='Ubuntu',
     [switch]$UseRunningRecovery,
@@ -10,6 +10,7 @@ param(
     [string]$ImageDir,
     [switch]$EnableRecoverySD,
     [switch]$PrepareFelInputs,
+    [string]$OriginalUboot,
     [switch]$SD
 )
 $ErrorActionPreference='Stop'
@@ -28,13 +29,15 @@ if (!$Action) {
     Write-Host '7 - Backup microSD (experimental MMC0 profile)'
     Write-Host '8 - Restore microSD (experimental MMC0 profile)'
     Write-Host '9 - Preflight microSD restore'
-    $Action=switch (Read-Host 'Choose 1-9') {
+    Write-Host '10 - Prepare missing FEL input files (no device access)'
+    $Action=switch (Read-Host 'Choose 1-10') {
         '1' {'Install'} '2' {'Backup'} '3' {'Restore'} '4' {'Preflight'}
         '5' {$SkipBackup=$true; 'Install'}
         '6' {'Flash'}
         '7' {$SD=$true; 'Backup'}
         '8' {$SD=$true; 'Restore'}
         '9' {$SD=$true; 'Preflight'}
+        '10' {'Prepare'}
         default {throw 'Cancelled'}
     }
 }
@@ -96,10 +99,13 @@ function Find-RecoveryPort {
     if ($ports.Count -eq 1) { return $ports[0] }
 }
 $lab=Join-Path $kit 'fel-inputs'
-if ($PrepareFelInputs) {
+if ($PrepareFelInputs -or $Action -eq 'Prepare') {
     if (!$seen.ContainsKey('source/scripts/prepare-fel-inputs.py') -or !$seen.ContainsKey('fel-host/SHA256SUMS')) { throw 'Missing verified FEL host preparation files' }
     Write-Warning 'The entry and SPL are hash-qualified; the rebuilt host executable still needs physical USB qualification. Missing SPL is downloaded directly from its original author and must match the laboratory hash. Existing inputs are not overwritten.'
-    Run-Linux @('python3',(LinuxPath (Join-Path $kit 'source/scripts/prepare-fel-inputs.py')),'--host',(LinuxPath (Join-Path $kit 'fel-host')),'--output',(LinuxPath $lab))
+    $prepare=@('python3',(LinuxPath (Join-Path $kit 'source/scripts/prepare-fel-inputs.py')),'--host',(LinuxPath (Join-Path $kit 'fel-host')),'--output',(LinuxPath $lab))
+    if ($OriginalUboot) { $prepare+=@('--uboot',(LinuxPath $OriginalUboot)) }
+    Run-Linux $prepare
+    if ($Action -eq 'Prepare') { Write-Host 'FEL inputs prepared. No reader accessed.'; return }
 }
 if (!$UseRunningRecovery -or $Action -eq 'Install') {
     foreach ($name in @('pb626-spl.bin','direct-entry.bin','sunxi-fel')) {

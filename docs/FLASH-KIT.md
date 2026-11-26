@@ -185,8 +185,9 @@ inputs remain preferred. The rebuilt host binary is not yet physically
 USB-qualified; its two modified C sources are checked against the original
 laboratory hashes. Install libfdt1 and zlib1g in addition to libusb in WSL.
 
-Explicitly opt in to preparing missing inputs with `PB626.ps1 -Action
-Preflight -PrepareFelInputs`. It downloads the historical upstream
+Explicitly opt in to preparing missing inputs with menu item 10 or
+`PB626.ps1 -Action Prepare` (no device access). You can pass
+`-OriginalUboot PATH` to use the original combined file offline. It downloads the historical upstream
 U-Boot from xff.cz directly, only accepts SHA256
 ad00580889a797836b05ed8c718c11d5ccb014aa266707c4f41fa89d192fb87f,
 and extracts its first 24576 bytes with the existing SPL hash check.

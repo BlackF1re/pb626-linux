@@ -1,0 +1,36 @@
+name: Rebuild original FEL host inputs
+on:
+  push:
+    branches: [enhance/native-reliability]
+    paths:
+      - '.github/workflows/fel-host.yml'
+      - 'BT0-uncaged/fel-entry.S'
+      - 'BT0-uncaged/build-fel-host.sh'
+      - 'patches/sunxi-fel-keep-mmu-off.patch'
+      - 'scripts/prepare-fel-inputs.py'
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fel-host:
+    name: Rebuild recovered FEL host inputs (independent of SPL candidates)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld llvm libusb-1.0-0-dev libfdt-dev zlib1g-dev pkg-config
+          bash BT0-uncaged/build-fel-host.sh fel-host
+          (cd fel-host && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-fel-host-tools
+          path: fel-host/
+          if-no-files-found: error
+      - name: Verify historical upstream SPL availability (no binary publication)
+        continue-on-error: true
+        run: |
+          python3 scripts/prepare-fel-inputs.py --host fel-host --output "$RUNNER_TEMP/verified-fel"
+          rm -rf "$RUNNER_TEMP/verified-fel"

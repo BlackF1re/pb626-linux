@@ -22,6 +22,7 @@ on:
       - 'diagnostics/**'
       - 'BT0-uncaged/**'
       - '.github/workflows/source-bootloader.yml'
+      - '.github/workflows/fel-host.yml'
       - 'scripts/Start-PB626*.ps1'
       - 'scripts/fel-boot.sh'
       - 'scripts/inspect-live.sh'
@@ -430,26 +431,7 @@ jobs:
     secrets: inherit
 
   fel-host:
-    name: Rebuild recovered FEL host inputs (independent of SPL candidates)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang lld llvm libusb-1.0-0-dev libfdt-dev zlib1g-dev pkg-config
-          bash BT0-uncaged/build-fel-host.sh fel-host
-          (cd fel-host && sha256sum -c SHA256SUMS)
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pb626-fel-host-tools
-          path: fel-host/
-          if-no-files-found: error
-      - name: Verify historical upstream SPL availability (no binary publication)
-        continue-on-error: true
-        run: |
-          python3 scripts/prepare-fel-inputs.py --host fel-host --output "$RUNNER_TEMP/verified-fel"
-          rm -rf "$RUNNER_TEMP/verified-fel"
+    uses: ./.github/workflows/fel-host.yml
 
   diagnostics:
     name: Terminal diagnostics (standalone)

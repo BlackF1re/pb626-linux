@@ -14,5 +14,6 @@ permissions:
 jobs:
   debian:
     uses: ./.github/workflows/megi-fel.yml
+    secrets: inherit
     with:
       debian_only: true

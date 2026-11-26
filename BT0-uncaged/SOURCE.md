@@ -46,3 +46,9 @@ The lab sunxi-tools source includes not only the MMU override, but the
 The recovered patch is checked against the original fel.c and fel_lib.c
 hashes. A locally rebuilt host tool ran --help and --list-socs; USB
 qualification remains pending. See build-fel-host.sh and FLASH-KIT.md.
+
+The recovered lab dram_sun4i.c and pb626-defconfig are byte-identical to
+those copied from the currently pinned 2021.04 tree by Actions:
+SHA256 f21f7d1e7a3f1eeb93ba534481f38be934e9afdae3c661e9ec855ec2acf8ba22
+and 6f3ff47100a5bb84e03088a327a4ef83ba8e51e88f3f302da7d4d1766d5d5ae7.
+This is useful source-level evidence, not proof of identical compiled SPL.
