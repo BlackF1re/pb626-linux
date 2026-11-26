@@ -335,8 +335,8 @@ in_root /bin/bash -euc '
     fi
   done
   test -x /usr/bin/dbus-run-session
-  # Validate the installed target units/drop-ins with Debian's own
-  # systemd version, not the host runner's. No services are started.
+  # Validate the installed target units/drop-ins with the target Debian
+  # systemd version instead of the host version. No services are started.
   systemd-analyze --man=no --generators=no --recursive-errors=one verify \
     pb626.slice pb626-desktop.service pb626-board.service pb626-usb.service \
     pb626-battery.service pb626-battery.timer pb626-battery-confirm.timer \
