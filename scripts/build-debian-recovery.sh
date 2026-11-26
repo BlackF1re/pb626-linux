@@ -10,6 +10,10 @@ test ! -e "$out"
 work=$(mktemp -d)
 trap 'sudo rm -rf "$work"' EXIT
 cd "$repo"
+# Cache the signed ARM BusyBox and scanner independently of kernel and
+# installer packaging. The workflow keys this by toolchain/inputs/epoch.
+payload=${3:-"$work/recovery-payload"}
+if [ ! -f "$payload/SHA256SUMS" ]; then
 sudo mmdebstrap --mode=root --variant=extract --architectures=amd64 \
     --include=debian-archive-keyring --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
     bookworm "$work/keys" 'deb http://deb.debian.org/debian bookworm main'
@@ -20,6 +24,16 @@ sudo mmdebstrap --mode=root --variant=extract --architectures=armhf \
     trixie "$work/debian" 'deb http://deb.debian.org/debian trixie main'
 busybox="$work/debian/usr/bin/busybox"
 test -f "$busybox" && test -x "$busybox"
+
+    mkdir -p "$payload"
+    sudo install -m 755 "$busybox" "$payload/busybox"
+    sudo install -m 644 "$work/debian/usr/share/doc/busybox-static/copyright" "$payload/DEBIAN-BUSYBOX-COPYRIGHT"
+    arm-linux-gnueabihf-gcc -O2 -Wall -Wextra -Werror -static -s scripts/restore/pb626-restore-scan.c -o "$payload/scanner"
+    sudo chown "$(id -u):$(id -g)" "$payload"/{busybox,DEBIAN-BUSYBOX-COPYRIGHT}
+    (cd "$payload" && sha256sum busybox scanner DEBIAN-BUSYBOX-COPYRIGHT >SHA256SUMS)
+fi
+(cd "$payload" && sha256sum -c SHA256SUMS)
+busybox="$payload/busybox"
 root="$work/root"
 sudo install -d "$root"/{bin,sbin,usr/bin,usr/sbin,usr/libexec,dev,proc,sys,run,root,tmp,etc,sys/kernel/config}
 sudo install -m 755 "$busybox" "$root/bin/busybox"
@@ -32,8 +46,7 @@ sudo ln -s ../bin/busybox "$root/sbin/poweroff"
 sudo ln -s ../bin/busybox "$root/sbin/reboot"
 sudo install -m 755 boot/recovery/init "$root/init"
 sudo install -m 755 scripts/restore/pb626-restore-fast.sh "$root/usr/libexec/"
-arm-linux-gnueabihf-gcc -O2 -Wall -Wextra -Werror -static -s scripts/restore/pb626-restore-scan.c -o "$work/scanner"
-sudo install -m 755 "$work/scanner" "$root/usr/libexec/pb626-restore-scan"
+sudo install -m 755 "$payload/scanner" "$root/usr/libexec/pb626-restore-scan"
 printf 'pb626-debian13-recovery-v1\n' | sudo tee "$root/etc/pb626-image-id" >/dev/null
 sudo mknod -m 600 "$root/dev/console" c 5 1
 sudo mknod -m 666 "$root/dev/null" c 1 3
@@ -80,13 +93,12 @@ cp scripts/{fel-boot.sh,Start-PB626.ps1} "$out/recovery/"
 git rev-parse HEAD >"$out/recovery/BUILD-COMMIT"
 (cd "$out/recovery" && sha256sum pb626-megi-zImage *.dtb *.gz BUILD-COMMIT fel-boot.sh Start-PB626.ps1 > SHA256SUMS)
 cp scripts/restore/{Backup-PB626Fast.ps1,Restore-PB626Fast.ps1,pb626-restore-fast.sh,README.md} "$out/tools/"
-gzip -n -9 -c "$work/scanner" >"$out/tools/pb626-restore-scan.gz"
+gzip -n -9 -c "$payload/scanner" >"$out/tools/pb626-restore-scan.gz"
 (cd "$out/tools" && sha256sum pb626-restore-scan.gz > SHA256SUMS.fast && sha256sum *.ps1 *.sh *.gz README.md SHA256SUMS.fast > SHA256SUMS)
 cp -a BT0-uncaged "$out/source/"
 mkdir -p "$out/source/scripts"
 cp scripts/{build-native-image.py,pb626_sleep_theme.py,prepare-install.sh} "$out/source/scripts/"
 cp scripts/installer/{PB626.ps1,PB626.cmd,pb626.sh} "$out/"
 cp LICENSE "$out/"
-sudo cp "$work/debian/usr/share/doc/busybox-static/copyright" "$out/recovery/DEBIAN-BUSYBOX-COPYRIGHT"
-sudo chown "$(id -u):$(id -g)" "$out/recovery/DEBIAN-BUSYBOX-COPYRIGHT"
+cp "$payload/DEBIAN-BUSYBOX-COPYRIGHT" "$out/recovery/DEBIAN-BUSYBOX-COPYRIGHT"
 echo "Debian recovery initramfs: $(stat -c '%s' "$ram") bytes"
