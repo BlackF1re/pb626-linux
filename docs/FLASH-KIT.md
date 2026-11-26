@@ -124,3 +124,35 @@ Recovery starts ConfigFS ACM automatically before storage initialization.
 An invalid or unavailable eMMC no longer suppresses its diagnostic shell;
 the storage protocol waits for/requires successful independent preflight.
 No block device is mounted and storage writes remain CID/hash checked.
+
+## Build graph and published artifacts
+
+The explicit Debian request workflow builds the kernel, Debian base and
+source SPL candidates independently. Native assembly waits for the
+kernel and Debian base; minimal recovery waits only for the kernel.
+Diagnostics build independently. The flash kit combines current-run
+native, recovery and diagnostics, verifying commit IDs and SHA256
+manifests. It deliberately does not substitute an experimental SPL
+for the hash-qualified local BT0.
+
+- pb626-kernel-stage: zImage, modules, Kconfig, DTBs, UAPI and manifest.
+- pb626-native-debian13-armhf: rootfs, paired native raw kernel images,
+  pb626-runtime_armhf.deb and package list. No redundant rootfs-only or
+  runtime-only uploads.
+- pb626-debian-recovery: Debian BusyBox initramfs, paired recovery DTBs,
+  host restore tools and installer skeleton.
+- pb626-source-boot-candidates-NOT-FOR-FLASH: source-built FEL SPL,
+  native SPL, entry stub, sunxi-fel and separate deep-resume candidate.
+- pb626-diagnostics: standalone POSIX shell tool with documentation.
+- pb626-debian-flash-kit: complete paired distribution, still requiring
+  the verified private FEL inputs until qualification.
+- pb626-debian-base-stage: one-day internal chroot transport, not firmware.
+
+Kernel/DTB caches retain pinned sources, Kconfig and toolchain keys.
+The Debian signed package base and development chroot are cached
+independently of the kernel and project source, with a weekly freshness
+epoch. The compiled native C/Matchbox/DDX binaries are cached by base
+manifest, UAPI, relevant source and build recipe. Source bootloader
+caches are keyed by source inputs and toolchain fingerprint. Final
+packages and kit are rebuilt from the current checkout. Main's historical
+Alpine jobs remain available; explicit Debian-only builds skip them.
