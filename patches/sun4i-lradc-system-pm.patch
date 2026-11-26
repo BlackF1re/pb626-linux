@@ -1,0 +1,105 @@
+diff --git a/drivers/input/keyboard/sun4i-lradc-keys.c b/drivers/input/keyboard/sun4i-lradc-keys.c
+--- a/drivers/input/keyboard/sun4i-lradc-keys.c
++++ b/drivers/input/keyboard/sun4i-lradc-keys.c
+@@ -23,6 +23,7 @@
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/pm.h>
+ #include <linux/pm_wakeirq.h>
+ #include <linux/property.h>
+ #include <linux/regulator/consumer.h>
+@@ -103,6 +104,8 @@
+ 	u32 chan0_map_count;
+ 	u32 chan0_keycode;
+ 	u32 vref;
++	int irq;
++	bool suspended;
+ };
+ 
+ static irqreturn_t sun4i_lradc_irq(int irq, void *dev_id)
+@@ -198,6 +201,66 @@
+ 	regulator_disable(lradc->vref_supply);
+ }
+ 
++/*
++ * The PocketBook A13 uses the PMIC power key as its wake source. Stop
++ * non-wakeup LRADC conversions while userspace still owns the input
++ * device. Keep the existing open/close supply references balanced:
++ * A13's AVCC is shared and must not be switched off here.
++ */
++static int sun4i_lradc_suspend(struct device *dev)
++{
++	struct sun4i_lradc_data *lradc = dev_get_drvdata(dev);
++	struct input_dev *input = lradc->input;
++
++	/* Do not change the lifecycle of other LRADC hardware variants. */
++	if (lradc->variant != &lradc_variant_a10 || device_may_wakeup(dev))
++		return 0;
++
++	mutex_lock(&input->mutex);
++	if (input_device_enabled(input)) {
++		disable_irq(lradc->irq);
++		writel(0, lradc->base + LRADC_INTC);
++		writel(FIRST_CONVERT_DLY(2) | LEVELA_B_CNT(1) | HOLD_EN(1) |
++			SAMPLE_RATE(2), lradc->base + LRADC_CTRL);
++		writel(readl(lradc->base + LRADC_INTS),
++			lradc->base + LRADC_INTS);
++		if (lradc->chan0_keycode) {
++			input_report_key(input, lradc->chan0_keycode, 0);
++			input_sync(input);
++			lradc->chan0_keycode = 0;
++		}
++		lradc->suspended = true;
++	}
++	mutex_unlock(&input->mutex);
++	return 0;
++}
++
++static int sun4i_lradc_resume(struct device *dev)
++{
++	struct sun4i_lradc_data *lradc = dev_get_drvdata(dev);
++	struct input_dev *input = lradc->input;
++
++	mutex_lock(&input->mutex);
++	if (lradc->suspended) {
++		writel(readl(lradc->base + LRADC_INTS),
++			lradc->base + LRADC_INTS);
++		if (input_device_enabled(input)) {
++			writel(FIRST_CONVERT_DLY(2) | LEVELA_B_CNT(1) |
++				HOLD_EN(1) | SAMPLE_RATE(0) | ENABLE(1),
++				lradc->base + LRADC_CTRL);
++			writel(CHAN0_KEYUP_IRQ | CHAN0_KEYDOWN_IRQ,
++				lradc->base + LRADC_INTC);
++		}
++		lradc->suspended = false;
++		enable_irq(lradc->irq);
++	}
++	mutex_unlock(&input->mutex);
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(sun4i_lradc_pm_ops,
++			       sun4i_lradc_suspend, sun4i_lradc_resume);
++
+ static int sun4i_lradc_load_dt_keymap(struct device *dev,
+ 				      struct sun4i_lradc_data *lradc)
+ {
+@@ -312,6 +375,9 @@
+ 	if (irq < 0)
+ 		return irq;
+ 
++	lradc->irq = irq;
++	platform_set_drvdata(pdev, lradc);
++
+ 	error = devm_request_irq(dev, irq, sun4i_lradc_irq, 0,
+ 				 "sun4i-a10-lradc-keys", lradc);
+ 	if (error)
+@@ -349,6 +415,7 @@
+ 	.driver = {
+ 		.name	= "sun4i-a10-lradc-keys",
+ 		.of_match_table = of_match_ptr(sun4i_lradc_of_match),
++		.pm = pm_sleep_ptr(&sun4i_lradc_pm_ops),
+ 	},
+ 	.probe	= sun4i_lradc_probe,
+ };

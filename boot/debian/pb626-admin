@@ -326,25 +326,33 @@ lock-indicator)
     [ "$#" -eq 2 ] || exit 2
     lock_state
     case "$2" in
-    locked)
+    locked|sleep)
         : > /run/pb626-lock-indicator
         for light in /sys/class/backlight/*; do
             [ -w "$light/bl_power" ] || continue
             printf '4\n' >"$light/bl_power"
         done
         if led=$(led_path); then
-            printf 'timer\n' >"$led/trigger"
-            printf '150\n' >"$led/delay_on"
-            printf '1800\n' >"$led/delay_off"
+            if [ "$2" = sleep ]; then
+                apply_led off || exit 1
+            else
+                printf 'timer\n' >"$led/trigger"
+                printf '150\n' >"$led/delay_on"
+                printf '1800\n' >"$led/delay_off"
+            fi
         fi
         ;;
     awake)
         [ -f /run/pb626-lock-indicator ] || exit 0
         read_light
-        apply_light || :
+        for light in /sys/class/backlight/*; do
+            [ -r "$light/max_brightness" ] || continue
+            apply_light || exit 1
+            break
+        done
         led_mode=heartbeat
         if [ -r "$state/led" ]; then read -r led_mode <"$state/led"; fi
-        apply_led "$led_mode" || :
+        if led_path >/dev/null; then apply_led "$led_mode" || exit 1; fi
         rm -f /run/pb626-lock-indicator
         ;;
     *) exit 2 ;;

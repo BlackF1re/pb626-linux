@@ -92,6 +92,15 @@ admin lock-indicator awake
 test "$(cat "$tmp/leds/led/trigger")" = heartbeat
 test "$(cat "$tmp/backlight/panel/bl_power")" = 0
 test ! -e "$tmp/indicator"
+admin lock-indicator sleep
+test "$(cat "$tmp/leds/led/trigger")" = none
+test "$(cat "$tmp/leds/led/brightness")" = 0
+test "$(cat "$tmp/backlight/panel/bl_power")" = 4
+test "$(admin light-status)" = '1 72'
+admin lock-indicator awake
+test "$(cat "$tmp/leds/led/trigger")" = heartbeat
+test "$(cat "$tmp/backlight/panel/bl_power")" = 0
+test ! -e "$tmp/indicator"
 touch "$tmp/qualified"
 admin power-key s2idle
 test "$(admin power-key-status)" = s2idle

@@ -52,10 +52,20 @@ and resolution handshake as probe, then enables IRQ. Two bounded
 attempts; failure is reported, not hidden behind an enabled IRQ.
 Power button is the system wake source, not touchscreen.
 
-Other pinned-kernel paths include AXP20x IRQ wake and MMC runtime /
-force PM. USB host/gadget, Wi-Fi, RTC, GPIO/LRADC keys, backlight,
-regulators and SD need physical qualification. Driver PM callbacks,
-not unload scripts or direct GPIO writes, own hardware transitions.
+The non-wakeup A10/A13 LRADC driver now masks its IRQ, stops
+conversions and releases cached key state during suspend; resume
+restores conversion/IRQ settings if the input is open. The existing
+open/close regulator reference stays balanced (AVCC is shared).
+The power key is an AXP20x IRQ wake source. GPIO keys, MMC, I2C,
+USB host/MUSB, and PWM backlight already have subsystem PM paths.
+The RTC node has no IRQ specified on this board: RTC alarm wake
+is not established. Wi-Fi association, USB PHY/VBUS, SD/eMMC data
+integrity and all input paths need physical qualification.
+The system transaction switches off the frontlight and LED before
+sleep, including when entering sleep from convenience lock. It
+restores saved settings on resume and reports restoration errors.
+Driver PM callbacks, not unload scripts or direct GPIO writes, own
+hardware transitions.
 
 ## Deep sleep boot contract (blocking)
 

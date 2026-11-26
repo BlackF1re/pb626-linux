@@ -1518,7 +1518,7 @@ int main(int argc, char **argv)
 							}
 							queue_released = 1;
 						}
-						sleep_reply(&client, 'P');
+						sleep_reply(&client, power_action("lock-indicator", "sleep") ? 0 : 'P');
 					}
 				} else if (request == 'R') {
 					if (system_sleep) {
@@ -1595,7 +1595,7 @@ int main(int argc, char **argv)
 			}
 			lock_pending = dirty = pending = cleanup_count = 0;
 			controls.clean_requested = 0;
-			int indicator_error = power_action("lock-indicator", "locked");
+			int indicator_error = power_action("lock-indicator", system_sleep ? "sleep" : "locked");
 			if (indicator_error && system_sleep) {
 				/* Reject preparation. ExecStopPost will restore X11;
 				 * the PM core must not suspend on a failed preparation. */
