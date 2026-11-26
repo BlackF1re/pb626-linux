@@ -2,14 +2,14 @@
 # On-demand, touch-oriented control centre. No resident settings daemon.
 tk_setPalette background white foreground black activeBackground #cccccc \
     activeForeground black selectBackground black selectForeground white
-option add *Font {Liberation Sans 15}
+option add *Font {{Liberation Sans} 15}
 option add *Button.padY 9
 option add *Button.padX 12
 option add *Scale.sliderLength 40
 option add *highlightColor black
 ttk::style theme use clam
 ttk::style configure TNotebook -background white -borderwidth 2
-ttk::style configure TNotebook.Tab -padding {12 14} -font {Liberation Sans 15 bold} -foreground black -background white
+ttk::style configure TNotebook.Tab -padding {12 14} -font {{Liberation Sans} 15 bold} -foreground black -background white
 ttk::style map TNotebook.Tab -background {selected black} -foreground {selected white}
 wm title . "PocketBook Settings"
 wm geometry . 700x840
@@ -53,7 +53,7 @@ proc lightRefresh {} {
 }
 proc lightApply {} {
     global level
-    if {[act frontlight $level]} {lightRefresh}
+    if {[act light-level $level]} {lightRefresh}
 }
 proc lightSwitch {action} {
     if {[act $action]} {lightRefresh}
@@ -92,7 +92,7 @@ proc updateStatus {} {
     foreach p [glob -nocomplain /sys/class/leds/*] {
         append data "LED [file tail $p]: [readfile $p/brightness]\n"
     }
-    foreach cmd {{free -m} {df -h /} {date} {systemctl --no-pager --failed} {rfkill list}} {
+    foreach cmd {{free -m} {df -h /} {date} {timedatectl status} {systemctl --no-pager --failed} {rfkill list}} {
         if {![catch {exec {*}$cmd 2>@1} result]} {append data "$result\n"}
     }
     .tabs.system.info configure -state normal
@@ -144,10 +144,13 @@ foreach p [glob -nocomplain /sys/devices/system/cpu/cpufreq/policy*] {
     }
     break
 }
+set ledMode unavailable
+if {![catch {query led-status} value]} {set ledMode $value}
+set host [info hostname]
 set powerKey ignore
 if {![catch {query power-key-status} value]} {set powerKey $value}
 
-label .heading -text "PocketBook settings" -font {Liberation Sans 22 bold}
+label .heading -text "PocketBook settings" -font {{Liberation Sans} 22 bold}
 pack .heading -pady 12
 ttk::notebook .tabs
 foreach {tab title} {display Display keys Buttons net Network power Power system System} {
@@ -156,12 +159,14 @@ foreach {tab title} {display Display keys Buttons net Network power Power system
 }
 pack .tabs -fill both -expand 1 -padx 8 -pady 4
 set p .tabs.display
-label $p.state -textvariable lightText -font {Liberation Sans 19 bold}
+label $p.state -textvariable lightText -font {{Liberation Sans} 19 bold}
 pack $p.state -pady 8
 scale $p.brightness -from 1 -to 100 -orient horizontal -variable level -resolution 1 -length 500 \
     -label "Brightness (%)" -width 36 -troughcolor #aaaaaa
 pack $p.brightness -fill x -padx 16 -pady 8
-button $p.apply -text "Apply brightness and save" -command lightApply
+button $p.apply -text "Save brightness" -command lightApply
+# Save on release, not on every pointer motion; preserve the on/off state.
+bind $p.brightness <ButtonRelease-1> {after idle lightApply}
 pack $p.apply -fill x -padx 16 -pady 4
 frame $p.switch
 button $p.switch.on -text "Turn on" -command {lightSwitch light-on}
@@ -195,6 +200,11 @@ button $p.dns -text "Network and DNS status" -command {term "Network status" sh 
 foreach w {on off cli dns} {pack $p.$w -fill x -padx 12 -pady 7}
 
 set p .tabs.power
+if {$ledMode ne "unavailable"} {
+    choose $p led "Power indicator" ledMode {on off}
+    button $p.ledapply -text "Save indicator state" -command {act led $ledMode}
+    pack $p.ledapply -fill x -padx 12 -pady 4
+}
 if {[llength $governors]} {
     choose $p cpu "CPU governor" governor $governors
     button $p.cpuapply -text "Apply CPU policy and save" -command {act governor $governor}
@@ -219,6 +229,17 @@ button $p.off -text "Shut down" -command {power poweroff}
 pack $p.reboot $p.off -fill x -padx 12 -pady 4
 
 set p .tabs.system
+frame $p.host
+label $p.host.label -text "Hostname"
+entry $p.host.entry -textvariable host -width 18
+button $p.host.apply -text "Save" -command {act hostname $host}
+pack $p.host.label $p.host.entry $p.host.apply -side left -padx 4
+pack $p.host -fill x -padx 8 -pady 4
+frame $p.ntp
+button $p.ntp.on -text "Automatic time on" -command {act ntp true; updateStatus}
+button $p.ntp.off -text "Automatic time off" -command {act ntp false; updateStatus}
+pack $p.ntp.on $p.ntp.off -side left -fill x -expand 1 -padx 3
+pack $p.ntp -fill x -padx 8 -pady 4
 frame $p.actions
 button $p.actions.time -text "Time zone" -command {term "Time zone (root password)" su -c {dpkg-reconfigure tzdata}}
 button $p.actions.admin -text "Administrator" -command {term "Administrator login" su -}
@@ -227,7 +248,7 @@ pack $p.actions.time $p.actions.admin $p.actions.refresh -side left -expand 1 -f
 pack $p.actions -fill x -padx 8 -pady 5
 frame $p.details
 # Keep the widget path stable for updateStatus; no polling in this panel.
-text $p.info -height 15 -wrap word -font {Liberation Mono 12} -background white -foreground black -yscrollcommand [list $p.scroll set]
+text $p.info -height 15 -wrap word -font {{Liberation Mono} 12} -background white -foreground black -yscrollcommand [list $p.scroll set]
 scrollbar $p.scroll -orient vertical -width 40 -command [list $p.info yview]
 pack $p.scroll -side right -fill y
 pack $p.info -fill both -expand 1 -padx 8 -pady 5

@@ -6,6 +6,7 @@ proc exec {args} {
             desktop-status {return "PB626_BUTTONS=pages\nPB626_EPD_GRAY_PROFILE=photo"}
             light-status {return "1 37"}
             power-key-status {return "ignore"}
+            led-status {return "on"}
             default {error "unexpected privileged operation"}
         }
     }

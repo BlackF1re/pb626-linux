@@ -171,3 +171,11 @@ inside each bounded XShm strip, replacing the 98540-byte scratch array.
 The parent waits for Xorg/session or bridge exit with Bash wait -n on Debian,
 removing a one-second process-existence polling loop. Xvfb regressions cover
 16/24-bit full and partial captures against the original full-frame reference.
+
+Brightness changes in the centre preserve the independent light switch
+and save on slider release (or the Save brightness button), not on every
+motion event. The single board GPIO LED can be switched on/off and its
+setting restored at boot. System includes hostname and NTP controls via
+hostnamectl/timedatectl. Tk fonts use proper family-list syntax; the GUI
+smoke test actually creates the five tabs under Xvfb rather than checking
+only Tcl completeness.

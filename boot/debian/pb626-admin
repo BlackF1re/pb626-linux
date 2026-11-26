@@ -70,6 +70,20 @@ apply_governor() {
         printf '%s\n' "$1" >"$policy/scaling_governor" || return 1
     done
 }
+# The validated board has one GPIO LED. Refuse ambiguous inventories.
+led_path() {
+    set -- /sys/class/leds/*
+    [ "$#" -eq 1 ] && [ -r "$1/max_brightness" ] || return 1
+    printf '%s\n' "$1"
+}
+apply_led() {
+    case "$1" in on|off) ;; *) return 2 ;; esac
+    led=$(led_path) || return 1
+    if [ -w "$led/trigger" ]; then printf 'none\n' >"$led/trigger" || return 1; fi
+    raw=0
+    if [ "$1" = on ]; then raw=$(cat "$led/max_brightness") || return 1; fi
+    printf '%s\n' "$raw" >"$led/brightness"
+}
 valid_desktop() {
     case "$1" in arrows|pages) ;; *) return 2 ;; esac
     case "$2" in keyboard|home) ;; *) return 2 ;; esac
@@ -80,9 +94,11 @@ valid_desktop() {
     [ "$6" = 0 ] || [ -f /etc/pb626/suspend-qualified ]
 }
 case "${1:-}" in
-frontlight|light-on|light-off|light-toggle)
+frontlight|light-level|light-on|light-off|light-toggle)
     if [ "$1" = frontlight ]; then
         [ "$#" -eq 2 ] && valid_percent "$2" || exit 2
+    elif [ "$1" = light-level ]; then
+        [ "$#" -eq 2 ] && valid_level "$2" || exit 2
     else
         [ "$#" -eq 1 ] || exit 2
     fi
@@ -90,6 +106,7 @@ frontlight|light-on|light-off|light-toggle)
     read_light
     case "$1" in
         frontlight) if [ "$2" = 0 ]; then enabled=0; else level=$2; enabled=1; fi ;;
+        light-level) level=$2 ;;
         light-on) enabled=1 ;;
         light-off) enabled=0 ;;
         light-toggle) enabled=$((1-enabled)) ;;
@@ -114,6 +131,37 @@ restore-board|restore-light)
         read -r governor <"$state/governor"
         apply_governor "$governor" || echo "CPU governor restore failed" >&2
     fi
+    if [ "$1" = restore-board ] && [ -r "$state/led" ]; then
+        read -r led_mode <"$state/led"
+        apply_led "$led_mode" || echo "LED restore failed" >&2
+    fi
+    ;;
+led)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in on|off) ;; *) exit 2 ;; esac
+    lock_state
+    apply_led "$2"
+    atomic_save led "$2"
+    ;;
+led-status)
+    [ "$#" -eq 1 ] || exit 2
+    if led=$(led_path); then
+        raw=$(cat "$led/brightness")
+        if [ "$raw" -gt 0 ]; then echo on; else echo off; fi
+    else
+        echo unavailable
+    fi
+    ;;
+ntp)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in true|false) ;; *) exit 2 ;; esac
+    exec timedatectl set-ntp "$2"
+    ;;
+hostname)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in ''|-*|*-|*[!a-zA-Z0-9-]*) exit 2 ;; esac
+    [ "${#2}" -le 63 ] || exit 2
+    exec hostnamectl hostname "$2"
     ;;
 governor)
     [ "$#" -eq 2 ] && valid_governor "$2" || exit 2

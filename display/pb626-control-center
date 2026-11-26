@@ -2,7 +2,7 @@
 # Native-only on-demand panel. No periodic refresh or privileged GUI.
 tk_setPalette background #eeeeee foreground black activeBackground #bbbbbb \
     activeForeground black selectBackground #222222 selectForeground white
-option add *Font {Liberation Sans 15}
+option add *Font {{Liberation Sans} 15}
 option add *Button.padY 14
 option add *Button.padX 12
 option add *Scale.sliderLength 36
@@ -63,7 +63,7 @@ proc wifi {} {
 proc power {action} {
     if {[tk_messageBox -type yesno -icon question -message "Really $action the reader?"] eq "yes"} {admin $action}
 }
-label .heading -text "System settings" -font {Liberation Sans 22 bold}
+label .heading -text "System settings" -font {{Liberation Sans} 22 bold}
 pack .heading -pady 12
 labelframe .light -text "Frontlight"
 set level [brightness]
@@ -102,7 +102,7 @@ button .config.time -text "Time zone" -command configureTime
 button .config.host -text "Hostname" -command configureHostname
 pack .config.time .config.host -side left -fill x -expand 1 -padx 4
 pack .config -fill x -padx 12 -pady 5
-text .status -height 12 -wrap none -font {Liberation Mono 11} -background white -foreground black
+text .status -height 12 -wrap none -font {{Liberation Mono} 11} -background white -foreground black
 pack .status -fill both -expand 1 -padx 12 -pady 6
 frame .power
 button .power.reboot -text "Restart" -command {power reboot}
