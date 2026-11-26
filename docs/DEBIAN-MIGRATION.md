@@ -295,3 +295,25 @@ session cgroup because that would also protect a large browser.
 Targeted timer slack coalesces background service wakeups without
 adding delay to the E Ink renderer, UI or network application threads.
 GTK/X11 defaults retain all 16 panel levels for content.
+
+## Power-off screen and battery safety
+
+Settings > Display opens an on-demand unprivileged image picker. It
+supports cropping, rotation and zoom; it generates a portrait 758x1024
+image dithered to the 16 physical gray levels. The privileged helper
+accepts only an exact-size raw grayscale stream on stdin and atomically
+writes a root-owned PGM. There is no privileged image decoder or resident
+picker. No selection means a white screen. A poweroff.target oneshot
+runs after desktop shutdown (not on reboot), uses the standalone renderer
+with GC16 scrubbing, and allows panel rail shutdown before power removal.
+Verify the ordering and shutdown time on real hardware.
+
+Settings > Power configures low battery warning (default 10%) and
+critical shutdown (default 3%). power_supply change uevents request a
+bounded systemd oneshot, with a coalesced one-minute fallback timer.
+The warning is an on-demand X11 message; no resident notification daemon.
+Critical poweroff requires two low samples at least ten seconds apart,
+a single valid battery in Discharging state and no reported online
+external supply. Unknown telemetry fails safe; poweroff uses PID 1, not
+a direct PMIC cutoff. The physical AXP209 emergency hold is unchanged.
+Verify real battery/charger telemetry and poweroff before relying on it.

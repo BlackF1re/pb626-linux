@@ -1,0 +1,11 @@
+[Unit]
+Description=Check PocketBook battery and charger state
+ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
+After=pb626-board.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/pb626-admin battery-check
+TimeoutStartSec=15s
+Nice=5
+TimerSlackNSec=500ms

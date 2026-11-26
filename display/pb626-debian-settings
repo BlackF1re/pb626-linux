@@ -65,6 +65,26 @@ proc wifi {} {
         }
     }
 }
+proc batterySettings {} {
+    if {[winfo exists .battery]} {raise .battery; return}
+    if {[catch {query battery-status} result]} {return}
+    lassign $result ::batteryWarn ::batteryCritical
+    toplevel .battery
+    wm title .battery "Battery policy"
+    label .battery.note -text "Warning and shutdown while discharging only.\nShutdown requires two confirmed low samples." -justify left
+    pack .battery.note -pady 8
+    choose .battery warn "Warn at (%)" batteryWarn {5 7 10 15 20 25 30}
+    choose .battery critical "Shut down at (%)" batteryCritical {2 3 4 5 7 10}
+    button .battery.save -text "Save" -command {
+        if {[act battery-settings $::batteryWarn $::batteryCritical]} {destroy .battery}
+    }
+    pack .battery.save -fill x -padx 12 -pady 8
+}
+proc shutdownPicker {} {
+    if {[catch {exec /usr/bin/pb626-shutdown-picker &} err]} {
+        tk_messageBox -icon error -message $err
+    }
+}
 proc power {action} {
     if {[tk_messageBox -type yesno -icon question -message "Really $action the reader?"] eq "yes"} {
         act $action
@@ -181,6 +201,8 @@ label $p.note -text "16 panel gray levels in both X11 modes.\nDisplay profile ch
 pack $p.note -pady 6
 button $p.save -text "Save display / desktop settings" -command desktopApply
 pack $p.save -fill x -padx 12 -pady 5
+button $p.offimage -text "Power-off image…" -command shutdownPicker
+pack $p.offimage -fill x -padx 12 -pady 4
 button $p.restart -text "Restart desktop" -command desktopRestart
 pack $p.restart -fill x -padx 12 -pady 5
 
@@ -231,6 +253,8 @@ if {$qualified} {
     label $p.sleepnote -text "Lock is available now. Real s2idle is disabled until wakeup is qualified; deep sleep needs a resume-aware SPL." -wraplength 620 -justify left
     pack $p.sleepnote -padx 12 -pady 10
 }
+button $p.battery -text "Battery warning / shutdown…" -command batterySettings
+pack $p.battery -fill x -padx 12 -pady 4
 button $p.reboot -text "Restart reader" -command {power reboot}
 button $p.off -text "Shut down" -command {power poweroff}
 pack $p.reboot $p.off -fill x -padx 12 -pady 4

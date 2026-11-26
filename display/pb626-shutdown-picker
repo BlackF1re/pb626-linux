@@ -1,0 +1,129 @@
+#!/usr/bin/python3
+"""On-demand portrait power-off image picker. Decoder runs as reader."""
+import subprocess
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from PIL import Image, ImageOps, ImageTk
+
+W, H = 758, 1024
+PW, PH = 300, 405
+# Keep decompression bounded on a 256 MiB device.
+Image.MAX_IMAGE_PIXELS = 12_000_000
+
+class Picker:
+    def __init__(self, root):
+        self.root = root
+        self.source = None
+        self.preview = None
+        self.x = self.y = 0.5
+        self.zoom = tk.DoubleVar(value=1)
+        root.title("Power-off image")
+        root.configure(bg="white")
+        root.option_add("*Font", ("Liberation Sans", 15))
+        root.option_add("*Background", "white")
+        root.option_add("*Foreground", "black")
+        root.option_add("*activeBackground", "black")
+        root.option_add("*activeForeground", "white")
+        tk.Label(root, text="Choose, rotate, zoom and drag to crop").pack(pady=8)
+        self.canvas = tk.Canvas(root, width=PW, height=PH, bg="white",
+                                highlightthickness=1, highlightbackground="black")
+        self.canvas.pack(padx=15, pady=4)
+        self.canvas.bind("<ButtonPress-1>", self.press)
+        self.canvas.bind("<ButtonRelease-1>", self.release)
+        self.scale = tk.Scale(root, from_=1, to=4, resolution=0.1,
+                              variable=self.zoom, orient="horizontal",
+                              length=400, label="Zoom")
+        self.scale.pack()
+        self.scale.bind("<ButtonRelease-1>", lambda e: self.draw())
+        for title, action in (("Choose image", self.choose), ("Rotate 90°", self.rotate),
+                              ("Save image", self.save), ("Use white screen", self.clear),
+                              ("Close", root.destroy)):
+            tk.Button(root, text=title, command=action, pady=5).pack(fill="x", padx=15, pady=3)
+
+    def choose(self):
+        path = filedialog.askopenfilename(filetypes=[
+            ("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff"), ("All files", "*")])
+        if not path:
+            return
+        try:
+            with Image.open(path) as img:
+                if img.width * img.height > Image.MAX_IMAGE_PIXELS:
+                    raise ValueError("Image exceeds the 12 megapixel memory limit")
+                img.draft("RGB", (2 * W, 2 * H))
+                img = ImageOps.exif_transpose(img)
+                img.thumbnail((3072, 3072), Image.Resampling.LANCZOS)
+                rgba = img.convert("RGBA")
+                background = Image.new("RGBA", rgba.size, "white")
+                background.alpha_composite(rgba)
+                self.source = background.convert("L")
+            self.zoom.set(1)
+            self.x = self.y = 0.5
+            self.draw()
+        except Exception as exc:
+            messagebox.showerror("Image error", str(exc))
+
+    def box(self):
+        w, h = self.source.size
+        cw = min(w, h * W / H) / self.zoom.get()
+        ch = cw * H / W
+        left = min(max(self.x * w - cw / 2, 0), w - cw)
+        top = min(max(self.y * h - ch / 2, 0), h - ch)
+        return left, top, left + cw, top + ch
+
+    def rendered(self, size):
+        img = self.source.resize(size, Image.Resampling.LANCZOS, box=self.box())
+        # Quantize to the actual 16 panel levels, with error diffusion.
+        palette = Image.new("P", (1, 1))
+        colors = [v for i in range(16) for v in (i * 17,) * 3]
+        palette.putpalette(colors + [255] * (768 - len(colors)))
+        return img.convert("RGB").quantize(palette=palette,
+                            dither=Image.Dither.FLOYDSTEINBERG).convert("L")
+
+    def draw(self):
+        if self.source is not None:
+            self.preview = ImageTk.PhotoImage(self.rendered((PW, PH)))
+            self.canvas.delete("all")
+            self.canvas.create_image(0, 0, image=self.preview, anchor="nw")
+
+    def press(self, event):
+        self.start = event.x, event.y
+
+    def release(self, event):
+        if self.source is None or not hasattr(self, "start"):
+            return
+        left, top, right, bottom = self.box()
+        self.x = ((left + right) / 2 - (event.x-self.start[0]) *
+                  (right-left)/PW) / self.source.width
+        self.y = ((top + bottom) / 2 - (event.y-self.start[1]) *
+                  (bottom-top)/PH) / self.source.height
+        self.x = min(max(self.x, 0), 1)
+        self.y = min(max(self.y, 0), 1)
+        self.draw()
+
+    def rotate(self):
+        if self.source is not None:
+            self.source = self.source.transpose(Image.Transpose.ROTATE_90)
+            self.x = self.y = 0.5
+            self.draw()
+
+    def action(self, verb, data=None):
+        try:
+            subprocess.run(["/usr/bin/doas", "/usr/sbin/pb626-admin", verb],
+                           input=data, check=True, capture_output=True, timeout=15)
+            messagebox.showinfo("Saved", "Power-off screen updated")
+        except (OSError, subprocess.SubprocessError) as exc:
+            messagebox.showerror("Save failed", str(exc))
+
+    def save(self):
+        if self.source is None:
+            messagebox.showinfo("Choose image", "Choose an image first.")
+            return
+        self.action("shutdown-image-save", self.rendered((W, H)).tobytes())
+
+    def clear(self):
+        self.action("shutdown-image-clear")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    Picker(root)
+    root.mainloop()

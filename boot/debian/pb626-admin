@@ -148,6 +148,37 @@ valid_desktop() {
     case "$6" in 0|5|10|15|30|60) ;; *) return 2 ;; esac
     [ "$6" = 0 ] || [ -f /etc/pb626/suspend-qualified ]
 }
+# A single real battery, sane integer capacity, and confirmed discharge.
+# Unknown or contradictory charger telemetry must never trigger shutdown.
+battery_capacity() {
+    battery=
+    for p in /sys/class/power_supply/*; do
+        [ -r "$p/type" ] || continue
+        case "$(cat "$p/type")" in
+            Battery) [ -z "$battery" ] || return 1; battery=$p ;;
+            *) if [ -r "$p/online" ]; then
+                   [ "$(cat "$p/online")" = 0 ] || return 1
+               fi ;;
+        esac
+    done
+    [ -n "$battery" ] && [ "$(cat "$battery/status")" = Discharging ] || return 1
+    capacity=$(cat "$battery/capacity") || return 1
+    valid_percent "$capacity" || return 1
+    printf '%s\n' "$capacity"
+}
+valid_battery() {
+    valid_percent "$1" && valid_percent "$2" &&
+    [ "$1" -ge 5 ] && [ "$1" -le 30 ] &&
+    [ "$2" -ge 2 ] && [ "$2" -le 10 ] && [ "$1" -gt "$2" ]
+}
+read_battery() {
+    warning=10 critical=3
+    if [ -r "$state/battery" ]; then
+        a= b= extra=
+        read -r a b extra <"$state/battery" || :
+        if [ -z "$extra" ] && valid_battery "$a" "$b"; then warning=$a critical=$b; fi
+    fi
+}
 case "${1:-}" in
 frontlight|light-level|light-on|light-off|light-toggle)
     if [ "$1" = frontlight ]; then
@@ -319,9 +350,95 @@ wifi-off)
     rfkill block wifi
     systemctl disable --now iwd.service
     ;;
+battery-status)
+    [ "$#" -eq 1 ] || exit 2
+    read_battery
+    printf '%s %s\n' "$warning" "$critical"
+    ;;
+battery-settings)
+    [ "$#" -eq 3 ] && valid_battery "$2" "$3" || exit 2
+    lock_state
+    atomic_save battery "$2 $3"
+    ;;
+battery-check)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    read_battery
+    if ! capacity=$(battery_capacity); then
+        rm -f /run/pb626-battery-warning /run/pb626-battery-critical
+        exit 0
+    fi
+    if [ "$capacity" -le "$warning" ]; then
+        if [ ! -e /run/pb626-battery-warning ]; then
+            # Separate on-demand GUI notification; no modal wait as root.
+            if systemctl is-active --quiet pb626-desktop.service &&
+               [ -s /run/pb626-desktop/ready ]; then
+                systemctl --no-block start pb626-battery-warning.service
+                : > /run/pb626-battery-warning
+            fi
+        fi
+    elif [ "$capacity" -ge "$((warning+3))" ]; then
+        rm -f /run/pb626-battery-warning
+    fi
+    if [ "$capacity" -le "$critical" ]; then
+        # Confirm across independent samples, not a burst of uevents.
+        read -r uptime rest </proc/uptime
+        now="${uptime%%.*}"
+        first=
+        if [ -r /run/pb626-battery-critical ]; then read -r first </run/pb626-battery-critical || :; fi
+        case "$first" in ''|*[!0-9]*) printf '%s\n' "$now" >/run/pb626-battery-critical ;;
+            *) if [ "$now" -ge "$((first+10))" ]; then
+                   # Recheck charger state immediately before asking PID 1.
+                   if current=$(battery_capacity) && [ "$current" -le "$critical" ]; then
+                       systemctl --no-block poweroff
+                   fi
+               fi ;;
+        esac
+    else
+        rm -f /run/pb626-battery-critical
+    fi
+    ;;
+shutdown-image-status)
+    [ "$#" -eq 1 ] || exit 2
+    if [ -f "$state/shutdown.pgm" ]; then echo custom; else echo white; fi
+    ;;
+shutdown-image-clear)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    rm -f "$state/shutdown.pgm"
+    ;;
+shutdown-image-save)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    # Only bounded raw grayscale samples from stdin, never a user-selected
+    # path or image decoder running as root. All bytes are valid PGM samples.
+    tmp=$(mktemp "$state/.shutdown.XXXXXX")
+    trap 'rm -f "$tmp"' EXIT HUP INT TERM
+    printf 'P5\n758 1024\n255\n' >"$tmp"
+    head -c 776193 >>"$tmp"
+    [ "$(wc -c <"$tmp")" -eq 776208 ] || exit 2
+    mv -f "$tmp" "$state/shutdown.pgm"
+    ;;
+poweroff-screen)
+    [ "$#" -eq 1 ] || exit 2
+    # The standalone worker owns the panel only after the desktop has stopped.
+    if systemctl is-active --quiet pb626-desktop.service; then exit 1; fi
+    image="$state/shutdown.pgm"
+    if [ ! -f "$image" ]; then
+        image=$(mktemp /run/pb626-white.XXXXXX)
+        trap 'rm -f "$image"' EXIT HUP INT TERM
+        printf 'P5\n758 1024\n255\n' >"$image"
+        head -c 776192 /dev/zero | tr '\000' '\377' >>"$image"
+    fi
+    for light in /sys/class/backlight/*; do
+        [ ! -w "$light/bl_power" ] || printf '4\n' >"$light/bl_power" || :
+    done
+    apply_led off || :
+    PB626_EPD_RENDER=indexed /usr/bin/pb626-epd /lib/firmware/pb626/default.wbf full "$image"
+    ;;
 reboot|poweroff)
     [ "$#" -eq 1 ] || exit 2
-    exec systemctl "$1"
+    exec systemctl --no-block "$1"
     ;;
 *) exit 2 ;;
 esac

@@ -97,4 +97,20 @@ admin power-key s2idle
 test "$(admin power-key-status)" = s2idle
 admin desktop-settings arrows home menu balanced 24 30
 admin desktop-status | grep -qx PB626_IDLE_MINUTES=30
-echo "Debian frontlight persistence, native settings and qualification gates passed"
+test "$(admin battery-status)" = '10 3'
+admin battery-settings 15 4
+test "$(admin battery-status)" = '15 4'
+for args in 'battery-settings 4 3' 'battery-settings 5 5' 'battery-settings 31 3' 'battery-settings 10 1'; do
+    if admin $args; then echo "Invalid battery policy: $args" >&2; exit 1; fi
+done
+test "$(admin shutdown-image-status)" = white
+if printf bad | admin shutdown-image-save; then exit 1; fi
+test "$(admin shutdown-image-status)" = white
+head -c 776192 /dev/zero | admin shutdown-image-save
+test "$(admin shutdown-image-status)" = custom
+test "$(wc -c <"$tmp/state/shutdown.pgm")" -eq 776208
+if head -c 776193 /dev/zero | admin shutdown-image-save; then exit 1; fi
+test "$(wc -c <"$tmp/state/shutdown.pgm")" -eq 776208
+admin shutdown-image-clear
+test "$(admin shutdown-image-status)" = white
+echo "Debian frontlight persistence, native settings, battery policy and image validation passed"

@@ -1,0 +1,2 @@
+# Do not run a long task in udev; coalesce requests in the oneshot service.
+SUBSYSTEM=="power_supply", ACTION=="change", RUN+="/usr/bin/systemctl --no-block start pb626-battery.service"

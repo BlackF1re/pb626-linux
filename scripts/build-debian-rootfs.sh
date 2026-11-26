@@ -54,7 +54,7 @@ runtime=(
   xinit xauth x11-xserver-utils x11-utils x11-apps x11-xkb-utils xkb-data xrestop
   xfonts-base xfonts-utils xbitmaps fonts-liberation xdotool xterm nedit
   matchbox-window-manager matchbox-desktop matchbox-keyboard matchbox-panel
-  matchbox-common libmatchbox1 tk mupdf
+  matchbox-common libmatchbox1 tk python3-tk python3-pil.imagetk mupdf
   libx11-6 libxext6 libxtst6 libxdamage1 libxfixes3 libxrandr2
 )
 includes=$(IFS=,; echo "${runtime[*]}")
@@ -171,7 +171,7 @@ sudo install -D -m 755 boot/native/pb626-usb "$pkg/usr/libexec/pb626-usb"
 sudo install -D -m 755 scripts/profile-memory.sh "$pkg/usr/sbin/pb626-profile-memory"
 sudo install -D -m 755 scripts/inspect-live.sh "$pkg/usr/sbin/inspect-pb626"
 sudo install -D -m 755 scripts/probe-device.sh "$pkg/usr/sbin/probe-pb626"
-sudo install -m 755 display/pb626-open-document "$pkg/usr/bin/"
+sudo install -m 755 display/pb626-open-document display/pb626-shutdown-picker "$pkg/usr/bin/"
 sed '1s|^#!/bin/sh$|#!/bin/bash|' display/pb626-desktop | sudo tee "$pkg/usr/bin/pb626-desktop" >/dev/null
 sudo chmod 755 "$pkg/usr/bin/pb626-desktop"
 sudo install -m 755 display/pb626-debian-settings "$pkg/usr/bin/pb626-control-center"
@@ -200,7 +200,7 @@ Package: pb626-runtime
 Version: $version
 Architecture: armhf
 Maintainer: BlackF1re <55582873+BlackF1re@users.noreply.github.com>
-Depends: libc6, bash, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, libxrandr2, tk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
+Depends: libc6, bash, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, libxrandr2, tk, python3-tk, python3-pil.imagetk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
 Description: PocketBook 626 native E Ink desktop and hardware integration
  Includes the scanout worker, X11 bridge, patched Matchbox clients and
  board-specific systemd services. Uses the paired PB626 kernel and DTB.
@@ -254,7 +254,7 @@ sudo install -d "$root/var/log/journal"
 # Offline systemctl changes unit links, never runs a daemon in the chroot.
 ctl() { sudo systemctl --root="$root" "$@"; }
 ctl set-default multi-user.target
-ctl enable pb626-board.service pb626-desktop.service pb626-usb.service \
+ctl enable pb626-board.service pb626-desktop.service pb626-usb.service pb626-battery.timer pb626-poweroff-screen.service \
   systemd-resolved.service systemd-timesyncd.service
 # iwd starts on demand; user can enable it persistently from Settings.
 # D-Bus activation is permitted for the normal iwgtk/iwctl clients.
