@@ -130,13 +130,21 @@ jobs:
           )
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
           echo "Toolchain fingerprint: $fingerprint"
+      - name: Restore complete verified kernel/DTB/UAPI stage
+        id: complete
+        uses: actions/cache@v4
+        with:
+          path: kernel-complete
+          key: pb626-megi-complete-v1-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'board/**', 'scripts/build-megi-variants.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch') }}
       - name: Restore prebuilt kernel and modules cache
+        if: steps.complete.outputs.cache-hit != 'true'
         id: cache
         uses: actions/cache@v4
         with:
           path: kernel-cache
           key: pb626-megi-kernel-v3-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch') }}
       - name: Fetch pinned Megi 7.2 source and verify A13 drivers
+        if: steps.complete.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           git init -q linux
@@ -163,6 +171,7 @@ jobs:
           git -C linux apply --check "$GITHUB_WORKSPACE/patches/axp209-boot-source.patch"
           git -C linux apply "$GITHUB_WORKSPACE/patches/axp209-boot-source.patch"
       - name: Verify cached Kconfig reproducibility
+        if: steps.complete.outputs.cache-hit != 'true'
         id: kconfig
         run: |
           set -euo pipefail
@@ -180,7 +189,7 @@ jobs:
             echo "rebuild=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Compile zImage and all modules on cache miss or config drift
-        if: steps.cache.outputs.cache-hit != 'true' || steps.kconfig.outputs.rebuild == 'true'
+        if: steps.complete.outputs.cache-hit != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.kconfig.outputs.rebuild == 'true')
         run: |
           set -euo pipefail
           export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
@@ -209,6 +218,7 @@ jobs:
           echo 'Local patch: patches/sun4i-lradc-system-pm.patch' >> kernel-cache/KERNEL-SOURCE.txt
           echo 'Local patch: patches/axp209-boot-source.patch' >> kernel-cache/KERNEL-SOURCE.txt
       - name: Check cached or newly compiled zImage, modules and USB contract
+        if: steps.complete.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           test -s kernel-cache/pb626-megi-zImage
@@ -235,13 +245,14 @@ jobs:
           echo "Prebuilt kernel cache hit: ${{ steps.cache.outputs.cache-hit }}"
           echo "Rebuilt for Kconfig drift: ${{ steps.kconfig.outputs.rebuild }}"
       - name: Restore validated DTBs
+        if: steps.complete.outputs.cache-hit != 'true'
         id: dtbs
         uses: actions/cache@v4
         with:
           path: dtb-stage
           key: pb626-dtbs-v1-facc87117511221-${{ runner.os }}-${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('kernel-cache/pb626-megi.config', 'board/**', 'scripts/build-megi-variants.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch') }}
       - name: Build current Device Trees on cache miss
-        if: steps.dtbs.outputs.cache-hit != 'true'
+        if: steps.complete.outputs.cache-hit != 'true' && steps.dtbs.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
@@ -256,8 +267,10 @@ jobs:
           bash scripts/build-megi-variants.sh linux dtb-stage "$PWD"
           (cd dtb-stage && sha256sum pb626-*.dtb > SHA256SUMS)
       - name: Verify DTB cache
+        if: steps.complete.outputs.cache-hit != 'true'
         run: (cd dtb-stage && sha256sum -c SHA256SUMS)
       - name: Assemble portable kernel-stage artifact
+        if: steps.complete.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p kernel-stage
@@ -271,6 +284,19 @@ jobs:
             diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") || true
             exit 1
           fi
+      - name: Cache verified kernel/DTBs/UAPI without checkout identity or RAM worker
+        if: steps.complete.outputs.cache-hit != 'true'
+        run: |
+          cp -a kernel-stage kernel-complete
+          (cd kernel-complete && find . -type f ! -path ./SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum > SHA256SUMS)
+      - name: Verify and reuse complete cache without fetching Linux source
+        if: steps.complete.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          (cd kernel-complete && sha256sum -c SHA256SUMS)
+          bash scripts/configure-megi-kernel.sh --check kernel-complete/pb626-megi.config
+          cp -a kernel-complete kernel-stage
+          rm kernel-stage/SHA256SUMS
       - name: Restore static RAM E Ink worker
         if: ${{ !inputs.debian_only }}
         id: ram-worker
