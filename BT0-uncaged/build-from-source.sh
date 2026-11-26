@@ -34,15 +34,36 @@ git grep -n -i -E '53555350|SDR_DPCR|STANDBY_GP|super.standby|cpu_resume' -- arc
 cp arch/arm/mach-sunxi/dram_sun4i.c "$out/"
 cp arch/arm/mach-sunxi/board.c "$out/sunxi-board.c"
 cp configs/pocketbook_touch_lux_3_defconfig "$out/"
+cat "$out/pocketbook_touch_lux_3_defconfig"
+cat "$out/resume-audit.txt" | grep -Ei 'sunxi|sun5i|sun4i' | head -n 80 || :
+git ls-remote --heads https://codeberg.org/megi/u-boot.git | grep -Ei 'sunxi|pocketbook|master|main|standby|suspend' | head -n 40 || :
 # Native candidate: use the existing raw uImage position and the
 # existing LRADC hook linked by symbols. Full flash remains gated.
 python3 "$here/prepare-source-hook.py" "$PWD"
-scripts/config --enable SPL_LEGACY_IMAGE_FORMAT --enable SPL_LEGACY_IMAGE_CRC_CHECK \
-    --enable SYS_MMCSD_RAW_MODE_U_BOOT_USE_SECTOR --set-val SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR 0x50 \
-    --disable SYS_MMCSD_RAW_MODE_U_BOOT_USE_PARTITION --disable SPL_LOAD_FIT
+# Megi's pinned tree is U-Boot 2021.04 and does not ship scripts/config.
+# Use the version's own Kconfig names and normalize with olddefconfig.
+python3 - <<'PY'
+from pathlib import Path
+p=Path(".config")
+cfg={
+    "SPL_LEGACY_IMAGE_SUPPORT":"y",
+    "SPL_LEGACY_IMAGE_CRC_CHECK":"y",
+    "SYS_MMCSD_RAW_MODE_U_BOOT_USE_SECTOR":"y",
+    "SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR":"0x50",
+    "SYS_MMCSD_RAW_MODE_U_BOOT_USE_PARTITION":"n",
+    "SPL_LOAD_FIT":"n",
+    "MMC_SUNXI_SLOT_EXTRA":"2",
+}
+lines=[line for line in p.read_text().splitlines()
+       if not any(line.startswith("CONFIG_"+k+"=") or line=="# CONFIG_"+k+" is not set" for k in cfg)]
+for k,v in cfg.items():
+    lines.append("# CONFIG_"+k+" is not set" if v=="n" else "CONFIG_"+k+"="+v)
+p.write_text("\n".join(lines)+"\n")
+PY
 make olddefconfig
 grep -Fx 'CONFIG_SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR=0x50' .config
-grep -Fx 'CONFIG_SPL_LEGACY_IMAGE_FORMAT=y' .config
+grep -Fx 'CONFIG_SPL_LEGACY_IMAGE_SUPPORT=y' .config
+grep -Fx 'CONFIG_MMC_SUNXI_SLOT_EXTRA=2' .config
 cp .config "$out/native.config"
 make -j"$(nproc)" spl/u-boot-spl.bin spl/sunxi-spl.bin
 cp spl/sunxi-spl.bin "$out/BT0-uncaged-source-candidate.bin"
@@ -78,5 +99,5 @@ git -C "$work/sunxi-tools" apply "$repo/patches/sunxi-fel-keep-mmu-off.patch"
 make -C "$work/sunxi-tools" sunxi-fel
 cp "$work/sunxi-tools/sunxi-fel" "$out/"
 printf '%s\n' "$toolsrev" >"$out/SUNXI-TOOLS-REV"
-(cd "$out" && sha256sum * >SHA256SUMS)
+(cd "$out" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum >SHA256SUMS)
 echo 'SOURCE CANDIDATES ONLY: no flash approval; no demonstrated deep resume'

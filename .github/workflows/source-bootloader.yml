@@ -21,10 +21,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-arm-linux-gnueabihf \
             libc6-dev-armhf-cross bc bison flex libssl-dev python3-pyelftools \
-            python3-setuptools device-tree-compiler libusb-1.0-0-dev pkg-config
+            python3-setuptools device-tree-compiler libusb-1.0-0-dev libfdt-dev zlib1g-dev pkg-config
       - name: Build independently from pinned source
         run: bash BT0-uncaged/build-from-source.sh source-boot-candidates
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: pb626-source-boot-candidates-NOT-FOR-FLASH
           path: source-boot-candidates/

@@ -32,7 +32,7 @@ storage_init() {
                     ok=no
                 fi
             done
-            if [ "$ok" = yes ] && PB626_STORAGE_INIT=1 /bin/sh /run/pb626-restore-fast.sh probe >/run/board-id; then
+            if [ "$ok" = yes ] && PB626_STORAGE_INIT=1 /bin/sh /usr/libexec/pb626-restore-fast.sh probe >/run/board-id; then
                 touch /run/pb626-emmc-ready
             fi
         fi
