@@ -1,0 +1,95 @@
+diff --git a/include/linux/mfd/axp20x.h b/include/linux/mfd/axp20x.h
+--- a/include/linux/mfd/axp20x.h
++++ b/include/linux/mfd/axp20x.h
+@@ -964,8 +964,10 @@
+ 	int				irq;
+ 	unsigned long			irq_flags;
+ 	struct regmap			*regmap;
+-	struct regmap_irq_chip_data	*regmap_irqc;
+-	enum axp20x_variants		variant;
++	struct regmap_irq_chip_data	*regmap_irqc;
++	/* AXP209 input power status sampled before child probes. */
++	int pb626_boot_source;
++	enum axp20x_variants		variant;
+ 	int                             nr_cells;
+ 	const struct mfd_cell           *cells;
+ 	const struct regmap_config	*regmap_cfg;
+diff --git a/drivers/mfd/axp20x-i2c.c b/drivers/mfd/axp20x-i2c.c
+--- a/drivers/mfd/axp20x-i2c.c
++++ b/drivers/mfd/axp20x-i2c.c
+@@ -20,9 +20,45 @@
+ #include <linux/mfd/axp20x.h>
+ #include <linux/of.h>
+ #include <linux/regmap.h>
+-#include <linux/slab.h>
+-
+-static int axp20x_i2c_probe(struct i2c_client *i2c)
++#include <linux/slab.h>
++#include <linux/sysfs.h>
++
++/* AXP209 datasheet section 10.1: bit 0 describes PMIC startup
++ * origin; bits 7/5 describe physical ACIN/VBUS presence. Never
++ * confuse live input presence with the latched startup reason.
++ * Read-only board diagnostics, no raw userspace I2C or IRQ writes. */
++static ssize_t pb626_boot_source_show(struct device *dev,
++				     struct device_attribute *attr, char *buf)
++{
++	struct axp20x_dev *axp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%s\n", axp->pb626_boot_source < 0 ?
++			  "unknown" : axp->pb626_boot_source ?
++			  "external" : "nonexternal");
++}
++static DEVICE_ATTR_RO(pb626_boot_source);
++
++static ssize_t pb626_external_present_show(struct device *dev,
++					  struct device_attribute *attr, char *buf)
++{
++	struct axp20x_dev *axp = dev_get_drvdata(dev);
++	unsigned int val;
++	int ret = regmap_read(axp->regmap, AXP20X_PWR_INPUT_STATUS, &val);
++
++	if (ret)
++		return ret;
++	return sysfs_emit(buf, "%u\n", !!(val & (BIT(7) | BIT(5))));
++}
++static DEVICE_ATTR_RO(pb626_external_present);
++
++static struct attribute *pb626_power_attrs[] = {
++	&dev_attr_pb626_boot_source.attr,
++	&dev_attr_pb626_external_present.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(pb626_power);
++
++static int axp20x_i2c_probe(struct i2c_client *i2c)
+ {
+ 	struct axp20x_dev *axp20x;
+ 	int ret;
+@@ -46,8 +82,24 @@
+ 		return ret;
+ 	}
+ 
+-	return axp20x_device_probe(axp20x);
+-}
++	if (axp20x->variant == AXP209_ID) {
++		unsigned int val;
++
++		axp20x->pb626_boot_source = -1;
++		if (!regmap_read(axp20x->regmap, AXP20X_PWR_INPUT_STATUS, &val))
++			axp20x->pb626_boot_source = !!(val & BIT(0));
++	}
++
++	ret = axp20x_device_probe(axp20x);
++	if (ret)
++		return ret;
++	if (axp20x->variant == AXP209_ID) {
++		ret = devm_device_add_groups(axp20x->dev, pb626_power_groups);
++		if (ret)
++			dev_warn(axp20x->dev, "boot source attributes unavailable: %d\n", ret);
++	}
++	return 0;
++}
+ 
+ static void axp20x_i2c_remove(struct i2c_client *i2c)
+ {

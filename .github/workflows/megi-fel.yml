@@ -30,6 +30,12 @@ on:
       - 'patches/pwm-backlight-disconnect-when-off.patch'
       - 'patches/sun5i-eink-runtime-pm.patch'
       - 'patches/sun4i-lradc-system-pm.patch'
+      - 'patches/axp209-boot-source.patch'
+      - 'scripts/build-debian-recovery.sh'
+      - 'scripts/prepare-install.sh'
+      - 'scripts/installer/**'
+      - 'scripts/restore/**'
+      - 'boot/recovery/**'
   workflow_dispatch:
 
 concurrency:
@@ -116,7 +122,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kernel-cache
-          key: pb626-megi-kernel-v3-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch') }}
+          key: pb626-megi-kernel-v3-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/configure-megi-kernel.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch') }}
       - name: Fetch pinned Megi 7.2 source and verify A13 drivers
         run: |
           set -euo pipefail
@@ -141,6 +147,8 @@ jobs:
           git -C linux apply "$GITHUB_WORKSPACE/patches/sun5i-eink-runtime-pm.patch"
           git -C linux apply --check "$GITHUB_WORKSPACE/patches/sun4i-lradc-system-pm.patch"
           git -C linux apply "$GITHUB_WORKSPACE/patches/sun4i-lradc-system-pm.patch"
+          git -C linux apply --check "$GITHUB_WORKSPACE/patches/axp209-boot-source.patch"
+          git -C linux apply "$GITHUB_WORKSPACE/patches/axp209-boot-source.patch"
       - name: Verify cached Kconfig reproducibility
         id: kconfig
         run: |
@@ -186,6 +194,7 @@ jobs:
           echo 'Local patch: patches/a13-mbus-dma-devlink.patch' >> kernel-cache/KERNEL-SOURCE.txt
           echo 'Local patch: patches/sun5i-eink-runtime-pm.patch' >> kernel-cache/KERNEL-SOURCE.txt
           echo 'Local patch: patches/sun4i-lradc-system-pm.patch' >> kernel-cache/KERNEL-SOURCE.txt
+          echo 'Local patch: patches/axp209-boot-source.patch' >> kernel-cache/KERNEL-SOURCE.txt
       - name: Check cached or newly compiled zImage, modules and USB contract
         run: |
           set -euo pipefail
@@ -217,7 +226,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dtb-stage
-          key: pb626-dtbs-v1-facc87117511221-${{ runner.os }}-${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('kernel-cache/pb626-megi.config', 'board/**', 'scripts/build-megi-variants.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch') }}
+          key: pb626-dtbs-v1-facc87117511221-${{ runner.os }}-${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('kernel-cache/pb626-megi.config', 'board/**', 'scripts/build-megi-variants.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch') }}
       - name: Build current Device Trees on cache miss
         if: steps.dtbs.outputs.cache-hit != 'true'
         run: |
