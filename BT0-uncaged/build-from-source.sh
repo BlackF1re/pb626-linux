@@ -107,7 +107,17 @@ mkdir -p "$out/deep-resume"
 python3 "$here/prepare-source-resume.py" "$PWD"
 make -j"$(nproc)" spl/u-boot-spl.bin spl/sunxi-spl.bin
 cp spl/sunxi-spl.bin "$out/deep-resume/BT0-uncaged-deep-candidate.bin"
-test "$(stat -c '%s' "$out/deep-resume/BT0-uncaged-deep-candidate.bin")" -eq 24576
+python3 - "$out/deep-resume/BT0-uncaged-deep-candidate.bin" <<'PY'
+import pathlib,struct,sys
+p=pathlib.Path(sys.argv[1])
+b=bytearray(p.read_bytes())
+assert b[4:12]==b"eGON.BT0" and len(b)==24576
+n,want=struct.unpack_from("<II",b,12)[::-1]
+assert n==24576
+struct.pack_into("<I",b,12,0x5f0a6c39)
+assert sum(struct.unpack("<%dI"%(n//4),b))&0xffffffff==want
+print("Verified deep candidate eGON checksum and native slot size:",n)
+PY
 git diff >"$out/deep-resume/uboot-source-changes.patch"
 "${CROSS_COMPILE}nm" spl/u-boot-spl | grep -E 'pb626_menu_hook|save_boot_params|pb626_try_resume|dramc_init' >"$out/deep-resume/symbols.txt"
 cp .config "$out/deep-resume/native.config"

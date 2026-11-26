@@ -101,13 +101,16 @@ static void pb626_try_resume(struct dram_para *para)
 		return;
 	if (addr < 0x40008000U || addr >= 0x50000000U || (addr & 3))
 		return;
-	if (!(dcr & 1) || ((dcr >> 10) & 3) || ((dcr >> 1) & 3) > 1)
+	if (!(dcr & 1) || ((dcr >> 10) & 3))
+		return;
+	/* The pinned helper encodes para->io_width >> 3 directly. */
+	io = ((dcr >> 1) & 3) * 8U;
+	if (io != 8 && io != 16)
 		return;
 	density = (dcr >> 3) & 7;
 	if (density > 5)
 		return;
 	density = 256U << density;
-	io = 8U << ((dcr >> 1) & 3);
 	bus = 8U * (1U + ((dcr >> 6) & 7));
 	if ((bus != 16 && bus != 32) || bus < io ||
 	    density * (bus / io) / 8 != 256)
