@@ -79,7 +79,7 @@ struct renderer {
 	bool driven[DU4 + 1][TRANSITIONS];
 	uint64_t temperature_checked;
 	uint32_t neutral_data[2][GROUPS];
-	uint8_t previous[PIXELS], target[PIXELS];
+	uint8_t previous[PIXELS];
 	uint16_t transitions[PIXELS];
 	struct span_range rows[GATES];
 	bool known, auto_fast;
@@ -370,21 +370,31 @@ static size_t portrait_index(unsigned int gate, unsigned int source)
 	return source * WIDTH + (GATES - 1 - gate);
 }
 
-static bool load_state(uint8_t *previous, uint8_t *scan_order)
+/* Keep the gate-major disk format without a second full-size image. */
+static bool read_state_data(FILE *file, uint8_t *previous)
 {
-	FILE *file = fopen(state_path, "rb");
-	bool valid = file && fread(scan_order, 1, PIXELS, file) == PIXELS &&
-		     fgetc(file) == EOF && !ferror(file);
-	if (file)
-		fclose(file);
-	for (unsigned int gate = 0; valid && gate < GATES; gate++)
+	uint8_t row[SOURCES];
+	bool valid = file != NULL;
+	for (unsigned int gate = 0; valid && gate < GATES; gate++) {
+		valid = fread(row, 1, sizeof(row), file) == sizeof(row);
 		for (unsigned int source = 0; valid && source < SOURCES; source++) {
-			uint8_t level = scan_order[gate * SOURCES + source];
-			valid = level <= WHITE;
-			previous[portrait_index(gate, source)] = level;
+			valid = row[source] <= WHITE;
+			previous[portrait_index(gate, source)] = row[source];
 		}
+	}
+	if (valid)
+		valid = fgetc(file) == EOF && !ferror(file);
 	if (!valid)
 		memset(previous, WHITE, PIXELS);
+	return valid;
+}
+
+static bool load_state(uint8_t *previous)
+{
+	FILE *file = fopen(state_path, "rb");
+	bool valid = read_state_data(file, previous);
+	if (file)
+		fclose(file);
 	return valid;
 }
 
@@ -795,20 +805,28 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 	}
 }
 
-static void save_state(const uint8_t *previous, uint8_t *scan_order)
+static bool write_state_data(FILE *file, const uint8_t *previous)
 {
-	/* Keep the on-disk format compatible with the one-shot driver. */
-	for (unsigned int gate = 0; gate < GATES; gate++)
+	uint8_t row[SOURCES];
+	for (unsigned int gate = 0; gate < GATES; gate++) {
 		for (unsigned int source = 0; source < SOURCES; source++)
-			scan_order[gate * SOURCES + source] = previous[portrait_index(gate, source)];
+			row[source] = previous[portrait_index(gate, source)];
+		if (fwrite(row, 1, sizeof(row), file) != sizeof(row))
+			return false;
+	}
+	return true;
+}
+
+static void save_state(const uint8_t *previous)
+{
 	char pending[] = "/run/pb626-epd.XXXXXX";
 	int tmp = mkstemp(pending);
 	if (tmp < 0)
 		fail("could not create screen state");
 	FILE *file = fdopen(tmp, "wb");
-	bool saved = file && fwrite(scan_order, 1, PIXELS, file) == PIXELS;
+	bool saved = file && write_state_data(file, previous);
 	int close_error = file ? fclose(file) : close(tmp);
-	if (!file || close_error || !saved || rename(pending, state_path)) {
+	if (!saved || close_error || rename(pending, state_path)) {
 		unlink(pending);
 		fail("could not save screen state");
 	}
@@ -896,7 +914,7 @@ int main(int argc, char **argv)
 	if (retry_ioctl(fd, SUN5I_EINK_S_TIMING, &timing))
 		fail("could not select the factory WBF scan rate");
 	init_neutral_data(&renderer);
-	renderer.known = load_state(renderer.previous, renderer.target);
+	renderer.known = load_state(renderer.previous);
 
 	if (serve) {
 		char *end;
@@ -927,15 +945,20 @@ int main(int argc, char **argv)
 		if (ferror(stdin))
 			fail("could not read update command");
 	} else {
+		uint8_t *target = NULL;
 		if (mode != INIT) {
-			read_image(argv[3], renderer.target);
+			target = malloc(PIXELS);
+			if (!target)
+				fail("could not allocate one-shot image");
+			read_image(argv[3], target);
 			if (mode == GC16)
 				for (size_t i = 0; i < PIXELS; i++)
-					renderer.target[i] |= SCRUB;
+					target[i] |= SCRUB;
 		}
-		apply(&renderer, mode, renderer.target, NULL, false, false);
+		apply(&renderer, mode, target, NULL, false, false);
+		free(target);
 	}
 	if (renderer.known)
-		save_state(renderer.previous, renderer.target);
+		save_state(renderer.previous);
 	return EXIT_SUCCESS;
 }
