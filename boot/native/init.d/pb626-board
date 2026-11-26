@@ -14,8 +14,3 @@ start() {
     done
     eend 0
 }
-stop() {
-    ebegin "Turning off the frontlight"
-    /usr/sbin/pb626-admin light-off || :
-    eend 0
-}

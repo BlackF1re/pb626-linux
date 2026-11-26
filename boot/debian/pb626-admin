@@ -1,45 +1,161 @@
 #!/bin/sh
-# Deliberately narrow privileged hardware/UI interface. No arbitrary commands.
+# Narrow privileged interface; never source user-controlled configuration.
 set -eu
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 umask 077
-state=/var/lib/pb626/frontlight
+state=/var/lib/pb626
+valid_percent() {
+    case "$1" in 0|[1-9]|[1-9][0-9]|100) return 0 ;; *) return 2 ;; esac
+}
+valid_level() { valid_percent "$1" && [ "$1" -gt 0 ]; }
+read_light() {
+    enabled=0
+    level=50
+    if [ -r "$state/frontlight" ]; then
+        a= b= extra=
+        read -r a b extra <"$state/frontlight" || :
+        if [ -z "$b" ] && valid_percent "$a"; then
+            # Migration from the former single-value format.
+            if [ "$a" -gt 0 ]; then enabled=1; level=$a; fi
+        elif [ -z "$extra" ] && { [ "$a" = 0 ] || [ "$a" = 1 ]; } && valid_level "$b"; then
+            enabled=$a; level=$b
+        fi
+    fi
+}
 apply_light() {
-    case "$1" in 0|[1-9]|[1-9][0-9]|100) ;; *) return 2 ;; esac
     for light in /sys/class/backlight/*; do
         [ -r "$light/max_brightness" ] || continue
         max=$(cat "$light/max_brightness")
         [ "$max" -gt 0 ] || return 1
-        level=$(( (max * $1 + 50) / 100 ))
-        if [ "$level" -eq 0 ]; then
-            echo 0 >"$light/brightness"
-            echo 4 >"$light/bl_power"
-        else
-            echo "$level" >"$light/brightness"
-            echo 0 >"$light/bl_power"
+        if [ "$enabled" = 0 ]; then
+            # Power gate first; remember the selected brightness in sysfs too.
+            printf '4\n' >"$light/bl_power" || return 1
         fi
+        raw=$(( (max * level + 50) / 100 ))
+        [ "$raw" -gt 0 ] || raw=1
+        printf '%s\n' "$raw" >"$light/brightness" || return 1
+        if [ "$enabled" = 1 ]; then printf '0\n' >"$light/bl_power" || return 1; fi
         return 0
     done
+    echo "No frontlight device" >&2
     return 1
 }
+atomic_save() {
+    file=$1; shift
+    tmp=$(mktemp "$state/.settings.XXXXXX")
+    if ! printf '%s\n' "$@" >"$tmp" || ! mv -f "$tmp" "$state/$file"; then
+        rm -f "$tmp"
+        return 1
+    fi
+}
+lock_state() {
+    mkdir -p "$state"
+    exec 9>"$state/settings.lock"
+    flock -x 9
+}
+valid_governor() {
+    case "$1" in ondemand|conservative|powersave|performance|schedutil) return 0 ;; *) return 2 ;; esac
+}
+apply_governor() {
+    valid_governor "$1"
+    found=0
+    for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+        [ -r "$policy/scaling_available_governors" ] || continue
+        grep -qw "$1" "$policy/scaling_available_governors" || return 1
+        found=1
+    done
+    [ "$found" = 1 ] || return 1
+    for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+        [ -w "$policy/scaling_governor" ] || continue
+        printf '%s\n' "$1" >"$policy/scaling_governor" || return 1
+    done
+}
+valid_desktop() {
+    case "$1" in arrows|pages) ;; *) return 2 ;; esac
+    case "$2" in keyboard|home) ;; *) return 2 ;; esac
+    case "$3" in menu|escape) ;; *) return 2 ;; esac
+    case "$4" in balanced|ui|photo|legacy) ;; *) return 2 ;; esac
+    case "$5" in 16|24) ;; *) return 2 ;; esac
+    case "$6" in 0|5|10|15|30|60) ;; *) return 2 ;; esac
+    [ "$6" = 0 ] || [ -f /etc/pb626/suspend-qualified ]
+}
 case "${1:-}" in
-frontlight)
+frontlight|light-on|light-off|light-toggle)
+    if [ "$1" = frontlight ]; then
+        [ "$#" -eq 2 ] && valid_percent "$2" || exit 2
+    else
+        [ "$#" -eq 1 ] || exit 2
+    fi
+    lock_state
+    read_light
+    case "$1" in
+        frontlight) if [ "$2" = 0 ]; then enabled=0; else level=$2; enabled=1; fi ;;
+        light-on) enabled=1 ;;
+        light-off) enabled=0 ;;
+        light-toggle) enabled=$((1-enabled)) ;;
+    esac
+    apply_light
+    atomic_save frontlight "$enabled $level"
+    ;;
+light-status)
+    [ "$#" -eq 1 ] || exit 2
+    read_light
+    printf '%s %s\n' "$enabled" "$level"
+    ;;
+restore-board|restore-light)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    # First boot has no saved preference: leave the kernel's safe default.
+    if [ -r "$state/frontlight" ]; then
+        read_light
+        apply_light || echo "Frontlight restore failed" >&2
+    fi
+    if [ "$1" = restore-board ] && [ -r "$state/governor" ]; then
+        read -r governor <"$state/governor"
+        apply_governor "$governor" || echo "CPU governor restore failed" >&2
+    fi
+    ;;
+governor)
+    [ "$#" -eq 2 ] && valid_governor "$2" || exit 2
+    lock_state
+    apply_governor "$2"
+    atomic_save governor "$2"
+    ;;
+desktop-status)
+    [ "$#" -eq 1 ] || exit 2
+    if [ -r "$state/desktop.conf" ]; then cat "$state/desktop.conf"; fi
+    ;;
+desktop-settings)
+    [ "$#" -eq 7 ] && valid_desktop "$2" "$3" "$4" "$5" "$6" "$7" || exit 2
+    lock_state
+    atomic_save desktop.conf "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" \
+        "PB626_MENU_KEY=$4" "PB626_EPD_GRAY_PROFILE=$5" "PB626_XORG_DEPTH=$6" "PB626_IDLE_MINUTES=$7"
+    ;;
+restart-desktop)
+    [ "$#" -eq 1 ] || exit 2
+    exec systemctl --no-block restart pb626-desktop.service
+    ;;
+power-key)
     [ "$#" -eq 2 ] || exit 2
-    apply_light "$2"
-    tmp=$(mktemp /var/lib/pb626/.frontlight.XXXXXX)
-    printf '%s\n' "$2" >"$tmp"
-    mv -f "$tmp" "$state"
+    case "$2" in ignore|poweroff) ;; *) exit 2 ;; esac
+    lock_state
+    # The existing logind defaults remain intact; apply on next boot.
+    tmp=$(mktemp /etc/systemd/logind.conf.d/.pb626.XXXXXX)
+    printf '[Login]\nHandlePowerKey=%s\n' "$2" >"$tmp"
+    mv -f "$tmp" /etc/systemd/logind.conf.d/70-pb626-user.conf
     ;;
-restore-light)
+power-key-status)
     [ "$#" -eq 1 ] || exit 2
-    value=0
-    if [ -r "$state" ]; then IFS= read -r value <"$state" || value=0; fi
-    case "$value" in 0|[1-9]|[1-9][0-9]|100) ;; *) value=0 ;; esac
-    apply_light "$value"
+    if [ -r /etc/systemd/logind.conf.d/70-pb626-user.conf ]; then
+        sed -n 's/^HandlePowerKey=//p' /etc/systemd/logind.conf.d/70-pb626-user.conf
+    else
+        echo ignore
+    fi
     ;;
-light-off)
+suspend)
     [ "$#" -eq 1 ] || exit 2
-    apply_light 0
+    [ -f /etc/pb626/suspend-qualified ] || { echo "Suspend not qualified on this board" >&2; exit 1; }
+    exec systemctl suspend
     ;;
 wifi-on)
     [ "$#" -eq 1 ] || exit 2

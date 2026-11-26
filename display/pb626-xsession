@@ -14,6 +14,15 @@ if [ ! -f /etc/debian_version ] && [ -r /usr/lib/libharfbuzz.so.0 ]; then
     export LD_PRELOAD="/usr/lib/libharfbuzz.so.0${LD_PRELOAD:+:$LD_PRELOAD}"
 fi
 xset s off
+xset -dpms 2>/dev/null || :
+# Optional standard X11 idle detector, only after board suspend qualification.
+case ${PB626_IDLE_MINUTES:-0} in
+    5|10|15|30|60)
+        if [ -f /etc/pb626/suspend-qualified ]; then
+            xidle -no -timeout "$((PB626_IDLE_MINUTES * 60))" -program '/usr/bin/doas /usr/sbin/pb626-admin suspend' &
+            idle_pid=$!
+        fi ;;
+esac
 xsetroot -solid white
 # Publish defaults to the X server, not just this process's environment.
 # xinit brings xrdb as a dependency. -nocpp avoids requiring a compiler.
@@ -61,11 +70,13 @@ fi
 matchbox-desktop --bg col-solid:white --font 'Sans bold 18px' \
     --fontcol black --no-outline --no-title --icon-size 112 --icon-padding 8 &
 desktop=$!
-trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} 2>/dev/null || true' EXIT
+trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} ${idle_pid:+"$idle_pid"} 2>/dev/null || true' EXIT
 trap 'exit 1' HUP INT TERM
 if [ -n "${PB626_EPD_BRIDGE_PID:-}" ]; then
     : > "${PB626_EPD_SESSION_STARTED:?}"
-    (while [ -d "/proc/$PB626_EPD_BRIDGE_PID" ]; do sleep 1; done) &
-    screen=$!
+    if [ ! -f /etc/debian_version ]; then
+        (while [ -d "/proc/$PB626_EPD_BRIDGE_PID" ]; do sleep 1; done) &
+        screen=$!
+    fi
 fi
-wait -n "$wm" "$desktop" "$screen" "$keyboard" ${panel:+"$panel"}
+wait -n "$wm" "$desktop" "$keyboard" ${screen:+"$screen"} ${panel:+"$panel"}

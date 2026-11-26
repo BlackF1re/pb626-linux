@@ -16,6 +16,7 @@ KillMode=control-group
 OOMPolicy=continue
 MemoryAccounting=yes
 Environment=MALLOC_ARENA_MAX=2
+EnvironmentFile=-/var/lib/pb626/desktop.conf
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pb626-desktop

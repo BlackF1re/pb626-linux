@@ -37,6 +37,7 @@ enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
 
 struct controls {
 	int fallback, vertical, pointer_visible, clean_requested, keyboard_changed;
+	int page_keys, home_key, menu_escape;
 	uint64_t menu_pressed;
 };
 
@@ -99,6 +100,9 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 	while (read(fd, &event, sizeof(event)) == (ssize_t)sizeof(event)) {
 		if (event.type != EV_KEY)
 			continue;
+		/* A physical key is activity even when it only sends a client message. */
+		if (event.value)
+			XResetScreenSaver(display);
 		if (event.code == KEY_MENU) {
 			uint64_t now = (uint64_t)event.input_event_sec * 1000000 +
 				       event.input_event_usec;
@@ -112,7 +116,7 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 					XTestFakeButtonEvent(display, 1, True, CurrentTime);
 					XTestFakeButtonEvent(display, 1, False, CurrentTime);
 				} else {
-					KeyCode menu = XKeysymToKeycode(display, XK_Menu);
+					KeyCode menu = XKeysymToKeycode(display, controls->menu_escape ? XK_Escape : XK_Menu);
 					if (menu) {
 						XTestFakeKeyEvent(display, menu, True, CurrentTime);
 						XTestFakeKeyEvent(display, menu, False, CurrentTime);
@@ -127,7 +131,13 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 			if (event.value == 1) {
 				if (controls->fallback)
 					controls->vertical = !controls->vertical;
-				else {
+				else if (controls->home_key) {
+					KeyCode home = XKeysymToKeycode(display, XK_Home);
+					if (home) {
+						XTestFakeKeyEvent(display, home, True, CurrentTime);
+						XTestFakeKeyEvent(display, home, False, CurrentTime);
+					}
+				} else {
 					keyboard_command(display, root, keyboard, KEYBOARD_TOGGLE);
 					controls->keyboard_changed = 1;
 				}
@@ -140,7 +150,8 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 				break;
 			if (!controls->fallback) {
 				KeyCode arrow = XKeysymToKeycode(display,
-					event.code == KEY_LEFT ? XK_Left : XK_Right);
+					controls->page_keys ? (event.code == KEY_LEFT ? XK_Page_Up : XK_Page_Down) :
+					(event.code == KEY_LEFT ? XK_Left : XK_Right));
 				if (arrow) {
 					XTestFakeKeyEvent(display, arrow, True, CurrentTime);
 					XTestFakeKeyEvent(display, arrow, False, CurrentTime);
@@ -415,7 +426,7 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 		   uint8_t *frame, struct rect pointer, int vertical, struct capture_stats *stats,
 		   XShmSegmentInfo *shm)
 {
-	static uint8_t lightness[CAPTURE_READ_ROWS][WIDTH];
+	static uint8_t lightness[3][WIDTH];
 	int uses_contrast = gray_profile != GRAY_UI;
 	int draw_pointer = nonempty(pointer);
 	struct rect area = clipped(dirty, uses_contrast);
@@ -440,10 +451,13 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 		int rgb565 = image->bits_per_pixel == 16 && image->byte_order == LSBFirst &&
 			     image->red_mask == 0xf800 && image->green_mask == 0x07e0 &&
 			     image->blue_mask == 0x001f;
-		for (int y = read_area.top; y < read_area.bottom; y++) {
+		/* Decode each input row once into a three-row rolling luminance
+		 * window. Quantize only when the next contrast row is available. */
+		for (int y = read_area.top; y <= read_area.bottom; y++) {
+			if (y < read_area.bottom) {
 			const uint8_t *row = (const uint8_t *)image->data +
 					     (y - read_area.top) * image->bytes_per_line;
-			uint8_t *dest = lightness[y - read_area.top];
+			uint8_t *dest = lightness[y % 3];
 			for (int x = read_area.left; x < read_area.right; x++) {
 				int column = x - read_area.left;
 				if (rgb565) {
@@ -459,11 +473,12 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 							     channel(pixel, image->blue_mask));
 				}
 			}
-		}
-		XDestroyImage(image);
-		for (int y = strip.top; y < strip.bottom; y++)
+			}
+			int output_y = y - 1;
+			if (output_y < strip.top || output_y >= strip.bottom)
+				continue;
 			for (int x = strip.left; x < strip.right; x++) {
-				const uint8_t *pixel = lightness[y - read_area.top] + x;
+				const uint8_t *pixel = lightness[output_y % 3] + x;
 				unsigned int value = *pixel;
 				uint8_t next = value / 17;
 				if (value != 17u * next) {
@@ -471,22 +486,24 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 					if (uses_contrast) {
 						unsigned int lx = x > 0 ? pixel[-1] : value;
 						unsigned int rx = x + 1 < WIDTH ? pixel[1] : value;
-						unsigned int ty = y > 0 ? lightness[y - read_area.top - 1][x] : value;
-						unsigned int by = y + 1 < HEIGHT ? lightness[y - read_area.top + 1][x] : value;
+						unsigned int ty = output_y > 0 ? lightness[(output_y - 1) % 3][x] : value;
+						unsigned int by = output_y + 1 < HEIGHT ? lightness[(output_y + 1) % 3][x] : value;
 						contrast = abs((int)value - (int)lx) + abs((int)value - (int)rx) +
 							   abs((int)value - (int)ty) + abs((int)value - (int)by);
 					}
-					next = quantize(value, contrast, x, y);
+					next = quantize(value, contrast, x, output_y);
 				}
-				size_t i = (size_t)y * WIDTH + x;
+				size_t i = (size_t)output_y * WIDTH + x;
 				if (draw_pointer)
-					next = pointer_level(pointer, vertical, x, y, next);
+					next = pointer_level(pointer, vertical, x, output_y, next);
 				if (nibble_get(frame, i) != next) {
 					stats->changed++;
-					dirty_tiles[y / TILE][x / TILE] = 1;
+					dirty_tiles[output_y / TILE][x / TILE] = 1;
 					nibble_set(frame, i, next);
 				}
 			}
+		}
+		XDestroyImage(image);
 		stats->quant_us += now_us() - start;
 	}
 	stats->pixels += (area.right - area.left) * (area.bottom - area.top);
@@ -963,7 +980,15 @@ int main(int argc, char **argv)
 			XDamageCreate(display, root, XDamageReportNonEmpty) : None;
 	XserverRegion region = damage ? XFixesCreateRegion(display, NULL, 0) : None;
 	Window previous_window = None;
-	struct controls controls = { .fallback = getenv("PB626_POINTER_FALLBACK") != NULL };
+	const char *keys = getenv("PB626_BUTTONS");
+	const char *home = getenv("PB626_HOME_KEY");
+	const char *menu = getenv("PB626_MENU_KEY");
+	struct controls controls = {
+		.fallback = getenv("PB626_POINTER_FALLBACK") != NULL,
+		.page_keys = keys && !strcmp(keys, "pages"),
+		.home_key = home && !strcmp(home, "home"),
+		.menu_escape = menu && !strcmp(menu, "escape"),
+	};
 	struct pollfd sources[3] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
 	nfds_t source_count = 1;
 	const char *devices = getenv("PB626_BUTTON_DEVICES");

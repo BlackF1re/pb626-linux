@@ -135,3 +135,39 @@ shared-memory PSS twice. Keep packaged Xorg for security updates; custom
 DDX, transition-map packing, LUT packing and idle DMA release still need
 measured latency and hardware qualification. Do not delete the working
 recovery or change the default boot artifact until the candidate passes.
+
+## Device settings and hardware boundaries
+
+The on-demand Tk control centre has Display, Buttons, Network, Power and
+System tabs. Frontlight brightness is 1–100 percent, with independent
+on/off state and last nonzero brightness saved atomically. The native DTB
+interpolates the existing eleven duty points to 101 steps. The first boot
+uses the safe hardware off default; a desktop/service restart never forces
+the light off. Shutdown can physically remove power, but never overwrites
+the stored setting. The tested PWM pin-disconnect sequence is unchanged.
+
+Left/right can produce arrows or PageUp/PageDown, Home can toggle the
+keyboard or send Home, and Menu can send Menu or Escape. A long Menu press
+still forces a full refresh; touch failure retains hardware pointer fallback.
+The gray profile and 16/24-bit visual can also be selected. Settings are
+validated by a narrow privileged helper and loaded by systemd from a
+root-owned EnvironmentFile. Desktop changes require a session restart.
+CPU governors are validated against the actual kernel's available governors
+and restored on boot. Power key policy uses logind (ignore or poweroff), takes effect next boot.
+
+Idle suspend is disabled by default. ONLY after real suspend/resume testing
+(including frontlight, E Ink and USB wake) may the administrator create
+/etc/pb626/suspend-qualified as root. This unlocks manual suspend and an
+optional xidle timer (5–60 min), never an unconditional light-off timer.
+Removing the marker blocks suspend even if an earlier setting remains.
+The PMIC's hardware emergency long-press action is not changed by logind.
+Battery, charging telemetry, RTC, temperature and LED state are exposed
+read-only in System. No charging thresholds or regulator settings are
+invented. microSD, Lima, charger-only boot and suspend/resume are not
+qualified; SPI NOR remains unconfirmed. See HARDWARE-PROFILE.md.
+
+The bridge now also uses a three-row rolling luminance window (2274 bytes)
+inside each bounded XShm strip, replacing the 98540-byte scratch array.
+The parent waits for Xorg/session or bridge exit with Bash wait -n on Debian,
+removing a one-second process-existence polling loop. Xvfb regressions cover
+16/24-bit full and partial captures against the original full-frame reference.

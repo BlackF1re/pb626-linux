@@ -9,8 +9,7 @@ Type=oneshot
 RemainAfterExit=yes
 StateDirectory=pb626
 StateDirectoryMode=0700
-ExecStart=-/usr/sbin/pb626-admin restore-light
-ExecStop=-/usr/sbin/pb626-admin light-off
+ExecStart=/usr/sbin/pb626-admin restore-board
 
 [Install]
 WantedBy=multi-user.target

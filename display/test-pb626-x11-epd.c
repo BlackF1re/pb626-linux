@@ -114,7 +114,7 @@ static void test_x11_capture(void)
 			};
 			assert(XAllocColor(display, DefaultColormap(display, screen), &color));
 			XSetForeground(display, gc, color.pixel);
-			XFillRectangle(display, root, x + offset, y, 17, 13);
+			XFillRectangle(display, root, gc, x + offset, y, 17, 13);
 		}
 	XSync(display, False);
 	XShmSegmentInfo shm = {0}, fallback = {0};

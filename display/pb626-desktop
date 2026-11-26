@@ -99,8 +99,17 @@ case ${PB626_XORG_DEPTH:-} in
     '') set -- ;;
     *) echo 'PB626_XORG_DEPTH must be 16 or 24' >&2; exit 2 ;;
 esac
+xorg=/usr/bin/Xorg
+if [ -f /etc/debian_version ] && [ -x /usr/lib/xorg/Xorg ]; then
+    xorg=/usr/lib/xorg/Xorg
+fi
 xinit "$client" "$waveform" "$work/ready" -- \
-    /usr/bin/Xorg :0 vt2 -nolisten tcp -nocursor -auth "$XAUTHORITY" "$@" \
+    "$xorg" :0 vt2 -nolisten tcp -nocursor -auth "$XAUTHORITY" "$@" \
     -config "$work/xorg.conf" -logfile /run/pb626-xorg.log &
 xinit_pid=$!
-wait "$xinit_pid"
+if [ -f /etc/debian_version ] && [ -n "$bridge_pid" ]; then
+    # Debian runs this wrapper under Bash; no periodic process polling.
+    wait -n "$xinit_pid" "$bridge_pid"
+else
+    wait "$xinit_pid"
+fi

@@ -43,7 +43,7 @@ runtime=(
   dbus dbus-user-session libpam-systemd opendoas ca-certificates tzdata
   iproute2 iw iwd iwgtk rfkill wireless-regdb firmware-realtek nftables
   kmod procps psmisc util-linux util-linux-extra e2fsprogs usbutils i2c-tools
-  lm-sensors v4l-utils curl openssh-server nano htop mc
+  lm-sensors v4l-utils curl openssh-server nano htop mc xidle
   xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-evdev
   xinit xauth x11-xserver-utils x11-utils x11-apps x11-xkb-utils xkb-data xrestop
   xfonts-base xfonts-utils xbitmaps fonts-liberation xdotool xterm nedit
@@ -163,7 +163,10 @@ sudo install -D -m 755 boot/native/pb626-usb "$pkg/usr/libexec/pb626-usb"
 sudo install -D -m 755 scripts/profile-memory.sh "$pkg/usr/sbin/pb626-profile-memory"
 sudo install -D -m 755 scripts/inspect-live.sh "$pkg/usr/sbin/inspect-pb626"
 sudo install -D -m 755 scripts/probe-device.sh "$pkg/usr/sbin/probe-pb626"
-sudo install -m 755 display/{pb626-desktop,pb626-control-center,pb626-open-document} "$pkg/usr/bin/"
+sudo install -m 755 display/pb626-open-document "$pkg/usr/bin/"
+sed '1s|^#!/bin/sh$|#!/bin/bash|' display/pb626-desktop | sudo tee "$pkg/usr/bin/pb626-desktop" >/dev/null
+sudo chmod 755 "$pkg/usr/bin/pb626-desktop"
+sudo install -m 755 display/pb626-debian-settings "$pkg/usr/bin/pb626-control-center"
 # Debian /bin/sh is dash; the existing X11 session uses wait -n.
 sed '1s|^#!/bin/sh$|#!/bin/bash|' display/pb626-xsession | sudo tee "$pkg/usr/bin/pb626-xsession" >/dev/null
 sudo chmod 755 "$pkg/usr/bin/pb626-xsession"
@@ -189,7 +192,7 @@ Package: pb626-runtime
 Version: $version
 Architecture: armhf
 Maintainer: BlackF1re <55582873+BlackF1re@users.noreply.github.com>
-Depends: libc6, bash, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, tk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill
+Depends: libc6, bash, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, tk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
 Description: PocketBook 626 native E Ink desktop and hardware integration
  Includes the scanout worker, X11 bridge, patched Matchbox clients and
  board-specific systemd services. Uses the paired PB626 kernel and DTB.
@@ -282,7 +285,8 @@ in_root /bin/bash -euc '
     ! grep -q "not found" /tmp/pb626-ldd
   done
   rm /tmp/pb626-ldd
-  for exe in Xorg iwgtk iwctl systemctl wish mupdf xterm matchbox-desktop xrestop; do command -v "$exe"; done
+  test -x /usr/lib/xorg/Xorg || test -x /usr/bin/Xorg
+  for exe in iwgtk iwctl systemctl wish mupdf xterm matchbox-desktop xrestop xidle; do command -v "$exe"; done
   ! command -v apk
   ! command -v gcc
   test -x /usr/bin/dbus-run-session

@@ -94,6 +94,9 @@ for dtb in "$out"/pb626-*.dtb; do
   test "$(fdtget -t s "$dtb" '/soc/i2c@1c2b000/pmic@68' compatible)" = ti,tps65185
   test "$(fdtget -t s "$dtb" '/backlight' compatible)" = pwm-backlight
   test "$(fdtget -t x "$dtb" '/backlight' default-brightness-level)" = 0
+  if [[ $dtb == *elan-emmc-native.dtb ]]; then
+    test "$(fdtget -t u "$dtb" /backlight num-interpolated-steps)" = 10
+  fi
   fdtget -t x "$dtb" '/backlight' brightness-levels > /dev/null
   test "$(fdtget -t s "$dtb" '/leds' compatible)" = gpio-leds
 done

@@ -66,8 +66,9 @@ jobs:
           sh -n boot/debian/pb626-admin
           sh -n boot/debian/pb626-user-session
           sh tests/test-native-services.sh
+          sh tests/test-debian-settings.sh
           if ! command -v tclsh >/dev/null; then sudo apt-get update; sudo apt-get install -y --no-install-recommends tcl; fi
-          tclsh tests/check-control-center.tcl display/pb626-control-center display/pb626-open-document
+          tclsh tests/check-control-center.tcl display/pb626-control-center display/pb626-debian-settings display/pb626-open-document
           bash -n scripts/fel-boot.sh
           bash -n scripts/configure-megi-kernel.sh
           bash -n scripts/build-alpine-rootfs.sh
@@ -120,7 +121,7 @@ jobs:
       - name: Install X11 test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev xvfb xauth
+          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev xvfb xauth tk
       - name: Fetch pinned kernel UAPI and test renderer
         run: |
           set -euo pipefail
@@ -132,3 +133,4 @@ jobs:
           /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x24' /tmp/test-pb626-x11-epd
+          xvfb-run -a -s '-screen 0 760x1024x16' wish tests/test-debian-settings.tcl
