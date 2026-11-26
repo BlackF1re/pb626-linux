@@ -103,6 +103,7 @@ cp spl/sunxi-spl.bin "$out/BT0-uncaged-source-candidate.bin"
 grep -q pb626_menu_hook "$out/native-symbols.txt"
 "${CROSS_COMPILE}objdump" -d spl/u-boot-spl >"$out/native-disassembly.txt"
 "${CROSS_COMPILE}nm" -n spl/u-boot-spl >"$out/native-all-symbols.txt"
+for symbol in pb626_led_boot_start pb626_led_boot_tick pb626_led_error; do grep -Eq " [Tt] $symbol$" "$out/native-all-symbols.txt"; done
 # Validate eGON length/checksum. Both candidates must fit the exact 24 KiB slot.
 python3 - "$out" <<'PY'
 import pathlib,struct,sys
@@ -155,6 +156,7 @@ git diff >"$out/deep-resume/uboot-source-changes.patch"
 "${CROSS_COMPILE}nm" spl/u-boot-spl | grep -E 'pb626_menu_hook|save_boot_params|pb626_try_resume|dramc_init' >"$out/deep-resume/symbols.txt"
 "${CROSS_COMPILE}objdump" -d spl/u-boot-spl >"$out/deep-resume/disassembly.txt"
 "${CROSS_COMPILE}nm" -n spl/u-boot-spl >"$out/deep-resume/all-symbols.txt"
+for symbol in pb626_led_boot_start pb626_led_boot_tick pb626_led_error; do grep -Eq " [Tt] $symbol$" "$out/deep-resume/all-symbols.txt"; done
 cp .config "$out/deep-resume/native.config"
 (cd "$out/deep-resume" && sha256sum *.bin *.patch *.txt *.config >SHA256SUMS)
 echo 'SOURCE CANDIDATES ONLY: no flash approval; no demonstrated deep resume'

@@ -20,7 +20,7 @@ def change(path, old, new):
     path.write_text(text.replace(old, new))
 
 # Keep the timing model shared with the host unit test.
-copy_once(repo / "led-morse.h", tree / "include/pb626-led-morse.h")
+copy_once(repo / "led-morse.h", tree / "include/led-morse.h")
 copy_once(repo / "pb626-led.h", tree / "include/pb626-led.h")
 copy_once(repo / "pb626-led.c", tree / "arch/arm/mach-sunxi/pb626-led.c")
 
@@ -99,4 +99,24 @@ change(board,
        '\tif (!gd->ram_size)\n'
        '\t\tpb626_led_error(PB626_ERR_DRAM_INIT);')
 
-print("Integrated PB626 PE8 solid-start indication and SPL Morse failure paths")
+# Run on the existing timer's monotonic reads, including delay and MMC
+# timeout loops. No new IRQ, timer reprogramming or added waits.
+timer = tree / "arch/arm/cpu/armv7/sunxi/timer.c"
+change(timer, "#include <common.h>",
+       "#include <common.h>\n#ifdef CONFIG_SPL_BUILD\n#include <pb626-led.h>\n#endif")
+change(timer, "\treturn ~readl(&timer->val);",
+       "\tulong now = ~readl(&timer->val);\n"
+       "#ifdef CONFIG_SPL_BUILD\n\tpb626_led_boot_tick(now);\n#endif\n"
+       "\treturn now;")
+cpu = tree / "arch/arm/mach-sunxi/board.c"
+change(cpu, "#include <common.h>",
+       "#include <common.h>\n#ifdef CONFIG_SPL_BUILD\n#include <pb626-led.h>\n#endif")
+change(cpu, "\tgpio_init();",
+       "\tgpio_init();\n#ifdef CONFIG_SPL_BUILD\n"
+       "\tpb626_led_boot_start(~readl((void *)0x01c20c18U));\n#endif")
+# Actual card initialization (not only registration).
+change(mmc,
+       'printf("spl: mmc init failed with error: %d\\n", err);\n#endif\n\t\t\treturn err;',
+       'printf("spl: mmc init failed with error: %d\\n", err);\n#endif\n'
+       '\t\t\tpb626_led_error(PB626_ERR_MMC_INIT);')
+print("Integrated cooperative PE8 startup and SPL Morse failure paths")
