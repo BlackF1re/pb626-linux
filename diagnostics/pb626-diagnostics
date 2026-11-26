@@ -19,10 +19,35 @@ EOF
 }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 2; }
 number() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]; }
+pgm() {
+    levels=$1; target=$2
+    awk -v n="$levels" 'BEGIN {printf "P5\n758 1024\n255\n"; row=""; for(x=0;x<758;x++) row=row sprintf("%c",n==1?0:int(x*n/758)*255/(n-1)); for(y=0;y<1024;y++) printf "%s",row}' >"$target"
+    [ "$(wc -c <"$target")" -eq 776208 ]
+}
+self_test() (
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    for n in 1 2 4 16; do pgm "$n" "$tmp/$n.pgm"; done
+    # Test actual binary bytes (not only file length). Every output row
+    # must contain exactly the allowed levels, in ascending order.
+    printf 'P5\n758 1024\n255\n' >"$tmp/header"
+    for n in 1 2 4 16; do
+        head -c 16 "$tmp/$n.pgm" | cmp - "$tmp/header"
+        tail -c 776192 "$tmp/$n.pgm" | od -An -tu1 -v | awk -v n="$n" '
+            {for (i=1;i<=NF;i++) {
+                x=count%758
+                expected=n==1?0:int(int(x*n/758)*255/(n-1))
+                if ($i!=expected) exit 1
+                count++
+            }} END {if(count!=776192) exit 1}'
+    done
+    echo 'PGM self-test passed'
+)
 out= interval=10 bench=0 rounds=0 input= input_seconds=0 host= suspend=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --help|-h) usage; exit 0;;
+        --self-test) [ "$#" -eq 1 ] || die "self-test takes no arguments"; self_test; exit $?;;
         --output) [ "$#" -ge 2 ] || die "$1 needs a path"; out=$2; shift;;
         --interval) [ "$#" -ge 2 ] && number "$2" 1 120 || die 'interval 1..120'; interval=$2; shift;;
         --bench) bench=1;;
@@ -96,9 +121,8 @@ panel() (
     trap 'exit 130' INT
     trap 'exit 143' TERM
     # Known panel dimensions and legal transition targets. PGM binary rows.
-    for levels in 1 2 4 16; do
-        awk -v n="$levels" 'BEGIN {printf "P5\n758 1024\n255\n"; row=""; for(x=0;x<758;x++) row=row sprintf("%c",n==1?0:int(x*n/758)*255/(n-1)); for(y=0;y<1024;y++) printf "%s",row}' >"$tmp/$levels.pgm"
-        [ "$(wc -c <"$tmp/$levels.pgm")" -eq 776208 ] || { echo 'status=error PGM length'; exit 0; }
+    for levels in 1 4 16; do
+        pgm "$levels" "$tmp/$levels.pgm" || { echo 'status=error PGM length'; exit 0; }
     done
     # White image for binary A2. /dev/zero is only read, not written.
     { printf 'P5\n758 1024\n255\n'; head -c 776192 /dev/zero | tr '\000' '\377'; } >"$tmp/white.pgm"
@@ -166,7 +190,10 @@ fi
 [ "$rounds" = 0 ] || panel
 if [ -n "$input" ]; then
     section "operator input $input (event types/codes/values; exercise only test keys)"
-    run timeout "$input_seconds" evtest "$input"
+    if command -v evtest >/dev/null 2>&1; then
+        code=0; timeout "$input_seconds" evtest "$input" || code=$?
+        case "$code" in 0|124) echo "status=sample_finished (inspect events)";; *) echo "status=error exit=$code";; esac
+    else echo "status=unavailable evtest"; fi
 fi
 if [ -n "$host" ]; then section 'network latency'; run timeout 20 ping -c 5 -W 2 "$host"; fi
 if [ "$suspend" = 1 ]; then
@@ -174,7 +201,7 @@ if [ "$suspend" = 1 ]; then
     if [ "$(id -u)" = 0 ] && [ -f /etc/pb626/suspend-qualified ] && grep -q '\[s2idle\]' /sys/power/mem_sleep && { [ ! -e /sys/power/pm_test ] || grep -q '\[none\]' /sys/power/pm_test; }; then
         before=$(cat /sys/power/suspend_stats/success 2>/dev/null || echo unknown)
         start=$(clock)
-        if systemctl suspend; then
+        if timeout 20 systemctl suspend; then
             i=0
             while [ "$i" -lt 180 ]; do
                 after=$(cat /sys/power/suspend_stats/success 2>/dev/null || echo unknown)
