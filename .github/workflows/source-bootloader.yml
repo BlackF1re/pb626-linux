@@ -7,6 +7,8 @@ on:
       - 'BT0-uncaged/prepare-source-hook.py'
       - 'BT0-uncaged/prepare-source-resume.py'
       - 'BT0-uncaged/fel-entry.S'
+      - 'BT0-uncaged/early-menu.S'
+      - 'patches/sunxi-fel-keep-mmu-off.patch'
       - '.github/workflows/source-bootloader.yml'
   workflow_dispatch:
   workflow_call:
@@ -33,7 +35,7 @@ jobs:
         id: cache
         with:
           path: source-boot-candidates
-          key: pb626-source-spl-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/**', 'patches/sunxi-fel-keep-mmu-off.patch') }}
+          key: pb626-source-spl-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/build-from-source.sh', 'BT0-uncaged/prepare-source-hook.py', 'BT0-uncaged/prepare-source-resume.py', 'BT0-uncaged/early-menu.S', 'BT0-uncaged/fel-entry.S', 'patches/sunxi-fel-keep-mmu-off.patch') }}
       - name: Build independently from pinned source
         if: steps.cache.outputs.cache-hit != 'true'
         run: bash BT0-uncaged/build-from-source.sh source-boot-candidates
