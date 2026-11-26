@@ -153,8 +153,40 @@ static void test_fast_mode_selection(void)
 	assert(select_a2_or_du(&renderer, active) == DU);
 }
 
+static void test_state_format(void)
+{
+	static uint8_t before[PIXELS], after[PIXELS];
+	for (size_t i = 0; i < PIXELS; i++)
+		before[i] = (i ^ (i / WIDTH)) & WHITE;
+	FILE *file = tmpfile();
+	assert(file);
+	assert(write_state_data(file, before));
+	assert(ftell(file) == PIXELS);
+	rewind(file);
+	for (unsigned int gate = 0; gate < GATES; gate++)
+		for (unsigned int source = 0; source < SOURCES; source++)
+			assert(fgetc(file) == before[portrait_index(gate, source)]);
+	rewind(file);
+	assert(read_state_data(file, after));
+	assert(!memcmp(before, after, PIXELS));
+	assert(!fseek(file, 0, SEEK_SET));
+	assert(fputc(WHITE + 1, file) != EOF);
+	rewind(file);
+	assert(!read_state_data(file, after));
+	for (size_t i = 0; i < PIXELS; i++)
+		assert(after[i] == WHITE);
+	fclose(file);
+	file = tmpfile();
+	assert(file);
+	assert(fputc(0, file) != EOF);
+	rewind(file);
+	assert(!read_state_data(file, after));
+	fclose(file);
+}
+
 int main(void)
 {
+	test_state_format();
 	test_quantization();
 	test_sparse_scan();
 	test_render_equivalence();
