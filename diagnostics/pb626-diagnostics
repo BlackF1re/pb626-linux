@@ -110,7 +110,7 @@ snapshot() {
     for d in /sys/class/video4linux/video*; do fields "$d" name device/power/control device/power/runtime_status device/power/runtime_active_time device/power/runtime_suspended_time device/power/autosuspend_delay_ms; done
     for d in /sys/class/mmc_host/mmc*/mmc*:* /sys/class/block/mmcblk*; do fields "$d" type name size ro stat; done
     for d in /sys/class/net/* /sys/class/rfkill/rfkill*; do fields "$d" operstate carrier speed type soft hard; done
-    for d in /sys/devices/system/cpu/cpu*/cpufreq; do fields "$d" scaling_cur_freq scaling_min_freq scaling_max_freq scaling_governor scaling_available_frequencies scaling_available_governors; done
+    for d in /sys/devices/system/cpu/cpu*/cpufreq; do fields "$d" scaling_cur_freq scaling_min_freq scaling_max_freq scaling_governor scaling_available_frequencies scaling_available_governors stats/time_in_state stats/total_trans; done
     for d in /sys/devices/system/cpu/cpu*/cpuidle/state*; do fields "$d" name latency residency usage time disable; done
     for d in /sys/bus/usb/devices/*; do fields "$d" idVendor idProduct speed power/control power/runtime_status power/runtime_active_time power/runtime_suspended_time power/wakeup; done
     for d in /sys/bus/i2c/devices/*; do fields "$d" name pb626_boot_source pb626_external_present power/runtime_status power/wakeup; done
@@ -218,6 +218,12 @@ for f in /sys/kernel/tracing/events/power/suspend_resume/format /sys/kernel/trac
 run timeout 10 v4l2-ctl -D -d /dev/video0
 run timeout 10 lsusb -t
 run timeout 10 iw dev
+for d in /sys/class/net/*/wireless; do
+    [ -d "$d" ] || continue
+    netdev=${d%/wireless}; netdev=${netdev##*/}
+    run timeout 10 iw dev "$netdev" link
+    run timeout 10 iw dev "$netdev" station dump
+done
 run timeout 10 rfkill list
 [ ! -x /usr/libexec/pb626-charge ] || run timeout 10 /usr/libexec/pb626-charge probe
 snapshot before
@@ -235,6 +241,11 @@ if [ "$bench" = 1 ]; then
     if timed sh -c 'head -c 33554432 /dev/zero | sha256sum'; then
         awk -v a="$start" -v b="$(clock)" 'BEGIN {if(b>a) printf "seconds=%.2f MiB_s=%.2f\n",b-a,32/(b-a); else print "status=below timer resolution"}'
     fi
+    section 'RAM copy/fill bandwidth (8 MiB transient allocation)'
+    avail=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+    if [ -n "$clock_helper" ] && [ "${avail:-0}" -ge 24576 ]; then
+        run "$clock_helper" memory
+    else echo 'status=unavailable low MemAvailable or native timing helper missing'; fi
     section 'MMC direct read: 32 MiB each (no writes)'
     for d in /sys/class/block/mmcblk*; do
         n=${d##*/}; suffix=${n#mmcblk}
