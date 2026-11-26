@@ -9,6 +9,7 @@ on:
       - 'BT0-uncaged/pb626-led.*'
       - 'BT0-uncaged/led-morse.h'
       - 'BT0-uncaged/emulator/**'
+      - 'BT0-uncaged/test_hook.py'
       - 'BT0-uncaged/prepare-source-resume.py'
       - 'BT0-uncaged/fel-entry.S'
       - 'BT0-uncaged/early-menu.S'
@@ -73,6 +74,10 @@ jobs:
           cache: pip
           cache-dependency-path: BT0-uncaged/emulator/requirements.txt
       - run: python -m pip install -r BT0-uncaged/emulator/requirements.txt
+      - name: Exhaustive actual-binary Menu regression
+        run: |
+          python BT0-uncaged/test_hook.py --candidate source-boot-candidates/BT0-uncaged-source-candidate.bin source-boot-candidates/native-all-symbols.txt
+          python BT0-uncaged/test_hook.py --candidate source-boot-candidates/deep-resume/BT0-uncaged-deep-candidate.bin source-boot-candidates/deep-resume/all-symbols.txt
       - name: Execute reference and candidates on the same Cortex-A8 model
         env:
           PB626_REFERENCE_SPL_B64: ${{ secrets.PB626_REFERENCE_SPL_B64 }}
@@ -82,6 +87,7 @@ jobs:
           if [ -n "$PB626_REFERENCE_SPL_B64" ]; then
             umask 077
             printf '%s' "$PB626_REFERENCE_SPL_B64" | base64 -d > "$RUNNER_TEMP/reference-spl.bin"
+            python BT0-uncaged/test_hook.py "$RUNNER_TEMP/reference-spl.bin"
             args+=(--reference "$RUNNER_TEMP/reference-spl.bin")
           fi
           unset PB626_REFERENCE_SPL_B64

@@ -36,3 +36,12 @@ Startup is cooperative: existing timer reads service the 30/50/30/30 ms
 thresholds, with no artificial wait. If a long operation does not read
 the timer, an edge can be late or skipped. Exact independent hardware
 timing would require a qualified interrupt-driven implementation.
+
+The dependency-free instruction interpreter also runs 5249 Menu cases
+per actual binary (timeout loop shortened in that model only). Both
+current source candidates and the private reference passed this test
+locally on the artifacts of run 45880109622. The Unicorn runner does
+not shorten the timeout. Run 45880302150 passed both candidate-only
+contracts, including real ARM LED code and effective LBA 80. It failed
+the required comparison solely because the reference secret was absent.
+The first full-boot probe boundary was CCM register 0x01c20054.

@@ -8,6 +8,7 @@ import struct, sys, hashlib
 from itertools import product
 P=Path(__file__).resolve().parent
 # PR CI can test the exact assembled hook without the unavailable base SPL.
+HOOK=0x5000; SAVE=0xd70; REPORT=0x5400; POLL_INIT=0x5060; ENTRY=0
 if len(sys.argv)==3 and sys.argv[1]=='--hook-only':
     hook=Path(sys.argv[2]).read_bytes()
     assert len(hook)==0x458 and hashlib.sha256(hook).hexdigest()=='67c152443fc89a48b65b535c3e8bdb21752b8fe3a96ab106bf948dacab2a96da'
@@ -15,16 +16,30 @@ if len(sys.argv)==3 and sys.argv[1]=='--hook-only':
     struct.pack_into('<I',fixture,0xa4,0xea0013d5)
     fixture[0x5000:0x5458]=hook
     BIN=bytes(fixture)
+    ENTRY=0xa4
+elif len(sys.argv)==4 and sys.argv[1]=='--candidate':
+    BIN=Path(sys.argv[2]).read_bytes()
+    assert len(BIN)==24576 and BIN[4:12]==b'eGON.BT0'
+    want,size=struct.unpack_from('<II',BIN,12)
+    assert size==len(BIN)
+    check=bytearray(BIN); struct.pack_into('<I',check,12,0x5f0a6c39)
+    assert sum(struct.unpack('<6144I',check))&0xffffffff==want
+    syms={l.split()[-1]:int(l.split()[0],16) for l in Path(sys.argv[3]).read_text().splitlines() if len(l.split())==3}
+    HOOK=syms['pb626_menu_hook']; SAVE=syms['save_boot_params']; REPORT=syms['pb626_report']
+    assert 0<HOOK<REPORT<0x6000 and 0<SAVE<0x6000
+    opcode=bytes.fromhex('0287a0e3')
+    assert BIN[HOOK:REPORT].count(opcode)==1
+    POLL_INIT=HOOK+BIN[HOOK:REPORT].index(opcode)
 else:
     BIN=Path(sys.argv[1] if len(sys.argv)>1 else P/'BT0-uncaged.bin').read_bytes()
     assert hashlib.sha256(BIN).hexdigest()=='1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6'
-assert struct.unpack_from('<I',BIN,0x5060)[0]==0xe3a08702
-ADC=0x01c22800; REPORT=0x5400; MASK=0xffffffff
+assert struct.unpack_from('<I',BIN,POLL_INIT)[0]==0xe3a08702
+ADC=0x01c22800; MASK=0xffffffff
 
 def run(samples, *, fel=False, high=True, lr=None, events=0):
     mem=bytearray(BIN); r=[0x12340000+i for i in range(16)]
     r[13]=0x5df8; r[14]=lr if lr is not None else (0xa2c0 if fel else 0xffff1234)
-    original=r.copy(); r[15]=0xa4
+    original=r.copy(); r[15]=ENTRY
     if fel:mem[8:12]=b'.FEL'
     ctrl,intc=0x0100016a,0x12; old=(ctrl,intc); cpsr=0x60000153; old_cpsr=cpsr
     sctlr=0x00c52078 if high else 0x00c50078
@@ -54,8 +69,8 @@ def run(samples, *, fel=False, high=True, lr=None, events=0):
         if a is not None:c=int(a>=b);v=int(bool((a^b)&(a^x)&0x80000000))
     def cond(k):
         return [z,not z,c,not c,n,not n,v,not v,c and not z,not c or z,n==v,n!=v,not z and n==v,z or n!=v,True,True][k]
-    while r[15] not in (0xd70,0xffff0020,0x20,original[14]):
-        pc=r[15]; assert pc==0xa4 or 0x5000<=pc<0x5180,hex(pc)
+    while r[15] not in (SAVE,0xffff0020,0x20,original[14]):
+        pc=r[15]; assert pc in (0,0x60,0xa4) or HOOK<=pc<REPORT,hex(pc)
         w=rd(pc); executed+=1; assert executed<2000
         if not cond(w>>28):r[15]+=4;continue
         nxt=pc+4
@@ -102,13 +117,13 @@ def run(samples, *, fel=False, high=True, lr=None, events=0):
             else:raise AssertionError(hex(w))
             if op not in (8,10):r[d]=val&MASK
             if w&0x00100000 or op in (8,10):flags(val,a,b) if op in (2,10) else flags(val)
-            if pc==0x5060:r[8]=3 # model shortcut, real image has 0x80000
+            if pc==POLL_INIT:r[8]=3 # model shortcut, real image has 0x80000
         else:raise AssertionError(hex(w))
         r[15]=nxt&MASK
     assert (ctrl,intc)==old and r[4:10]==original[4:10] and r[13]==original[13] and (cpsr&255)==(old_cpsr&255)
     rep=struct.unpack_from('<10I',mem,REPORT)
     assert rep[0]==0x36324250 and rep[8:10]==old
-    if r[15]==0xd70 or (fel and r[15]==original[14]):assert r[14]==original[14]
+    if r[15]==SAVE or (fel and r[15]==original[14]):assert r[14]==original[14]
     return r[15],rep[1],rep[2],rep[3:7]
 
 def check(samples,expect,**kw):
@@ -122,9 +137,9 @@ for fel,high in product([False,True],repeat=2):
     recover=0xa2c0 if fel else 0xffff0020 if high else 0x20
     for values in product([0,6,13,47,48,63],repeat=4):
         normal=min(values)>=48
-        check([0,*values],(0xd70,1) if normal else (recover,2),fel=fel,high=high);count+=1
+        check([0,*values],(SAVE,1) if normal else (recover,2),fel=fel,high=high);count+=1
     for n in range(5):
-        check([63]*n,(recover,3) if n else (0xd70,1),fel=fel,high=high);count+=1
+        check([63]*n,(recover,3) if n else (SAVE,1),fel=fel,high=high);count+=1
     for event in (2,4,8,16,30):
         check([],(recover,3),fel=fel,high=high,events=event);count+=1
         check([63]*5,(recover,2),fel=fel,high=high,events=event);count+=1
