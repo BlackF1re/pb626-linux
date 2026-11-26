@@ -70,6 +70,36 @@ apply_governor() {
         printf '%s\n' "$1" >"$policy/scaling_governor" || return 1
     done
 }
+# Use only OPPs the kernel exposes, not guessed factory voltages/frequencies.
+# Keep thermal QoS and regulator constraints in the kernel.
+restore_cpu_policy() {
+    governor=ondemand
+    if [ -r "$state/governor" ]; then read -r governor <"$state/governor" || :; fi
+    for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+        [ -r "$policy/cpuinfo_min_freq" ] && [ -r "$policy/cpuinfo_max_freq" ] || continue
+        low=$(cat "$policy/cpuinfo_min_freq")
+        high=$(cat "$policy/cpuinfo_max_freq")
+        case "$low:$high" in *[!0-9:]*|:|:*|*:) continue ;; esac
+        # Raise max first, then lower min; avoid an invalid transient range.
+        printf '%s\n' "$high" >"$policy/scaling_max_freq" || :
+        printf '%s\n' "$low" >"$policy/scaling_min_freq" || :
+    done
+    apply_governor "$governor" || echo "CPU governor unavailable: $governor" >&2
+}
+tune_ondemand() {
+    # On transition-latency-limited kernels the minimum is authoritative.
+    for knobs in /sys/devices/system/cpu/cpufreq/ondemand /sys/devices/system/cpu/cpufreq/policy*/ondemand; do
+        [ -w "$knobs/sampling_rate" ] || continue
+        rate=30000
+        if [ -r "$knobs/sampling_rate_min" ]; then
+            minimum=$(cat "$knobs/sampling_rate_min")
+            case "$minimum" in ''|*[!0-9]*) ;; *) [ "$minimum" -le "$rate" ] || rate=$minimum ;; esac
+        fi
+        printf '%s\n' "$rate" >"$knobs/sampling_rate" || :
+        if [ -w "$knobs/up_threshold" ]; then printf '75\n' >"$knobs/up_threshold" || :; fi
+        if [ -w "$knobs/sampling_down_factor" ]; then printf '1\n' >"$knobs/sampling_down_factor" || :; fi
+    done
+}
 # The validated board has one GPIO LED. Refuse ambiguous inventories.
 led_path() {
     set -- /sys/class/leds/*
@@ -152,9 +182,9 @@ restore-board|restore-light)
         read_light
         apply_light || echo "Frontlight restore failed" >&2
     fi
-    if [ "$1" = restore-board ] && [ -r "$state/governor" ]; then
-        read -r governor <"$state/governor"
-        apply_governor "$governor" || echo "CPU governor restore failed" >&2
+    if [ "$1" = restore-board ]; then
+        restore_cpu_policy
+        tune_ondemand
     fi
     if [ "$1" = restore-board ]; then
         led_mode=heartbeat
@@ -219,6 +249,7 @@ governor)
     [ "$#" -eq 2 ] && valid_governor "$2" || exit 2
     lock_state
     apply_governor "$2"
+    if [ "$2" = ondemand ]; then tune_ondemand; fi
     atomic_save governor "$2"
     ;;
 desktop-status)

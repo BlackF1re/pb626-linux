@@ -35,7 +35,7 @@ NEdit*textBgColor: white
 NEdit*selectFgColor: white
 NEdit*selectBgColor: black
 NEdit*hiliteFgColor: black
-NEdit*hiliteBgColor: #bbbbbb
+NEdit*hiliteBgColor: white
 NEdit*cursorFgColor: black
 NEdit*lineNumFgColor: #444444
 NEdit*text.foreground: black
@@ -46,6 +46,6 @@ XCalc*font: 7x14
 XCalc*foreground: black
 XCalc*background: white
 XCalc*Command.foreground: black
-XCalc*Command.background: #eeeeee
+XCalc*Command.background: white
 XCalc*Toggle.foreground: black
-XCalc*Toggle.background: #dddddd
+XCalc*Toggle.background: white

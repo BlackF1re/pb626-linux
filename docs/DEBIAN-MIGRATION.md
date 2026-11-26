@@ -276,3 +276,22 @@ can mount a detected SD card at /media/sdcard or eject it; the helper checks
 the actual MMC0 host and SD type and never formats media. Eject before
 physical removal. ext4 preserves existing Unix ownership. No automount
 or extra daemon. Firmware tests do not establish SD I/O or suspend stability.
+
+### Board resource policy
+
+The factory FEX declares 512 MiB, while measured stock MemTotal is 223036
+KiB and the board has been observed as 256 MiB. Do not expose unverified
+addresses by extending the memory node. The 32 MiB CMA is reusable by
+normal movable pages; it is not a permanently lost 32 MiB. The video
+engine is already disabled. Confirm physical DRAM and MemTotal/CmaFree
+on hardware before changing the DT or reducing the eight DMA buffers.
+The board service restores the CPU driver's actual min/max OPP range
+and a conservative responsive ondemand policy (30 ms or kernel minimum,
+75% up threshold, sampling_down_factor 1). User governor selection is
+preserved. No new clocks, voltages or unsupported OPPs are introduced.
+The bridge and its worker inherit nice -3 and existing OOM protection;
+ordinary GUI clients do not. Avoid setting MemoryLow on the entire
+session cgroup because that would also protect a large browser.
+Targeted timer slack coalesces background service wakeups without
+adding delay to the E Ink renderer, UI or network application threads.
+GTK/X11 defaults retain all 16 panel levels for content.

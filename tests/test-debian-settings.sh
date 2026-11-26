@@ -3,7 +3,15 @@
 set -eu
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/state" "$tmp/backlight/panel" "$tmp/leds/led"
+mkdir -p "$tmp/state" "$tmp/backlight/panel" "$tmp/leds/led" "$tmp/cpufreq/policy0/ondemand"
+printf 'ondemand powersave performance\n' >"$tmp/cpufreq/policy0/scaling_available_governors"
+printf '120000\n' >"$tmp/cpufreq/policy0/cpuinfo_min_freq"
+printf '1008000\n' >"$tmp/cpufreq/policy0/cpuinfo_max_freq"
+printf '400000\n' >"$tmp/cpufreq/policy0/scaling_min_freq"
+printf '816000\n' >"$tmp/cpufreq/policy0/scaling_max_freq"
+printf 'performance\n' >"$tmp/cpufreq/policy0/scaling_governor"
+printf '50000\n' >"$tmp/cpufreq/policy0/ondemand/sampling_rate_min"
+touch "$tmp/cpufreq/policy0/ondemand/sampling_rate" "$tmp/cpufreq/policy0/ondemand/up_threshold" "$tmp/cpufreq/policy0/ondemand/sampling_down_factor"
 printf "1\n" >"$tmp/leds/led/max_brightness"
 printf "1\n" >"$tmp/leds/led/brightness"
 printf "none\n" >"$tmp/leds/led/trigger"
@@ -13,6 +21,7 @@ printf '4\n' >"$tmp/backlight/panel/bl_power"
 sed -e "s|/var/lib/pb626|$tmp/state|g" \
     -e "s|/sys/class/backlight|$tmp/backlight|g" \
     -e "s|/sys/class/leds|$tmp/leds|g" \
+    -e "s|/sys/devices/system/cpu/cpufreq|$tmp/cpufreq|g" \
     -e "s|/run/pb626-lock-indicator|$tmp/indicator|g" \
     -e "s|/etc/pb626/suspend-qualified|$tmp/qualified|g" \
     boot/debian/pb626-admin >"$tmp/admin"
@@ -28,6 +37,11 @@ admin light-off
 test "$(admin light-status)" = '0 37'
 test "$(cat "$tmp/backlight/panel/bl_power")" = 4
 admin restore-board
+test "$(cat "$tmp/cpufreq/policy0/scaling_min_freq")" = 120000
+test "$(cat "$tmp/cpufreq/policy0/scaling_max_freq")" = 1008000
+test "$(cat "$tmp/cpufreq/policy0/scaling_governor")" = ondemand
+test "$(cat "$tmp/cpufreq/policy0/ondemand/sampling_rate")" = 50000
+test "$(cat "$tmp/cpufreq/policy0/ondemand/up_threshold")" = 75
 test "$(admin light-status)" = '0 37'
 admin light-level 64
 test "$(admin light-status)" = '0 64'

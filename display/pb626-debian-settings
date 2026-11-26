@@ -138,6 +138,8 @@ set governor unknown
 set governors {}
 foreach p [glob -nocomplain /sys/devices/system/cpu/cpufreq/policy*] {
     set governor [readfile $p/scaling_governor]
+    set cpuMin [readfile $p/scaling_min_freq]
+    set cpuMax [readfile $p/scaling_max_freq]
     set governors {}
     foreach g [readfile $p/scaling_available_governors] {
         if {$g in {ondemand conservative powersave performance schedutil}} {lappend governors $g}
@@ -209,6 +211,10 @@ if {[llength $governors]} {
     choose $p cpu "CPU governor" governor $governors
     button $p.cpuapply -text "Apply CPU policy and save" -command {act governor $governor}
     pack $p.cpuapply -fill x -padx 12 -pady 4
+    if {[string is integer -strict $cpuMin] && [string is integer -strict $cpuMax]} {
+        label $p.cpufreq -text "Allowed range: [expr {$cpuMin / 1000}]–[expr {$cpuMax / 1000}] MHz"
+        pack $p.cpufreq -pady 2
+    }
 }
 set keyChoices {lock ignore poweroff}
 if {$qualified} {lappend keyChoices s2idle}
