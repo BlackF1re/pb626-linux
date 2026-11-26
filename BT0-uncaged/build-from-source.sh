@@ -21,6 +21,23 @@ cd "$work/u-boot"
 # Reproduce the historical source fix, not a binary address patch.
 sed -i '/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;/{N;s/rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;\n[[:blank:]]*writel(rval, \&priv->reg->clkcr);/clrbits_le32(\&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);/;}' drivers/mmc/sunxi_mmc.c
 grep -F 'clrbits_le32(&priv->reg->clkcr, SUNXI_MMC_CLK_DIVIDER_MASK);' drivers/mmc/sunxi_mmc.c
+# Match the actual hardware-qualified BT0 (Thumb-2 0x3d54, literal 0x3e34).
+# Apply at source level; both DM and legacy implementations must agree.
+python3 - <<'PY'
+from pathlib import Path
+p=Path("drivers/mmc/sunxi_mmc.c")
+s=p.read_text()
+for old,new in (("cfg->b_max = CONFIG_SYS_MMC_MAX_BLK_COUNT;",
+                 "cfg->b_max = 4096;"),
+                ("cfg->f_max = 52000000;", "cfg->f_max = 25000000;")):
+    if s.count(old) not in (1,2):
+        raise SystemExit("Unknown MMC source context: " + old)
+    s=s.replace(old,new)
+p.write_text(s)
+PY
+cp drivers/mmc/sunxi_mmc.c "$out/sunxi-mmc.c"
+cp common/spl/spl_mmc.c "$out/spl-mmc.c"
+
 make pocketbook_touch_lux_3_defconfig
 grep -Fx 'CONFIG_SPL=y' .config
 cp .config "$out/fel.config"
@@ -28,6 +45,8 @@ make -j"$(nproc)" spl/u-boot-spl.bin
 # sunxi-spl.bin contains the eGON header; u-boot-spl.bin does not.
 make -j"$(nproc)" spl/sunxi-spl.bin
 cp spl/sunxi-spl.bin "$out/pb626-fel-spl-candidate.bin"
+"${CROSS_COMPILE}objdump" -d spl/u-boot-spl >"$out/fel-disassembly.txt"
+"${CROSS_COMPILE}nm" -n spl/u-boot-spl >"$out/fel-symbols.txt"
 # Preserve the source for actual DRAM resume review. The upstream
 # revision may or may not already implement the Megi RTC contract.
 git grep -n -i -E '53555350|SDR_DPCR|STANDBY_GP|super.standby|cpu_resume' -- arch/arm board/sunxi >"$out/resume-audit.txt" || :
@@ -81,15 +100,16 @@ make -j"$(nproc)" spl/u-boot-spl.bin spl/sunxi-spl.bin
 cp spl/sunxi-spl.bin "$out/BT0-uncaged-source-candidate.bin"
 "${CROSS_COMPILE}nm" spl/u-boot-spl | grep -E 'pb626_menu_hook|save_boot_params' >"$out/native-symbols.txt"
 grep -q pb626_menu_hook "$out/native-symbols.txt"
-# Validate eGON length/checksum. Native slot is strictly 24 KiB; a larger
-# candidate is retained for review, never accepted by the old assembler.
+"${CROSS_COMPILE}objdump" -d spl/u-boot-spl >"$out/native-disassembly.txt"
+"${CROSS_COMPILE}nm" -n spl/u-boot-spl >"$out/native-all-symbols.txt"
+# Validate eGON length/checksum. Both candidates must fit the exact 24 KiB slot.
 python3 - "$out" <<'PY'
 import pathlib,struct,sys
 for p in pathlib.Path(sys.argv[1]).glob("*.bin"):
     b=bytearray(p.read_bytes())
     assert b[4:12]==b"eGON.BT0",p
     n=struct.unpack_from("<I",b,16)[0]
-    assert n%512==0 and 0<n<=len(b) and n<=31*1024,p
+    assert n == len(b) == 24576,p
     want=struct.unpack_from("<I",b,12)[0]
     struct.pack_into("<I",b,12,0x5f0a6c39)
     assert sum(struct.unpack("<%dI"%(n//4),b[:n]))&0xffffffff==want,p
@@ -132,6 +152,8 @@ print("Verified deep candidate eGON checksum and native slot size:",n)
 PY
 git diff >"$out/deep-resume/uboot-source-changes.patch"
 "${CROSS_COMPILE}nm" spl/u-boot-spl | grep -E 'pb626_menu_hook|save_boot_params|pb626_try_resume|dramc_init' >"$out/deep-resume/symbols.txt"
+"${CROSS_COMPILE}objdump" -d spl/u-boot-spl >"$out/deep-resume/disassembly.txt"
+"${CROSS_COMPILE}nm" -n spl/u-boot-spl >"$out/deep-resume/all-symbols.txt"
 cp .config "$out/deep-resume/native.config"
 (cd "$out/deep-resume" && sha256sum *.bin *.patch *.txt *.config >SHA256SUMS)
 echo 'SOURCE CANDIDATES ONLY: no flash approval; no demonstrated deep resume'
