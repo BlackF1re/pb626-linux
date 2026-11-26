@@ -13,10 +13,9 @@ index 79c41f3..06dd4d9 100644
  obj-$(CONFIG_TOUCHSCREEN_EGALAX_SERIAL)	+= egalax_ts_serial.o
 diff --git a/drivers/input/touchscreen/ektf2227.c b/drivers/input/touchscreen/ektf2227.c
 new file mode 100644
-index 0000000..132657c
 --- /dev/null
 +++ b/drivers/input/touchscreen/ektf2227.c
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,266 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/* ELAN eKTF2227, the eight-byte protocol used by PocketBook Touch Lux 3. */
 +#include <linux/delay.h>
@@ -26,10 +25,20 @@ index 0000000..132657c
 +#include <linux/input/mt.h>
 +#include <linux/interrupt.h>
 +#include <linux/module.h>
++#include <linux/pm.h>
++#include <linux/slab.h>
 +#include <linux/regulator/consumer.h>
 +
 +#define EKTF2227_PACKET_SIZE 8
 +#define EKTF2227_CONTACTS 2
++
++struct ektf2227 {
++	struct input_dev *input;
++	struct gpio_desc *reset;
++	struct regulator *vcc;
++	bool powered, irq_enabled;
++	int x, y;
++};
 +
 +static int ektf2227_read(struct i2c_client *client, u8 *data, int size)
 +{
@@ -60,7 +69,8 @@ index 0000000..132657c
 +static irqreturn_t ektf2227_interrupt(int irq, void *data)
 +{
 +	struct i2c_client *client = data;
-+	struct input_dev *input = i2c_get_clientdata(client);
++	struct ektf2227 *ts = i2c_get_clientdata(client);
++	struct input_dev *input = ts->input;
 +	u8 packet[EKTF2227_PACKET_SIZE];
 +	int slot;
 +
@@ -86,57 +96,100 @@ index 0000000..132657c
 +	return IRQ_HANDLED;
 +}
 +
-+static int ektf2227_probe(struct i2c_client *client)
++/* Use the proven cold-start handshake on resume as well. Factory
++ * ELAN turns touch power off in full suspend and resets it on wake. */
++static int ektf2227_initialize(struct i2c_client *client, struct ektf2227 *ts)
 +{
-+	struct device *dev = &client->dev;
-+	struct gpio_descs *mode;
-+	struct gpio_desc *reset;
-+	struct input_dev *input;
 +	u8 hello[EKTF2227_PACKET_SIZE];
 +	int ret, x, y;
 +
-+	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
-+		return -EOPNOTSUPP;
-+
-+	mode = devm_gpiod_get_array(dev, "mode", GPIOD_OUT_LOW);
-+	if (IS_ERR(mode))
-+		return dev_err_probe(dev, PTR_ERR(mode), "could not select the touch power path\n");
-+
-+	reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
-+	if (IS_ERR(reset))
-+		return dev_err_probe(dev, PTR_ERR(reset), "could not get reset GPIO\n");
-+
-+	ret = devm_regulator_get_enable(dev, "vcc");
-+	if (ret)
-+		return dev_err_probe(dev, ret, "could not enable touch power\n");
-+
++	if (!ts->powered) {
++		ret = regulator_enable(ts->vcc);
++		if (ret)
++			return ret;
++		ts->powered = true;
++	}
 +	msleep(5);
-+	gpiod_set_value_cansleep(reset, 1);
++	gpiod_set_value_cansleep(ts->reset, 1);
 +	msleep(20);
-+	gpiod_set_value_cansleep(reset, 0);
++	gpiod_set_value_cansleep(ts->reset, 0);
 +	msleep(100);
 +
 +	ret = ektf2227_read(client, hello, sizeof(hello));
 +	if (ret)
-+		return dev_err_probe(dev, ret, "could not read touch hello packet\n");
-+	/* The factory protocol also accepts an all-zero power-on packet. */
++		return ret;
 +	if (!memcmp(hello, "\x55\x55\x80\x80", 4))
-+		return dev_err_probe(dev, -EPROTO, "touch controller is in recovery mode\n");
-+
++		return -EPROTO;
 +	msleep(10);
 +	x = ektf2227_resolution(client, 0x60);
 +	y = ektf2227_resolution(client, 0x63);
 +	if (x < 2 || y < 2)
-+		return dev_err_probe(dev, -EPROTO, "invalid touch resolution %d x %d\n", x, y);
++		return -EPROTO;
++	if (ts->x && (ts->x != x || ts->y != y))
++		return -EPROTO;
++	ts->x = x;
++	ts->y = y;
++	return 0;
++}
++
++static int ektf2227_power_off(struct ektf2227 *ts)
++{
++	int ret;
++
++	if (!ts->powered)
++		return 0;
++	gpiod_set_value_cansleep(ts->reset, 1);
++	ret = regulator_disable(ts->vcc);
++	if (!ret)
++		ts->powered = false;
++	return ret;
++}
++
++static void ektf2227_cleanup(void *data)
++{
++	struct ektf2227 *ts = data;
++
++	ektf2227_power_off(ts);
++}
++
++static int ektf2227_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct gpio_descs *mode;
++	struct ektf2227 *ts;
++	struct input_dev *input;
++	int ret;
++
++	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
++		return -EOPNOTSUPP;
++
++	ts = devm_kzalloc(dev, sizeof(*ts), GFP_KERNEL);
++	if (!ts)
++		return -ENOMEM;
++	mode = devm_gpiod_get_array(dev, "mode", GPIOD_OUT_LOW);
++	if (IS_ERR(mode))
++		return dev_err_probe(dev, PTR_ERR(mode), "could not select the touch power path\n");
++	ts->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(ts->reset))
++		return dev_err_probe(dev, PTR_ERR(ts->reset), "could not get reset GPIO\n");
++	ts->vcc = devm_regulator_get(dev, "vcc");
++	if (IS_ERR(ts->vcc))
++		return dev_err_probe(dev, PTR_ERR(ts->vcc), "could not get touch power\n");
++	ret = devm_add_action_or_reset(dev, ektf2227_cleanup, ts);
++	if (ret)
++		return ret;
++	ret = ektf2227_initialize(client, ts);
++	if (ret)
++		return dev_err_probe(dev, ret, "could not initialize touch controller\n");
 +
 +	input = devm_input_allocate_device(dev);
 +	if (!input)
 +		return -ENOMEM;
-+
++	ts->input = input;
 +	input->name = "ELAN eKTF2227 Touchscreen";
 +	input->id.bustype = BUS_I2C;
-+	input_set_abs_params(input, ABS_MT_POSITION_X, 0, x - 1, 0, 0);
-+	input_set_abs_params(input, ABS_MT_POSITION_Y, 0, y - 1, 0, 0);
++	input_set_abs_params(input, ABS_MT_POSITION_X, 0, ts->x - 1, 0, 0);
++	input_set_abs_params(input, ABS_MT_POSITION_Y, 0, ts->y - 1, 0, 0);
 +
 +	ret = input_mt_init_slots(input, EKTF2227_CONTACTS, INPUT_MT_DIRECT);
 +	if (ret)
@@ -145,11 +198,71 @@ index 0000000..132657c
 +	if (ret)
 +		return ret;
 +
-+	i2c_set_clientdata(client, input);
-+	return devm_request_threaded_irq(dev, client->irq, NULL,
++	i2c_set_clientdata(client, ts);
++	ret = devm_request_threaded_irq(dev, client->irq, NULL,
 +					ektf2227_interrupt, IRQF_ONESHOT,
 +					dev_name(dev), client);
++	if (!ret)
++		ts->irq_enabled = true;
++	return ret;
 +}
++
++static int ektf2227_recover(struct i2c_client *client, struct ektf2227 *ts)
++{
++	int ret, tries;
++
++	for (tries = 0; tries < 2; tries++) {
++		ret = ektf2227_initialize(client, ts);
++		if (!ret) {
++			if (!ts->irq_enabled) {
++				enable_irq(client->irq);
++				ts->irq_enabled = true;
++			}
++			return 0;
++		}
++		ektf2227_power_off(ts);
++		msleep(20);
++	}
++	dev_err(&client->dev, "touch resume failed: %d\n", ret);
++	return ret;
++}
++
++static int ektf2227_suspend(struct device *dev)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct ektf2227 *ts = i2c_get_clientdata(client);
++	int slot, ret;
++
++	if (ts->irq_enabled) {
++		disable_irq(client->irq);
++		ts->irq_enabled = false;
++	}
++	/* Do not leave a finger pressed in the input core after power loss. */
++	for (slot = 0; slot < EKTF2227_CONTACTS; slot++) {
++		input_mt_slot(ts->input, slot);
++		input_mt_report_slot_state(ts->input, MT_TOOL_FINGER, false);
++	}
++	input_mt_sync_frame(ts->input);
++	input_sync(ts->input);
++
++	ret = ektf2227_power_off(ts);
++	if (ret) {
++		/* A failed suspend callback is not resumed by the PM core. */
++		ektf2227_recover(client, ts);
++		return ret;
++	}
++	return 0;
++}
++
++static int ektf2227_resume(struct device *dev)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++
++	return ektf2227_recover(client, i2c_get_clientdata(client));
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(ektf2227_pm_ops, ektf2227_suspend,
++				ektf2227_resume);
 +
 +static const struct of_device_id ektf2227_match[] = {
 +	{ .compatible = "elan,ektf2227" },
@@ -162,6 +275,7 @@ index 0000000..132657c
 +	.driver = {
 +		.name = "ektf2227",
 +		.of_match_table = ektf2227_match,
++		.pm = pm_sleep_ptr(&ektf2227_pm_ops),
 +	},
 +};
 +module_i2c_driver(ektf2227_driver);
