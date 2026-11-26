@@ -398,7 +398,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mmdebstrap debian-archive-keyring \
-            qemu-user-static binfmt-support arch-test device-tree-compiler kmod ncurses-bin git
+            qemu-user-static binfmt-support arch-test device-tree-compiler kmod ncurses-bin git clang lld
+          command -v clang ld.lld
           sudo update-binfmts --enable qemu-arm
           test -r /proc/sys/fs/binfmt_misc/qemu-arm
           arch-test armhf
