@@ -24,7 +24,7 @@ root="$work/root"
 sudo install -d "$root"/{bin,sbin,usr/bin,usr/sbin,usr/libexec,dev,proc,sys,run,root,tmp,etc,sys/kernel/config}
 sudo install -m 755 "$busybox" "$root/bin/busybox"
 applets=$(sudo qemu-arm "$root/bin/busybox" --list)
-for applet in sh ash awk base64 basename blockdev cat chmod cp dd grep gzip head ln mkdir mktemp mount mv readlink rm seq setsid sha256sum sleep stty sync timeout tr wc; do
+for applet in sh ash awk base64 basename blockdev cat chmod cp dd grep gzip head ln mkdir mktemp mount mv readlink rm seq setsid sha256sum sleep stty sync timeout touch tr wc; do
     grep -Fxq "$applet" <<<"$applets"
     sudo ln -s busybox "$root/bin/$applet"
 done

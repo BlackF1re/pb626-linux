@@ -13,43 +13,45 @@ mount -t devpts devpts /dev/pts || fatal devpts
 test -f /sys/firmware/devicetree/base/chosen/pb626,emmc-backup || fatal 'wrong DTB'
 test ! -e /sys/firmware/devicetree/base/chosen/pb626,emmc-root || fatal 'native DTB'
 disk=/dev/mmcblk2
-for n in $(seq 1 30); do
-    [ -b "$disk" ] && [ -b "${disk}boot0" ] && [ -b "${disk}boot1" ] && break
-    sleep 1
-done
-# A failed eMMC must not prevent SD diagnostics in the explicit SD profile.
-if [ -b "$disk" ]; then
-    test "$(cat /sys/class/block/mmcblk2/device/name)" = 8WPD3R || fatal 'wrong eMMC model'
-elif [ ! -e /sys/firmware/devicetree/base/chosen/pb626,sd-backup ]; then
-    fatal 'missing eMMC'
-fi
-for node in "$disk" "${disk}boot0" "${disk}boot1" "$disk"p[0-9]*; do
-    [ -b "$node" ] || continue
-    blockdev --setro "$node" || fatal "cannot lock $node"
-    test "$(blockdev --getro "$node")" = 1 || fatal "unlocked $node"
-done
-if [ -b "$disk" ]; then
-    for region in boot0 boot1; do
-        test -b "$disk$region" || fatal "missing $region"
-        test "$(cat /sys/class/block/mmcblk2$region/force_ro)" = 1 || fatal "unlocked $region"
-    done
-fi
-# No automount; initially present SD media is locked as well. Hot-added
-# media is locked by the explicit sd-info operation before any transfer.
-if [ -e /sys/firmware/devicetree/base/chosen/pb626,sd-backup ]; then
-    for card in /sys/bus/mmc/devices/mmc0:*/block/mmcblk*; do
-        [ -d "$card" ] || continue
-        for node in "/dev/${card##*/}" "/dev/${card##*/}"p[0-9]*; do
-            [ -b "$node" ] || continue
-            blockdev --setro "$node" || fatal "cannot lock $node"
-        done
-    done
-fi
 cp /usr/libexec/pb626-restore-fast.sh /run/pb626-restore-fast.sh
 cp /usr/libexec/pb626-restore-scan /run/pb626-restore-scan
-if [ -b "$disk" ]; then
-    /bin/sh /run/pb626-restore-fast.sh probe >/run/board-id || fatal 'board preflight failed'
-fi
+
+# Diagnose a damaged or absent eMMC over ACM, rather than withholding the
+# console. The transfer protocol independently rejects unready storage.
+storage_init() {
+    for n in $(seq 1 30); do
+        [ -b "$disk" ] && [ -b "${disk}boot0" ] && [ -b "${disk}boot1" ] && break
+        sleep 1
+    done
+    if [ -b "$disk" ]; then
+        if [ "$(cat /sys/class/block/mmcblk2/device/name)" = 8WPD3R ]; then
+            ok=yes
+            for node in "$disk" "${disk}boot0" "${disk}boot1" "$disk"p[0-9]*; do
+                [ -b "$node" ] || continue
+                if ! blockdev --setro "$node" || [ "$(blockdev --getro "$node")" != 1 ]; then
+                    ok=no
+                fi
+            done
+            if [ "$ok" = yes ] && PB626_STORAGE_INIT=1 /bin/sh /run/pb626-restore-fast.sh probe >/run/board-id; then
+                touch /run/pb626-emmc-ready
+            fi
+        fi
+    fi
+    if [ ! -e /run/pb626-emmc-ready ]; then
+        echo 'PB626 recovery: eMMC unavailable or preflight failed; ACM diagnostic access remains' >/dev/kmsg
+    fi
+    if [ -e /sys/firmware/devicetree/base/chosen/pb626,sd-backup ]; then
+        ok=yes
+        for card in /sys/bus/mmc/devices/mmc0:*/block/mmcblk*; do
+            [ -d "$card" ] || continue
+            for node in "/dev/${card##*/}" "/dev/${card##*/}"p[0-9]*; do
+                [ -b "$node" ] || continue
+                if ! blockdev --setro "$node"; then ok=no; fi
+            done
+        done
+        if [ "$ok" = yes ]; then touch /run/pb626-sd-ready; fi
+    fi
+}
 mount -t configfs configfs /sys/kernel/config || fatal configfs
 g=/sys/kernel/config/usb_gadget/pb626
 mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/acm.usb0" || fatal gadget
@@ -72,13 +74,15 @@ for n in $(seq 1 30); do
     sleep 1
 done
 test "$bound" = yes || fatal 'no UDC'
+# USB enumerates first; storage failure cannot prevent a shell.
+storage_init &
 for led in /sys/class/leds/*; do
     [ -w "$led/trigger" ] && echo heartbeat >"$led/trigger" || :
 done
 cd /root
 while :; do
     if [ -c /dev/ttyGS0 ]; then
-        setsid -c sh -c 'printf "\r\nPB626 Debian 13 RAM recovery\r\n"; exec sh -i' </dev/ttyGS0 >/dev/ttyGS0 2>&1 || :
+        setsid -c sh -c 'printf "\r\nPB626 Debian 13 RAM recovery (storage: /run/pb626-*-ready)\r\n"; exec sh -i' </dev/ttyGS0 >/dev/ttyGS0 2>&1 || :
     fi
     sleep 1
 done

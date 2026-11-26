@@ -23,7 +23,7 @@ if (!$Action) {
     Write-Host '3 - Restore a verified dump'
     Write-Host '4 - Read-only preflight of a verified dump'
     Write-Host '5 - Install new Debian build (reuse existing verified dump; no new backup)'
-    Write-Host '6 - Flash an already assembled firmware (no backup)'
+    Write-Host '6 - Flash complete assembled eMMC image (BT0, kernel, rootfs, boot0/boot1; no backup)'
     Write-Host '7 - Backup microSD (experimental MMC0 profile)'
     Write-Host '8 - Restore microSD (experimental MMC0 profile)'
     Write-Host '9 - Preflight microSD restore'
@@ -103,7 +103,7 @@ if (!$UseRunningRecovery -or $Action -eq 'Install') {
     if ((Get-Item (Join-Path $lab 'direct-entry.bin')).Length -ne 52) { throw 'Wrong private entry stub' }
 }
 if ($Action -eq 'Install') {
-    Write-Warning 'Installation replaces the original user partition and bootloader. Keep a verified full stock backup and do not unplug USB during writes.'
+    Write-Warning 'Installation replaces BT0, raw kernel/DTB and the entire rootfs partition. All eMMC regions are verified and changed blocks restored. Keep a verified stock backup and do not unplug USB during writes.'
     if ((Read-Host 'Type INSTALL to continue') -cne 'INSTALL') { throw 'Cancelled' }
 }
 # No automatic retry of SPL. The previous launcher is preserved unchanged

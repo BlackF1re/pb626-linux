@@ -110,3 +110,17 @@ Use the manual firmware workflow, or on enhance/native-reliability change
 commits do not trigger the expensive build. The request workflow reuses the
 same pinned kernel and Debian artifact jobs; Alpine-only jobs are skipped.
 The resulting `pb626-debian-flash-kit` is the intended paired package.
+
+## Full flash semantics and diagnostic ACM
+
+Install and Flash are full raw-image operations, not a package upgrade:
+user area LBA 16–63 contains BT0, LBA 80 onward contains raw kernel/DTB,
+p1 contains rootfs. Both hardware boot areas and all other user-area
+blocks are scanned and restored to their expected contents. Install
+preserves factory-specific regions from the input dump. Restore writes
+all changed blocks of a full backup. EXT_CSD is recorded and checked,
+not blindly programmed; RPMB is not a raw restorable block region.
+Recovery starts ConfigFS ACM automatically before storage initialization.
+An invalid or unavailable eMMC no longer suppresses its diagnostic shell;
+the storage protocol waits for/requires successful independent preflight.
+No block device is mounted and storage writes remain CID/hash checked.

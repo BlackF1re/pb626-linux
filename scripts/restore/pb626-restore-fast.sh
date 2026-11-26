@@ -161,6 +161,19 @@ decode_chunk() {
 
 operation=$1
 shift
+# RAM recovery exposes ACM even if storage is damaged. Never mistake that
+# diagnostic shell for an authorized block-transfer session.
+if test -r /etc/pb626-image-id && grep -qx pb626-debian13-recovery-v1 /etc/pb626-image-id &&
+   test "${PB626_STORAGE_INIT:-}" != 1; then
+    case "$operation:${1:-}" in
+        sd-info:*|sd-test-disk:*|*:sd)
+            test -e /run/pb626-sd-ready || fail "SD recovery not ready"
+            ;;
+        probe:*|backup-info:*|test-disk:*|backup-read:*|backup-read-packed:*|backup-hash:*|scan:*|verify:*|write:*)
+            test -e /run/pb626-emmc-ready || fail "eMMC recovery not ready"
+            ;;
+    esac
+fi
 case "$operation" in
     probe) probe ;;
     sd-info) sd_info ;;
