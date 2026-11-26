@@ -102,3 +102,11 @@ the explicit low-level -AllowOtherCard option and target CID confirmation.
 For eMMC plus SD diagnostic access, use -EnableRecoverySD. The native
 Debian MMC0 default is unchanged. If SD hangs, return to cold FEL and
 use the ordinary eMMC-only profile. SD hardware stability is unqualified.
+
+## Explicit full builds
+
+Use the manual firmware workflow, or on enhance/native-reliability change
+`.github/firmware-build-request` to request the Debian-only build. Ordinary
+commits do not trigger the expensive build. The request workflow reuses the
+same pinned kernel and Debian artifact jobs; Alpine-only jobs are skipped.
+The resulting `pb626-debian-flash-kit` is the intended paired package.

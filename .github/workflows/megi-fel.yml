@@ -1,6 +1,7 @@
 name: Build native Linux and FEL recovery
 
-# Main produces release artifacts. Feature branches build only via Run workflow.
+# Main produces release artifacts. Feature branches build via Run workflow
+# or the explicitly requested Debian-only caller workflow.
 # Lightweight CI still checks PR commits.
 on:
   push:
@@ -37,6 +38,12 @@ on:
       - 'scripts/restore/**'
       - 'boot/recovery/**'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      debian_only:
+        description: Build only the Debian native image and recovery kit
+        type: boolean
+        default: false
 
 concurrency:
   group: megi-fel-${{ github.ref }}
@@ -47,6 +54,7 @@ permissions:
 
 jobs:
   alpine-base:
+    if: ${{ !inputs.debian_only }}
     name: Alpine ARMv7 base (independent cache)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
