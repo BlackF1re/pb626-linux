@@ -1,2 +1,2 @@
-Debian qualification build: terminal diagnostics, independent cached chroots, source SPL and parallel recovery.
-Inputs: db9481976956d6a42602a902d22a302f408b0a15
+Qualification: verified BT0 MMC settings, resume watchdog, high-resolution diagnostics and exact-input caches.
+Inputs: 01850eeced9d1965e0ab3706156fb02ad3a820ff
