@@ -271,13 +271,14 @@ jobs:
             exit 1
           fi
       - name: Restore static RAM E Ink worker
+        if: ${{ !inputs.debian_only }}
         id: ram-worker
         uses: actions/cache@v4
         with:
           path: ram-worker-cache
           key: pb626-ram-worker-v1-${{ runner.os }}-${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('kernel-stage/uapi/linux/sun5i-eink.h', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/test-pb626-epd.c') }}
       - name: Test and compile the RAM E Ink utility on cache miss
-        if: steps.ram-worker.outputs.cache-hit != 'true'
+        if: ${{ !inputs.debian_only && steps.ram-worker.outputs.cache-hit != 'true' }}
         run: |
           set -euo pipefail
           gcc -O2 -Wall -Wextra -Werror -I kernel-stage/uapi \
@@ -288,11 +289,16 @@ jobs:
             display/pb626-epd.c -o ram-worker-cache/pb626-epd
           (cd ram-worker-cache && sha256sum pb626-epd > SHA256SUMS)
       - name: Verify and stage the RAM E Ink utility
+        if: ${{ !inputs.debian_only }}
         run: |
           set -euo pipefail
           (cd ram-worker-cache && sha256sum -c SHA256SUMS)
           cp ram-worker-cache/pb626-epd kernel-stage/
           test -s kernel-stage/pb626-epd
+      - name: Stamp and hash paired kernel stage
+        run: |
+          git rev-parse HEAD > kernel-stage/BUILD-COMMIT
+          (cd kernel-stage && find . -type f ! -path ./SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: pb626-kernel-stage
@@ -312,6 +318,10 @@ jobs:
         with:
           name: pb626-kernel-stage
           path: kernel-stage
+      - name: Verify paired kernel stage
+        run: |
+          test "$(cat kernel-stage/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
+          (cd kernel-stage && sha256sum -c SHA256SUMS)
       - uses: actions/download-artifact@v4
         with:
           name: pb626-alpine-base-stage
@@ -470,6 +480,10 @@ jobs:
         with:
           name: pb626-kernel-stage
           path: kernel-stage
+      - name: Verify paired kernel stage
+        run: |
+          test "$(cat kernel-stage/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
+          (cd kernel-stage && sha256sum -c SHA256SUMS)
       - uses: actions/download-artifact@v4
         with:
           name: pb626-debian-base-stage
@@ -509,6 +523,10 @@ jobs:
         with:
           name: pb626-kernel-stage
           path: kernel-stage
+      - name: Verify paired kernel stage
+        run: |
+          test "$(cat kernel-stage/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
+          (cd kernel-stage && sha256sum -c SHA256SUMS)
       - name: Install Debian recovery build tools
         run: |
           sudo apt-get update
