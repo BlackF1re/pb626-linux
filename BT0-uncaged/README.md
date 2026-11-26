@@ -35,3 +35,6 @@ use the offline image builder and verified full restore as described in
 complete original backup and the local FEL inputs. Normal cold boot and
 Menu FEL worked on the tested installed SPL; independent recovery when
 SPL itself fails is unproven. See [boot contract](../docs/BOOT.md).
+
+Deep sleep remains gated on a matching nondestructive DRAM resume path; see
+[resume compatibility contract](RESUME.md).

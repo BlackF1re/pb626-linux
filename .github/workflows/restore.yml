@@ -6,12 +6,20 @@ on:
     paths:
       - '.github/workflows/restore.yml'
       - 'scripts/restore/**'
+      - 'boot/recovery/**'
+      - 'scripts/build-debian-recovery.sh'
+      - 'scripts/installer/**'
+      - 'scripts/prepare-install.sh'
       - '!scripts/restore/README.md'
   pull_request:
     branches: [main]
     paths:
       - '.github/workflows/restore.yml'
       - 'scripts/restore/**'
+      - 'boot/recovery/**'
+      - 'scripts/build-debian-recovery.sh'
+      - 'scripts/installer/**'
+      - 'scripts/prepare-install.sh'
       - '!scripts/restore/README.md'
   workflow_dispatch:
 
@@ -25,14 +33,15 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Build ARM recovery helper
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            busybox gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user
+            busybox gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user \
+            mmdebstrap debian-archive-keyring cpio device-tree-compiler
           arm-linux-gnueabihf-gcc -O2 -Wall -Wextra -Werror -static -s \
             scripts/restore/pb626-restore-scan.c -o pb626-restore-scan
       - name: Verify scans and full readback on a temporary image
@@ -71,6 +80,69 @@ jobs:
               "$PWD/scripts/restore/Backup-PB626Fast.ps1", [ref]$tokens, [ref]$errors)
             if ($errors) { $errors; exit 1 }
           '
+      - name: Build and inspect minimal Debian recovery (fixture kernel, never publish)
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          mkdir "$work/kernel"
+          printf 'NOT A BOOTABLE KERNEL\n' >"$work/kernel/pb626-megi-zImage"
+          cat >"$work/board.dts" <<'EOF'
+          /dts-v1/;
+          / {
+            chosen { pb626,emmc-backup; };
+            soc {
+              mmc@1c11000 { status = "okay"; };
+              mmc@1c0f000 { status = "disabled"; };
+            };
+          };
+          EOF
+          dtc -q -I dts -O dtb -o "$work/kernel/pb626-elan-emmc-backup.dtb" "$work/board.dts"
+          bash scripts/build-debian-recovery.sh "$work/kernel" "$work/fixture"
+          (cd "$work/fixture/recovery" && sha256sum -c SHA256SUMS)
+          gzip -dc "$work/fixture/recovery/pb626-megi-initramfs.cpio.gz" | cpio -it >"$work/files"
+          grep -Eq '^([.]/)?init
+        run: |
+          mkdir dist
+          cp scripts/restore/{Backup-PB626Fast.ps1,Restore-PB626Fast.ps1,pb626-restore-fast.sh,README.md} dist/
+          gzip -n -9 -c pb626-restore-scan >dist/pb626-restore-scan.gz
+          git rev-parse HEAD > dist/BUILD-COMMIT
+          (cd dist && sha256sum pb626-restore-scan.gz >SHA256SUMS.fast)
+          (cd dist && sha256sum Backup-PB626Fast.ps1 Restore-PB626Fast.ps1 pb626-restore-fast.sh pb626-restore-scan.gz README.md BUILD-COMMIT SHA256SUMS.fast > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-emmc-tools
+          path: dist/
+          if-no-files-found: error
+ "$work/files"
+          grep -Eq '^([.]/)?usr/libexec/pb626-restore-scan
+        run: |
+          mkdir dist
+          cp scripts/restore/{Backup-PB626Fast.ps1,Restore-PB626Fast.ps1,pb626-restore-fast.sh,README.md} dist/
+          gzip -n -9 -c pb626-restore-scan >dist/pb626-restore-scan.gz
+          git rev-parse HEAD > dist/BUILD-COMMIT
+          (cd dist && sha256sum pb626-restore-scan.gz >SHA256SUMS.fast)
+          (cd dist && sha256sum Backup-PB626Fast.ps1 Restore-PB626Fast.ps1 pb626-restore-fast.sh pb626-restore-scan.gz README.md BUILD-COMMIT SHA256SUMS.fast > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-emmc-tools
+          path: dist/
+          if-no-files-found: error
+ "$work/files"
+          if grep -Eq '(^|/)(Xorg|systemd|modules|apt-get)
+        run: |
+          mkdir dist
+          cp scripts/restore/{Backup-PB626Fast.ps1,Restore-PB626Fast.ps1,pb626-restore-fast.sh,README.md} dist/
+          gzip -n -9 -c pb626-restore-scan >dist/pb626-restore-scan.gz
+          git rev-parse HEAD > dist/BUILD-COMMIT
+          (cd dist && sha256sum pb626-restore-scan.gz >SHA256SUMS.fast)
+          (cd dist && sha256sum Backup-PB626Fast.ps1 Restore-PB626Fast.ps1 pb626-restore-fast.sh pb626-restore-scan.gz README.md BUILD-COMMIT SHA256SUMS.fast > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-emmc-tools
+          path: dist/
+          if-no-files-found: error
+ "$work/files"; then exit 1; fi
+          rm -rf "$work"
       - name: Package fast restore
         run: |
           mkdir dist

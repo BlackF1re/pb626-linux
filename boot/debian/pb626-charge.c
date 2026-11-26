@@ -145,7 +145,7 @@ static bool cmdline_normal(void)
 
 static int select_boot(void)
 {
-    bool force = cmdline_normal();
+    bool force = cmdline_normal() || access(normal_marker, F_OK) == 0;
     /* A normal, explicit reboot must not re-enter charge mode if the
      * PMIC retains its original startup-source bit across a warm reset. */
     if (access(next_boot, F_OK) == 0) {
