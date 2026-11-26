@@ -497,4 +497,103 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
 +		.suppress_bind_attrs = true,
  	},
  };
+diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
+--- a/drivers/regulator/tps65185.c
++++ b/drivers/regulator/tps65185.c
+@@ -61,27 +61,42 @@
+ 	bool vcom_on;		/* enable state when there is no ctrl gpio */
+ };
  
+-static int tps65185_wake_get(struct tps65185_data *data)
+-{
+-	guard(mutex)(&data->wake_lock);
+-
+-	if (data->wake_refs++ > 0 || !data->wakeup_gpio)
+-		return 0;
+-
+-	gpiod_set_value_cansleep(data->wakeup_gpio, 1);
+-	usleep_range(3000, 4000);
+-
+-	/* SLEEP reset the registers; restore the cached configuration */
+-	regcache_mark_dirty(data->regmap);
+-	regcache_sync(data->regmap);
+-	/* re-apply VCOM in full: a value requested while the chip slept
+-	 * only reached vcom_sel, and the msb register is volatile */
+-	regmap_write(data->regmap, TPS65185_REG_VCOM1, data->vcom_sel & 0xFF);
+-	regmap_update_bits(data->regmap, TPS65185_REG_VCOM2, BIT(0),
+-			   data->vcom_sel >> 8);
+-
+-	return 0;
+-}
++static int tps65185_wake_get(struct tps65185_data *data)
++{
++	int ret;
++
++	guard(mutex)(&data->wake_lock);
++
++	if (data->wake_refs++ > 0 || !data->wakeup_gpio)
++		return 0;
++
++	ret = gpiod_set_value_cansleep(data->wakeup_gpio, 1);
++	if (ret)
++		goto err_sleep;
++	usleep_range(3000, 4000);
++
++	/* Never enable panel rails with an unverified register restore. */
++	regcache_mark_dirty(data->regmap);
++	ret = regcache_sync(data->regmap);
++	if (ret)
++		goto err_sleep;
++	ret = regmap_write(data->regmap, TPS65185_REG_VCOM1,
++			   data->vcom_sel & 0xFF);
++	if (ret)
++		goto err_sleep;
++	ret = regmap_update_bits(data->regmap, TPS65185_REG_VCOM2, BIT(0),
++				 data->vcom_sel >> 8);
++	if (ret)
++		goto err_sleep;
++
++	return 0;
++
++err_sleep:
++	data->wake_refs--;
++	regcache_mark_dirty(data->regmap);
++	gpiod_set_value_cansleep(data->wakeup_gpio, 0);
++	return ret;
++}
+ 
+ static void tps65185_wake_put(struct tps65185_data *data)
+ {
+@@ -117,17 +132,21 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	reinit_completion(&data->tmst_completion);
+-	/* start acquisition */
+-	regmap_update_bits(data->regmap, TPS65185_REG_TMST1,
+-			   TPS65185_READ_THERM, TPS65185_READ_THERM);
+-	wait_for_completion_timeout(&data->tmst_completion,
+-				    msecs_to_jiffies(PGOOD_TIMEOUT_MSECS));
+-	ret = regmap_read(data->regmap, TPS65185_REG_TMST1, &val);
+-	if (!(val & TPS65185_CONV_END)) {
+-		ret = -ETIMEDOUT;
+-		goto out_sleep;
+-	}
++	reinit_completion(&data->tmst_completion);
++	/* start acquisition */
++	ret = regmap_update_bits(data->regmap, TPS65185_REG_TMST1,
++				 TPS65185_READ_THERM, TPS65185_READ_THERM);
++	if (ret)
++		goto out_sleep;
++	wait_for_completion_timeout(&data->tmst_completion,
++				    msecs_to_jiffies(PGOOD_TIMEOUT_MSECS));
++	ret = regmap_read(data->regmap, TPS65185_REG_TMST1, &val);
++	if (ret)
++		goto out_sleep;
++	if (!(val & TPS65185_CONV_END)) {
++		ret = -ETIMEDOUT;
++		goto out_sleep;
++	}
+ 
+ 	ret = regmap_read(data->regmap, TPS65185_REG_TMST_VALUE, &val);
+ 	if (ret)
