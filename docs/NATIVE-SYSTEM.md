@@ -1,6 +1,11 @@
 # Native system administration
 
-Only the persistent eMMC desktop gets the full Alpine base. The FEL
+Only the persistent eMMC desktop gets the full Alpine base.
+Native package installation uses a checksum-verified x86_64 Alpine APK
+executable with the ARM target root and architecture. This avoids QEMU
+user-mode permission preservation failures for package-owned setuid/setgid
+files. Package scripts still run inside the ARM chroot; the build checks
+privilege modes and ownership and fails on any APK error. The FEL
 recovery image and RAM desktop keep their prior boot paths and package
 budget. The native root boots read-only, runs fsck and remounts through
 stock OpenRC. BusyBox PID 1 stays in place.

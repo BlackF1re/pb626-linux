@@ -32,6 +32,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/megi-fel.yml'
+      - 'scripts/build-native-rootfs.sh'
   workflow_dispatch:
 
 concurrency:

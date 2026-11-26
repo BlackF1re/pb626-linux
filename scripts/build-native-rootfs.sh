@@ -5,17 +5,54 @@ root=$(realpath "${1:?native staging root}")
 test -d "$root/etc"
 test -x "$root/usr/bin/pb626-epd"
 test -s "$root/etc/pb626-image-id"
+host_apk=$(mktemp -d)
+trap 'sudo rm -f "$root/usr/bin/qemu-arm-static"; sudo rm -rf "$host_apk"' EXIT
 sudo install -m 755 /usr/bin/qemu-arm-static "$root/usr/bin/"
-trap 'sudo rm -f "$root/usr/bin/qemu-arm-static"' EXIT
 in_root() { sudo chroot "$root" /usr/bin/qemu-arm-static "$@"; }
+
+# QEMU user-mode can fail apk's permission-preservation operation for
+# setuid/setgid files (bbsuid, doas, D-Bus launch helper, wall).
+# Use a host-native apk of the same Alpine release to extract ARM packages.
+# Package scripts still execute in the target chroot via ARM binfmt.
+# Do not ignore apk errors or reconstruct package permissions by hand.
+test "$(uname -m)" = x86_64
+host_base=https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64
+host_archive=alpine-minirootfs-3.24.4-x86_64.tar.gz
+(
+    cd "$host_apk"
+    curl -fsSL --retry 3 "$host_base/$host_archive" -o "$host_archive"
+    curl -fsSL --retry 3 "$host_base/$host_archive.sha256" -o "$host_archive.sha256"
+    sha256sum -c "$host_archive.sha256"
+    mkdir host
+    sudo tar --numeric-owner -xzf "$host_archive" -C host
+)
+host="$host_apk/host"
+native_apk() {
+    sudo "$host/lib/ld-musl-x86_64.so.1" \
+        --library-path "$host/lib:$host/usr/lib" "$host/sbin/apk" \
+        --root "$root" --arch armv7 "$@"
+}
+# Check the actual execution path used by package post-install scripts.
+sudo chroot "$root" /bin/true
+native_apk --version
 sudo cp /etc/resolv.conf "$root/etc/resolv.conf"
 # Community is needed for ConnMan and zram-init; stay on the same Alpine branch.
 printf '%s\n' 'https://dl-cdn.alpinelinux.org/alpine/v3.24/main' \
   'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' | sudo tee "$root/etc/apk/repositories" >/dev/null
-in_root /sbin/apk add --no-cache alpine-base ifupdown-ng ifupdown-ng-openrc \
+native_apk add --no-cache alpine-base ifupdown-ng ifupdown-ng-openrc \
   connman connman-openrc dbus dbus-openrc zram-init zram-init-openrc \
   doas tk tzdata ca-certificates nano curl openssh-sftp-server \
   openssh-server-common-openrc wpa_supplicant-openrc mupdf-x11
+# Check package-owned privilege metadata on the host, not under QEMU.
+# A rootfs with missing set-ID bits may boot but cannot authenticate users
+# or start privileged D-Bus services correctly.
+test "$(sudo stat -c '%a:%u:%g' "$root/bin/bbsuid")" = 4111:0:0
+test "$(sudo stat -c '%a:%u:%g' "$root/usr/bin/doas")" = 4755:0:0
+dbus_gid=$(sudo awk -F: '$1 == "messagebus" {print $3}' "$root/etc/group")
+test -n "$dbus_gid"
+test "$(sudo stat -c '%a:%u:%g' "$root/usr/libexec/dbus-daemon-launch-helper")" = "4750:0:$dbus_gid"
+sudo test -g "$root/usr/bin/wall"
+echo 'Native APK privilege metadata verified'
 # No network daemon, GUI toolkit or PDF viewer is launched during assembly.
 sudo install -d -m 755 "$root/usr/libexec" "$root/etc/pb626" "$root/etc/modprobe.d" \
   "$root/etc/network" "$root/etc/ssh" "$root/var/log" "$root/var/lib/xkb"
