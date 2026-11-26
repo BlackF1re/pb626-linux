@@ -14,7 +14,7 @@ s = p.read_text()
 if "#include <pb626-led.h>" not in s:
     if s.count("#include <common.h>") != 1:
         raise SystemExit("Unknown DRAM include context")
-    s = s.replace("#include <common.h>", "#include <common.h>\\n#include <pb626-led.h>")
+    s = s.replace("#include <common.h>", "#include <common.h>\n#include <pb626-led.h>")
 
 def change(old, new):
     global s
