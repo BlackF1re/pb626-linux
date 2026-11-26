@@ -117,6 +117,7 @@ jobs:
           ld.lld -Ttext=0x5000 -e _start /tmp/menu.o -o /tmp/menu.elf
           llvm-objcopy -O binary -j .text /tmp/menu.elf /tmp/menu.raw
           python3 BT0-uncaged/test_hook.py --hook-only /tmp/menu.raw
+          python3 BT0-uncaged/test_recover_base.py
           python3 -m py_compile BT0-uncaged/build.py BT0-uncaged/pack-kernel.py
   renderer:
     name: Host-side E Ink renderer tests

@@ -44,7 +44,12 @@ if ($SD) {
 if ($SkipBackup -and $Action -ne 'Install') { throw '-SkipBackup applies only to Install' }
 if ($Action -eq 'Install' -and $SkipBackup) {
     if (!$StockDir) { $StockDir=Join-Path $DataDir 'stock' }
-    if (!(Test-Path -LiteralPath (Join-Path $StockDir 'SHA256SUMS') -PathType Leaf)) { throw 'Skipping a new backup requires a previously verified dump for the device-specific data. Use -StockDir.' }
+    if (!(Test-Path -LiteralPath (Join-Path $StockDir 'SHA256SUMS') -PathType Leaf)) {
+        $StockDir=Read-Host 'Path to an existing verified factory/native dump'
+        if (!$StockDir -or !(Test-Path -LiteralPath (Join-Path $StockDir 'SHA256SUMS') -PathType Leaf)) {
+            throw 'Skipping a new backup requires a previously verified dump. Or use Flash for an already assembled image.'
+        }
+    }
 }
 # Verify the trusted public kit before invoking any included script. Paths
 # in the release manifest are relative, with no traversal or private files.

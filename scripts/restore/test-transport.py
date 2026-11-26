@@ -114,6 +114,53 @@ def main():
             os.close(master)
             os.close(slave)
 
+        # SD operations on a regular file: use the real region selection,
+        # length arithmetic, framing, decoder and readback. Replace only
+        # the hardware discovery and lock ioctls, never access real MMC.
+        sd = temp / "mock-sd.img"
+        tail = b"SD-tail" * 219 + b"123"
+        assert len(tail) == 1536
+        sd.write_bytes(data + tail)
+        cid = "0123456789abcdef0123456789abcdef"
+        mock = source.replace("operation=$1", f"""
+sd_device() {{
+    sd_path={shlex.quote(str(sd))}
+    sd_cid={cid}
+    sd_sectors=8195
+}}
+unmounted() {{ :; }}
+blockdev() {{ case "$1" in --getro) echo 1 ;; --setro|--setrw|--flushbufs) : ;; *) return 1 ;; esac; }}
+PB626_SD_CID={cid}
+PB626_SD_SECTORS=8195
+operation=$1""", 1)
+        script.write_text(mock)
+        master, slave = os.openpty()
+        try:
+            def run(*args, ok=True):
+                r = subprocess.run(["busybox", "sh", str(script), *args],
+                                   stdin=slave, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, timeout=20)
+                assert (r.returncode == 0) == ok, r.stderr
+                return r.stdout
+            digest = hashlib.sha256(tail).hexdigest()
+            frame = run("backup-read-packed", "sd", "1")
+            assert frame == f"\nPB626_DATA 1536 {digest} raw\n".encode() + tail + b"\nPB626_DATA_END\n"
+            assert run("scan", "sd").splitlines()[-1] == f"BLOCK 1 {digest}".encode()
+            assert run("verify", "sd").splitlines()[-1] == b"SHA256 " + hashlib.sha256(data + tail).hexdigest().encode()
+            run("backup-read", "sd", "2", ok=False)
+        finally:
+            os.close(master)
+            os.close(slave)
+        new = bytes(1536)
+        transfer(script, ["write", "sd", "1", "raw", str(len(new)), "0" * 64], new, success=False)
+        assert sd.read_bytes() == data + tail
+        transfer(script, ["write", "sd", "1", "raw", str(len(new)), hashlib.sha256(new).hexdigest()], new)
+        assert sd.read_bytes() == data + new
+        script.write_text(mock.replace(f"PB626_SD_CID={cid}", "PB626_SD_CID=wrong"))
+        bad = subprocess.run(["busybox", "sh", str(script), "scan", "sd"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        assert bad.returncode != 0 and b"SD CID changed" in bad.stderr
+
 
 if __name__ == "__main__":
     main()

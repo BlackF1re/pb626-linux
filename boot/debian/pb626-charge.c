@@ -169,7 +169,10 @@ static int select_boot(void)
     if (make_marker(charge_marker))
         return -1;
     fprintf(stderr, "PB626 boot: charge-only, external PMIC startup\n");
-    return systemctl("start", "pb626-charge.target");
+    if (!systemctl("start", "pb626-charge.target"))
+        return 0;
+    fprintf(stderr, "PB626 boot: charge target start failed; trying ordinary boot\n");
+    return select_normal();
 }
 
 static void rect(int x, int y, int w, int h, uint8_t color)
