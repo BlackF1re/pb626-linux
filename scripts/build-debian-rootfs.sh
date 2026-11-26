@@ -146,6 +146,10 @@ sudo install -D -m 755 boot/pb626-native-desktop "$pkg/usr/sbin/pb626-native-des
 sudo install -D -m 755 boot/native/pb626-usb "$pkg/usr/libexec/pb626-usb"
 sudo install -D -m 755 scripts/profile-memory.sh "$pkg/usr/sbin/pb626-profile-memory"
 sudo install -D -m 755 diagnostics/pb626-diagnostics "$pkg/usr/sbin/pb626-diagnostics"
+sudo install -m 644 diagnostics/pb626-diag-clock.c "$build/tmp/pb626-diag-clock.c"
+in_build cc -O2 -Wall -Wextra -Werror /tmp/pb626-diag-clock.c -o /tmp/pb626-diag-clock
+in_build /tmp/pb626-diag-clock resolution
+sudo install -D -m 755 "$build/tmp/pb626-diag-clock" "$pkg/usr/sbin/pb626-diag-clock"
 sudo install -D -m 755 scripts/inspect-live.sh "$pkg/usr/sbin/inspect-pb626"
 sudo install -D -m 755 scripts/probe-device.sh "$pkg/usr/sbin/probe-pb626"
 sudo install -m 755 display/pb626-open-document display/pb626-shutdown-picker "$pkg/usr/bin/"
