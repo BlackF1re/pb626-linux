@@ -56,3 +56,11 @@ Alpine, kernel/modules, DTBs, the static RAM worker, Matchbox/Xorg base and nati
 Original contributions: **GPL-2.0-or-later** unless otherwise marked ([LICENSE](LICENSE)). Kernel changes follow the applicable Linux GPL-2.0-only terms and syscall exception; upstream and packaged components retain their own licenses. Do not redistribute reconstructed SPL binaries until the exact U-Boot corresponding source/configuration obligations are resolved.
 
 Special thanks to **[Ondřej Jirman (megi)](https://xnux.eu/)** and [his Linux project](https://xff.cz/kernels/) for the foundational PocketBook support, E Ink V4L2 driver and Allwinner work. This port uses his [pinned Linux 7.2 tree](https://github.com/Arnavion/linux/tree/facc87117511221bb61410e3f92ad8579697f736) via [Arnavion/linux](https://github.com/Arnavion/linux). Thanks also to [linux-sunxi](https://linux-sunxi.org/PocketBook_Touch_Lux_3), [PocketBook A13 sources](https://github.com/pocketbook/Platform_A13), [sunxi-tools](https://github.com/linux-sunxi/sunxi-tools), Matchbox and Alpine.
+
+### Debian 13 armhf native candidate
+
+The firmware workflow also produces `pb626-native-debian13-armhf`, an
+independent Debian minbase rootfs for eMMC with systemd, APT, iwd/iwgtk
+and the existing E Ink desktop. See [Debian migration](docs/DEBIAN-MIGRATION.md).
+The previous Alpine native and FEL artifacts remain available until the
+candidate passes on-device qualification. No Debian RAM desktop is implied.

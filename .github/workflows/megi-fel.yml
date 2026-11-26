@@ -15,6 +15,7 @@ on:
       - 'scripts/build-desktop-base.sh'
       - 'scripts/build-megi-desktop.sh'
       - 'scripts/build-native-rootfs.sh'
+      - 'scripts/build-debian-rootfs.sh'
       - 'scripts/Start-PB626*.ps1'
       - 'scripts/fel-boot.sh'
       - 'scripts/inspect-live.sh'
@@ -33,6 +34,8 @@ on:
     paths:
       - '.github/workflows/megi-fel.yml'
       - 'scripts/build-native-rootfs.sh'
+      - 'scripts/build-debian-rootfs.sh'
+      - 'boot/debian/**'
       - 'scripts/configure-megi-kernel.sh'
       - 'scripts/build-megi-variants.sh'
       - 'board/**'
@@ -379,3 +382,30 @@ jobs:
           name: pb626-native-system
           path: native-dist/
           if-no-files-found: error
+
+  debian-native:
+    name: Debian 13 armhf native firmware candidate
+    needs: [kernel]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-kernel-stage
+          path: kernel-stage
+      - name: Install bootstrap and ARM execution tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mmdebstrap debian-archive-keyring \
+            qemu-user-static binfmt-support device-tree-compiler kmod ncurses-bin git
+          sudo update-binfmts --enable qemu-arm
+          test -r /proc/sys/fs/binfmt_misc/qemu-arm
+      - name: Build and verify Debian rootfs and paired firmware
+        run: bash scripts/build-debian-rootfs.sh kernel-stage debian-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-native-debian13-armhf
+          path: debian-dist/
+          if-no-files-found: error
+          retention-days: 14

@@ -62,6 +62,9 @@ jobs:
           sh -n boot/init-megi
           for f in boot/pb626-native-{desktop,console} boot/native/init.d/* boot/native/pb626-* display/pb626-{desktop,xsession}; do sh -n "$f"; done
           bash -n scripts/build-native-rootfs.sh
+          bash -n scripts/build-debian-rootfs.sh
+          sh -n boot/debian/pb626-admin
+          sh -n boot/debian/pb626-user-session
           sh tests/test-native-services.sh
           if ! command -v tclsh >/dev/null; then sudo apt-get update; sudo apt-get install -y --no-install-recommends tcl; fi
           tclsh tests/check-control-center.tcl display/pb626-control-center display/pb626-open-document

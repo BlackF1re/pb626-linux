@@ -1,0 +1,17 @@
+[Unit]
+Description=PocketBook authenticated USB ACM console gadget
+ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
+Wants=sys-kernel-config.mount
+After=local-fs.target sys-kernel-config.mount systemd-udev-trigger.service
+Before=serial-getty@ttyGS0.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pb626-usb start
+ExecStop=/usr/libexec/pb626-usb stop
+TimeoutStartSec=25s
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target

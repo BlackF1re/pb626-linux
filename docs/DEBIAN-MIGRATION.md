@@ -1,84 +1,100 @@
-# Debian armhf migration and hardware acceptance
+# Debian 13 armhf native system
 
-The intended native system is Debian 13 (trixie) armhf, not a Debian-themed
-Alpine image. Keep the last known-good FEL/Alpine rescue independently
-bootable until a Debian rescue image has passed the same recovery tests.
-No default rootfs or installer format changes in this reliability series.
+The first migration candidate is built independently from the paired
+Megi kernel-stage artifact by `scripts/build-debian-rootfs.sh`. It
+uses mmdebstrap minbase and Debian trixie, updates and security repositories.
+It does not copy Alpine userspace or the static RAM worker into Debian.
+The rootfs is for eMMC, not initramfs.
 
-## Proposed native baseline
+## Build and installation
 
-- Bootstrap a fresh minbase with mmdebstrap, APT and Debian's armhf glibc
-  packages. Build both PB626 renderer programs against that target ABI.
-  Copy matching kernel modules and required firmware, not musl binaries.
-- Use systemd-sysv, udev, D-Bus, journald, serial-getty and standard
-  systemctl/login tools. Keep the graphical session unprivileged.
-  Use native units for PB626 hardware preparation, USB ACM configuration
-  and the existing X11 session; limit start bursts and stop the entire
-  service cgroup. Board-specific setup and renderer code still belong
-  in the project; generic networking, logging and service supervision do not.
-- Retain the current Matchbox UI, panel/keyboard E Ink changes, buttons,
-  frontlight controls, file manager, terminal and reader. Use packaged
-  Xorg and desktop utilities rather than copying an executable out of a
-  package. Rebuild only necessary patched components. Do not introduce
-  a new desktop shell or compositor.
-- Evaluate iwd + iwgtk (both packaged for trixie armhf), with iwd's
-  built-in network configuration/DHCP and a supported resolver backend.
-  Use iwctl/iwgtk, D-Bus and the packaged iwd service. Do not run
-  wpa_supplicant, ConnMan or NetworkManager alongside it.
-  Debian's ConnMan uses xtables; the current nftables-only kernel is
-  not a drop-in replacement for that backend. Test iwd and driver
-  compatibility before choosing the final network stack.
-- Preserve real APT management. Install without Recommends by default;
-  disable unattended jobs/timers unless enabled by the owner.
-  Keep package lists available when needed. No build toolchain on device.
-  Keep journald bounded (initial proposal 8 MiB persistent, 4 MiB runtime),
-  zram 128 MiB logical/LZ4, swappiness 100 and nftables/VPN on demand.
-  Disable unused services, not generic kernel/user ABI features.
-  Keep SSH opt-in and no credentials or machine identity in artifacts.
-- Do not enable automatic suspend, charger-only mode, low-battery shutdown
-  or pstore until hardware qualification. No repartitioning or changes
-  to factory data, bootloader or panel voltage/timing.
+The existing firmware workflow publishes the candidate as
+`pb626-native-debian13-armhf` alongside the last compatible Alpine
+native and FEL artifacts. The artifact has the same validated offline
+installer input names (rootfs tar, raw kernel, native DTB, KERNELRELEASE,
+BUILD-COMMIT, SHA256SUMS), plus the resolved kernel config, package list and
+`pb626-runtime_armhf.deb`. The offline image builder accepts the new explicit
+Debian identity and checks its systemd init and runtime package before
+assembling a private image. Follow INSTALL.md; use the matching artifact
+and original factory WBF. Do not run the native DTB under FEL or overwrite
+factory partitions. The installer still replaces p1; back up books and
+settings before migration. Keep the proven recovery image independently.
 
-## Build and kernel gates
+On a Linux x86_64 build host with ARM binfmt and the workflow's dependencies:
+```sh
+bash scripts/build-debian-rootfs.sh kernel-stage debian-dist
+```
 
-Before the rootfs becomes a bootable candidate, check the actual final
-kernel .config against systemd's Debian README and iwd's crypto checks:
-devtmpfs, cgroups v2, FHANDLE, tmpfs ACL/xattrs, seccomp, netlink,
-AF_ALG hash/skcipher, required algorithms and firmware loading.
-Do not enable eBPF merely to silence optional systemd sandbox warnings;
-verify actual service startup without it. Add only proven requirements.
-Preserve the built-in E Ink driver and all eight DMA buffers.
+APT and dpkg own ordinary programs. The PB626 worker, bridge, hardware
+units, existing settings and patched Matchbox panel/keyboard are installed
+as pb626-runtime. A separate disposable ARM build chroot is used for
+compilation and tests. No compiler or QEMU executable is in the final root.
+The patched clients live in a private PATH directory; the stock Debian
+Matchbox packages own their data and unaffected applets. No new shell,
+display manager or compositor is introduced.
 
-Create a separate Debian native artifact; validate its image identity,
-module release, glibc binaries and installer compatibility offline.
-Keep the existing native Alpine image and USB ACM FEL artifact as
-fallbacks. A Debian RAM rescue is a later separate measurement: its
-unpacked size plus kernel/worker memory must fit, and it must restore
-the reader without depending on the installed rootfs.
+## System administration
 
-## On-device acceptance
+- PID 1: systemd 257, udev, D-Bus, cgroup v2. The desktop, board state and
+  USB gadget use native systemd units. The stock serial-getty is activated
+  by udev when ttyGS0 appears; no unauthenticated native shell.
+- Use systemctl, journalctl, hostnamectl, timedatectl, apt and dpkg.
+  The existing reader user stays unprivileged and joins netdev only for
+  access to iwd. Xorg and the hardware bridge retain the device access they
+  need. The narrow doas helper controls board frontlight, power and enabling/
+  disabling the standard iwd service. No ConnMan or custom DHCP client.
+- iwd provides DHCP, IPv4/IPv6 routes and DNS integration with
+  systemd-resolved. iwctl and the packaged iwgtk (no indicator daemon)
+  provide CLI and on-demand graphical network management. Settings enables
+  iwd persistently and unblocks WLAN; Wi-Fi Off blocks it and stops/disables
+  iwd. D-Bus activation permits direct client use. Do not run another network
+  manager alongside it. Wi-Fi recovery and radio power need device testing.
+- `systemctl enable --now iwd`, `iwctl`, `resolvectl status`,
+  `rfkill list`, `journalctl -u iwd` are the ordinary diagnostics.
+- Journald is persistent with 8 MiB disk and 4 MiB runtime targets. Zram
+  uses the packaged generator (128 MiB logical, LZ4, priority 100).
+  /tmp is on eMMC; no new arbitrary RAM cgroup hard limits.
+- APT Recommends/Suggests and background update timers are disabled by
+  default; manual security upgrades remain available. No network wait-online,
+  SSH server, nftables rules, or unused GUI daemon starts by default.
+  For optional SSH, provision keys with ssh-keygen -A, configure reader's
+  authorized_keys and enable ssh.service; password/root SSH stays disabled.
+- The systemd backlight template is masked so the board-specific frontlight
+  power sequence remains authoritative. Automatic power-key and idle
+  suspend actions are disabled until tested. Lima remains opt-in.
+  No change to panel timing, voltage, waveform or eight DMA buffers.
 
-1. Measure cold boot, idle MemAvailable, PSS and PSI with the same kernel,
-   screen state and services. Compare to Alpine, not package download size.
-2. Verify USB console/login, root password provisioning, shutdown/reboot,
-   eMMC read/write, factory partition isolation and independent rescue.
-3. Verify input, Matchbox panel/keyboard, frontlight, full and partial
-   refresh, all 16 grays, temperature errors, intentional worker crash
-   and repeated service restart. No timing/voltage changes.
-4. Verify scan/connect/authentication, DHCP renewal, DNS, disconnect,
-   reconnect after reboot, RF kill, nftables and optional VPN. Confirm
-   no network daemon races and no plaintext credentials in logs.
-5. Read PDFs, open terminal and settings, install/remove an ordinary APT
-   package, stress memory and compare zram, OOM and refresh latency.
-6. Only then change the default native artifact. Replace FEL rescue
-   separately if its measured size and recovery reliability permit it.
+## Kernel compatibility
 
-## Optimizations requiring measurements
+The common kernel checks FHANDLE, POSIX timers, tmpfs and ext4 ACL/xattrs,
+autofs, KCMP, keys and iwd's AF_ALG hash/skcipher algorithms and PKCS8.
+The legacy uevent helper path remains empty, while the independent rescue
+can still use its existing device discovery. BPF remains disabled; optional
+systemd BPF restrictions are not relied on. No new physical board devices.
+The Debian firmware-realtek package must supply rtl8188eufw.bin; verify
+actual Wi-Fi firmware and driver compatibility on the device.
 
-Packed 4-bit logical frame buffers, packed transition maps and ghosting
-counters, smaller XShm strips, RGB565, rolling luma rows, LUT packing,
-NEON and a shared framebuffer can reduce memory or processing time but
-must be checked for equivalence and latency. Do not add overlapping
-buffer savings. Physical PIN32 is not equivalent to an 8-bit index
-for all factory drive states. Keep the eight-buffer queue; idle DMA
-release and runtime power management require driver/hardware tests.
+## Hardware acceptance before changing the default
+
+1. Test native boot, authenticated USB ACM, root password, eMMC, reboot/
+   shutdown and independently booted FEL rescue. Keep current backups.
+2. Verify ELAN, buttons, frontlight, Matchbox keyboard/panel, all grays,
+   E Ink recovery after worker crashes and normal refresh latency.
+3. Test iwgtk and iwctl scan/connect, credentials, DHCP renew, DNS,
+   IPv4/IPv6, reboot reconnect, rfkill, nftables and optional VPN.
+4. Test package operations, PDF reader, file manager, terminal, OOM behavior
+   and zram. Run pb626-profile-memory on each image with the same kernel,
+   workloads, services and screen state. Compare MemAvailable, PSS, PSI,
+   idle power, time to desktop, and refresh latency.
+5. Only after these checks switch the default native artifact. Replace
+   the Alpine RAM recovery separately when a Debian minimal rescue
+   can meet the strict unpacked RAM budget and restore independently.
+   A Debian desktop initramfs is not expected to fit the current 130 MiB
+   unpacked RAM desktop budget; native eMMC has no such constraint.
+
+Packed pixel buffers, transitions, XShm strips, RGB565, LUT packing, NEON,
+runtime DMA release and a shared framebuffer remain separate experiments.
+Suspend/charger-only UI, low-battery shutdown, pstore and in-place OS
+upgrade/rollback require hardware qualification. The native kernel/DTB
+and module set must remain paired; do not install an unrelated Debian
+kernel expecting it to boot this board.

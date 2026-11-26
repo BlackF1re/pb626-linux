@@ -115,10 +115,27 @@ def prompt_root_password(hash_file=None):
     require(password == getpass.getpass("Confirm root password: "), "Passwords do not match")
     return subprocess.check_output(["openssl", "passwd", "-6", "-stdin"], input=password + "\n", text=True).strip()
 
+def validate_native_init(root):
+    identity = regular(root / "etc/pb626-image-id").read_text().strip()
+    if identity == "pb626-native-debian13-armhf-v1":
+        # Do not follow the image's absolute symlinks into the build host.
+        init = root / "sbin/init"
+        require(init.is_symlink() and os.readlink(init) in (
+            "/lib/systemd/systemd", "/usr/lib/systemd/systemd",
+            "../lib/systemd/systemd", "../usr/lib/systemd/systemd",
+        ), "Debian PID 1 symlink missing")
+        require((root / "usr/lib/systemd/systemd").is_file()
+                and (root / "usr/lib/systemd/system/pb626-desktop.service").is_file()
+                and (root / "var/lib/dpkg/status").is_file(), "Debian native system incomplete")
+    else:
+        require(identity == "pb626-native-alpine-openrc-v2", "Unrecognized native image identity")
+        require((root/"etc/inittab").is_file() and (root/"sbin/openrc").is_file()
+                and (root/"etc/init.d/pb626-desktop").is_file(), "OpenRC native init missing")
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--backup", type=Path, required=True, help="Verified original or current full dump")
-    p.add_argument("--system", type=Path, required=True, help="pb626-native-system CI artifact")
+    p.add_argument("--system", type=Path, required=True, help="Verified pb626-native-system or pb626-native-debian13-armhf CI artifact")
     p.add_argument("--spl", type=Path, required=True, help="Exact verified BT0-uncaged.bin")
     p.add_argument("--waveform", type=Path, required=True, help="Owner's original default.wbf")
     p.add_argument("--output", type=Path, required=True, help="New private directory")
@@ -182,7 +199,7 @@ def main():
         root.mkdir()
         subprocess.run(["tar","--numeric-owner","-xzf",str(archive.resolve()),"-C",str(root)],check=True)
         require((root/"lib/modules"/release/"modules.dep").is_file(),"Kernel modules missing")
-        require((root/"etc/inittab").is_file() and (root/"sbin/openrc").is_file() and (root/"etc/init.d/pb626-desktop").is_file(), "OpenRC native init missing")
+        validate_native_init(root)
         set_root_password(root, prompt_root_password(a.root_password_hash_file))
         wave=root/"lib/firmware/pb626/default.wbf"
         wave.parent.mkdir(parents=True,exist_ok=True)

@@ -268,3 +268,13 @@ Both MMC hosts are disabled in this mode. Use your verified factory waveform fro
 - **FEL unavailable after an interrupted write:** independent hardware recovery is not established for this board.
 
 The FEL recovery console is intentionally unauthenticated and requires physical access. The native USB console uses getty/login: log in as root using the password chosen during offline image assembly. The native desktop runs as reader; Settings → Administrator prompts for the root password. Never expose a recovery console to an untrusted host. For support, provide the model, build commit, step and sanitized error in [Issues](https://github.com/BlackF1re/pb626-linux/issues). Never attach raw dumps, CID, credentials or private calibration. [Recovery format and safeguards](../scripts/restore/README.md).
+
+### Debian 13 native candidate
+
+For the Debian candidate use the complete `pb626-native-debian13-armhf`
+artifact instead of `pb626-native-system` with the same offline image builder
+and validated original backup, SPL and waveform. Do not mix kernel, DTB,
+modules or manifests between artifacts. The candidate replaces p1 just like
+Alpine; back up user data first. It has its own image identity, systemd and
+APT, and is not yet a hardware-qualified replacement. Keep FEL recovery.
+See [DEBIAN-MIGRATION.md](DEBIAN-MIGRATION.md).

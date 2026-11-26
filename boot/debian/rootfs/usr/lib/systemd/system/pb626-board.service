@@ -1,0 +1,16 @@
+[Unit]
+Description=PocketBook board state
+ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
+After=local-fs.target systemd-udev-trigger.service
+Before=pb626-desktop.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StateDirectory=pb626
+StateDirectoryMode=0700
+ExecStart=-/usr/sbin/pb626-admin restore-light
+ExecStop=-/usr/sbin/pb626-admin light-off
+
+[Install]
+WantedBy=multi-user.target

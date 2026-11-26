@@ -37,7 +37,9 @@ proc updateStatus {} {
         set cap [readfile $path/capacity]
         if {$cap ne ""} {append data "Battery: $cap% [readfile $path/status]\n"}
     }
-    foreach cmd {{free -m} {df -h /} {date} {rc-status -a}} {
+    set services {rc-status -a}
+    if {[file executable /usr/bin/systemctl]} {set services {systemctl --no-pager --failed}}
+    foreach cmd [list {free -m} {df -h /} {date} $services] {
         if {![catch {exec {*}$cmd 2>@1} result]} {append data "$result\n"}
     }
     .status configure -state normal
@@ -50,6 +52,10 @@ proc term {title args} {
 }
 proc wifi {} {
     if {[admin wifi-on]} {
+        if {[file executable /usr/bin/iwgtk]} {
+            if {[catch {exec /usr/bin/iwgtk -N &} err]} {tk_messageBox -icon error -message $err}
+            return
+        }
         tk_messageBox -title "Wi-Fi" -message "In the network manager enter:\nagent on\nscan wifi\nservices\nconnect <service-id>\n\nUse Tab completion and follow the password prompt. Saved networks reconnect automatically."
         term "Wi-Fi networks" /usr/bin/doas /usr/sbin/pb626-admin wifi-console
     }
@@ -77,8 +83,23 @@ button .tools.refresh -text "Refresh status" -command updateStatus
 pack .tools.admin .tools.refresh -side left -fill x -expand 1 -padx 4
 pack .tools -fill x -padx 12 -pady 5
 frame .config
-button .config.time -text "Time zone" -command {term "Time zone (root password)" su -c /sbin/setup-timezone}
-button .config.host -text "Hostname" -command {term "Hostname (root password)" su -c /sbin/setup-hostname}
+proc configureTime {} {
+    if {[file executable /usr/bin/systemctl]} {
+        term "Time zone (root password)" su -c {dpkg-reconfigure tzdata}
+    } else {
+        term "Time zone (root password)" su -c /sbin/setup-timezone
+    }
+}
+proc configureHostname {} {
+    if {[file executable /usr/bin/hostnamectl]} {
+        tk_messageBox -title "Hostname" -message "In the administrator terminal, run hostnamectl hostname NEWNAME."
+        term "Hostname (root password)" su -
+    } else {
+        term "Hostname (root password)" su -c /sbin/setup-hostname
+    }
+}
+button .config.time -text "Time zone" -command configureTime
+button .config.host -text "Hostname" -command configureHostname
 pack .config.time .config.host -side left -fill x -expand 1 -padx 4
 pack .config -fill x -padx 12 -pady 5
 text .status -height 12 -wrap none -font {Liberation Mono 11} -background white -foreground black

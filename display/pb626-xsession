@@ -1,7 +1,16 @@
 #!/bin/sh
 set -eu
+# Native Debian ships patched clients in a package-owned private directory.
+# Alpine continues to use the original /usr/bin builds.
+if [ -d /usr/libexec/pb626/bin ]; then
+    export PATH="/usr/libexec/pb626/bin:$PATH"
+fi
+# GTK4 software rendering on the unaccelerated Xorg session.
+if [ -f /etc/debian_version ]; then
+    export GSK_RENDERER=cairo
+fi
 # Make HarfBuzz symbols available to FreeType's auto-hinter on musl.
-if [ -r /usr/lib/libharfbuzz.so.0 ]; then
+if [ ! -f /etc/debian_version ] && [ -r /usr/lib/libharfbuzz.so.0 ]; then
     export LD_PRELOAD="/usr/lib/libharfbuzz.so.0${LD_PRELOAD:+:$LD_PRELOAD}"
 fi
 xset s off

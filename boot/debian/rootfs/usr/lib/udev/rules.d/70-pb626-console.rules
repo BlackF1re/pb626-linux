@@ -1,0 +1,2 @@
+# Start the packaged serial-getty only when the gadget's tty exists.
+SUBSYSTEM=="tty", KERNEL=="ttyGS0", TAG+="systemd", ENV{SYSTEMD_WANTS}+="serial-getty@ttyGS0.service"

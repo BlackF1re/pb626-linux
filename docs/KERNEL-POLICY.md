@@ -83,3 +83,14 @@ Compare the paired artifacts to the last known-good kernel:
 
 The firmware build checks policy, not physical hardware. Keep the last
 verified recovery and native images until these checks pass.
+
+## Debian 13 userspace compatibility
+
+The native Debian candidate uses systemd and iwd. Keep FHANDLE, POSIX_TIMERS,
+KCMP, TMPFS_XATTR, TMPFS/EXT4 POSIX ACLs and AUTOFS_FS for standard systemd
+interfaces. The legacy UEVENT_HELPER_PATH is empty, firmware user-helper
+fallback is disabled, and the independent FEL recovery remains supported.
+Explicit keys, AF_ALG hash/skcipher, AES, ECB/CBC, HMAC/CMAC, MD5/SHA1/SHA2,
+RSA and X.509/PKCS8 support cover the iwd kernel crypto contract. This is
+not a reason to enable broad BPF or unrelated board drivers. See
+DEBIAN-MIGRATION.md for qualification.

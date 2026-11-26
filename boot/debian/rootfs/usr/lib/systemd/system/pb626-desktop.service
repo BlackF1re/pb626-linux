@@ -1,0 +1,23 @@
+[Unit]
+Description=PocketBook X11 desktop and E Ink renderer
+ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
+Wants=pb626-board.service
+After=local-fs.target systemd-udev-trigger.service pb626-board.service
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/pb626-native-desktop
+Restart=always
+RestartSec=5s
+TimeoutStopSec=20s
+KillMode=control-group
+OOMPolicy=continue
+MemoryAccounting=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pb626-desktop
+
+[Install]
+WantedBy=multi-user.target
