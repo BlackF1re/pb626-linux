@@ -15,6 +15,7 @@ TimeoutStopSec=20s
 KillMode=control-group
 OOMPolicy=continue
 MemoryAccounting=yes
+Environment=MALLOC_ARENA_MAX=2
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pb626-desktop

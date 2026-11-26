@@ -79,7 +79,7 @@ struct renderer {
 	bool driven[DU4 + 1][TRANSITIONS];
 	uint64_t temperature_checked;
 	uint32_t neutral_data[2][GROUPS];
-	uint8_t previous[PIXELS];
+	uint8_t previous[PACKED_PIXELS];
 	uint16_t transitions[PIXELS];
 	struct span_range rows[GATES];
 	bool known, auto_fast;
@@ -379,13 +379,13 @@ static bool read_state_data(FILE *file, uint8_t *previous)
 		valid = fread(row, 1, sizeof(row), file) == sizeof(row);
 		for (unsigned int source = 0; valid && source < SOURCES; source++) {
 			valid = row[source] <= WHITE;
-			previous[portrait_index(gate, source)] = row[source];
+			nibble_set(previous, portrait_index(gate, source), row[source]);
 		}
 	}
 	if (valid)
 		valid = fgetc(file) == EOF && !ferror(file);
 	if (!valid)
-		memset(previous, WHITE, PIXELS);
+		memset(previous, 0xff, PACKED_PIXELS);
 	return valid;
 }
 
@@ -698,7 +698,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 	bool changed = false;
 
 	if (reset_first)
-		memset(previous, WHITE, PIXELS);
+		memset(previous, 0xff, PACKED_PIXELS);
 	if (mode != INIT) {
 		for (unsigned int gate = 0; gate < GATES; gate++) {
 			struct span_range old = renderer->rows[gate];
@@ -726,7 +726,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 						}
 						if (sample & ~(SCRUB | WHITE))
 							fail("invalid E Ink pixel");
-						unsigned int old = previous[portrait], level = sample & WHITE;
+						unsigned int old = nibble_get(previous, portrait), level = sample & WHITE;
 						if (old == level && !(mode == GC16 && (sample & SCRUB)))
 							continue;
 						unsigned int gate = GATES - 1 - x;
@@ -794,7 +794,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 			for (unsigned int source = 4 * row.first; source < 4 * row.end; source++) {
 				uint16_t transition = renderer->transitions[gate * SOURCES + source];
 				if (transition)
-					previous[portrait_index(gate, source)] = (transition - 1) >> 4;
+					nibble_set(previous, portrait_index(gate, source), (transition - 1) >> 4);
 			}
 		}
 	renderer->known = true;
@@ -810,7 +810,7 @@ static bool write_state_data(FILE *file, const uint8_t *previous)
 	uint8_t row[SOURCES];
 	for (unsigned int gate = 0; gate < GATES; gate++) {
 		for (unsigned int source = 0; source < SOURCES; source++)
-			row[source] = previous[portrait_index(gate, source)];
+			row[source] = nibble_get(previous, portrait_index(gate, source));
 		if (fwrite(row, 1, sizeof(row), file) != sizeof(row))
 			return false;
 	}

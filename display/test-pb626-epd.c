@@ -155,9 +155,9 @@ static void test_fast_mode_selection(void)
 
 static void test_state_format(void)
 {
-	static uint8_t before[PIXELS], after[PIXELS];
+	static uint8_t before[PACKED_PIXELS], after[PACKED_PIXELS];
 	for (size_t i = 0; i < PIXELS; i++)
-		before[i] = (i ^ (i / WIDTH)) & WHITE;
+		nibble_set(before, i, (i ^ (i / WIDTH)) & WHITE);
 	FILE *file = tmpfile();
 	assert(file);
 	assert(write_state_data(file, before));
@@ -165,16 +165,16 @@ static void test_state_format(void)
 	rewind(file);
 	for (unsigned int gate = 0; gate < GATES; gate++)
 		for (unsigned int source = 0; source < SOURCES; source++)
-			assert(fgetc(file) == before[portrait_index(gate, source)]);
+			assert(fgetc(file) == nibble_get(before, portrait_index(gate, source)));
 	rewind(file);
 	assert(read_state_data(file, after));
-	assert(!memcmp(before, after, PIXELS));
+	assert(!memcmp(before, after, PACKED_PIXELS));
 	assert(!fseek(file, 0, SEEK_SET));
 	assert(fputc(WHITE + 1, file) != EOF);
 	rewind(file);
 	assert(!read_state_data(file, after));
 	for (size_t i = 0; i < PIXELS; i++)
-		assert(after[i] == WHITE);
+		assert(nibble_get(after, i) == WHITE);
 	fclose(file);
 	file = tmpfile();
 	assert(file);

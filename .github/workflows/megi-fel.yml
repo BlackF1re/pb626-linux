@@ -398,9 +398,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mmdebstrap debian-archive-keyring \
-            qemu-user-static binfmt-support device-tree-compiler kmod ncurses-bin git
+            qemu-user-static binfmt-support arch-test device-tree-compiler kmod ncurses-bin git
           sudo update-binfmts --enable qemu-arm
           test -r /proc/sys/fs/binfmt_misc/qemu-arm
+          arch-test armhf
       - name: Build and verify Debian rootfs and paired firmware
         run: bash scripts/build-debian-rootfs.sh kernel-stage debian-dist
       - uses: actions/upload-artifact@v4

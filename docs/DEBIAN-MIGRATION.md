@@ -53,7 +53,8 @@ display manager or compositor is introduced.
   `rfkill list`, `journalctl -u iwd` are the ordinary diagnostics.
 - Journald is persistent with 8 MiB disk and 4 MiB runtime targets. Zram
   uses the packaged generator (128 MiB logical, LZ4, priority 100).
-  /tmp is on eMMC; no new arbitrary RAM cgroup hard limits.
+  /tmp is on eMMC; zram uses page-cluster=0 to avoid swap readahead.
+  No new arbitrary RAM cgroup hard limits.
 - APT Recommends/Suggests and background update timers are disabled by
   default; manual security upgrades remain available. No network wait-online,
   SSH server, nftables rules, or unused GUI daemon starts by default.
@@ -98,3 +99,39 @@ Suspend/charger-only UI, low-battery shutdown, pstore and in-place OS
 upgrade/rollback require hardware qualification. The native kernel/DTB
 and module set must remain paired; do not install an unrelated Debian
 kernel expecting it to boot this board.
+
+## Low-memory graphics profile
+
+The Debian Xorg default is RGB565 (depth 16), with a 4096 KiB dummy
+video aperture, MaxClients 64 and no automatic GPU binding. Composite
+and GLX stay disabled. This is a true-color input format, not a binary
+panel mode; the existing 16-level grayscale and waveform path is retained.
+The Alpine fallback keeps its original Xorg configuration. If a client
+requires depth 24, use a systemd drop-in for pb626-desktop.service:
+
+```ini
+[Service]
+Environment=PB626_XORG_DEPTH=24
+```
+
+Restart the desktop or reboot. This also gives an A/B comparison with
+identical applications. MALLOC_ARENA_MAX=2 is scoped to the desktop
+service (glibc); it is not an artificial memory limit.
+
+The bridge captures 128-row strips with one-row contrast halos. Both
+RGB565 and RGBX use direct pixel decoding, preserving the reference
+color conversion and global dither phase for a static frame. The XShm
+segment and luma scratch are bounded by 130 rows; the XGetImage fallback
+is bounded too. Logical desired/acknowledged levels, worker history and
+saturated ghosting counts use four bits each. IPC, persisted state file,
+PIN32, DMA queue, waveform and panel timing remain unchanged. Approximate
+additional storage reduction versus the old 32bpp full-screen capture:
+4.25 MiB for framebuffer + XShm, 0.65 MiB for luminance scratch and
+1.48 MiB for four logical arrays. These are capacities, not measured PSS.
+
+Use xrestop on demand to attribute server-side pixmaps to clients, and
+pb626-profile-memory to compare equal idle/workload states. Do not count
+shared-memory PSS twice. Keep packaged Xorg for security updates; custom
+DDX, transition-map packing, LUT packing and idle DMA release still need
+measured latency and hardware qualification. Do not delete the working
+recovery or change the default boot artifact until the candidate passes.

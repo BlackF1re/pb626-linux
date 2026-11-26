@@ -338,6 +338,16 @@ static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x,
 	return quant_table[y & mask][x & mask][value];
 }
 
+/* Strips have a one-row contrast halo on both sides. */
+enum { CAPTURE_ROWS = 128, CAPTURE_READ_ROWS = CAPTURE_ROWS + 2 };
+
+static inline uint8_t rgb565_gray(unsigned int pixel)
+{
+	return gray_value(((pixel >> 11) & 31) * 255 / 31,
+			  ((pixel >> 5) & 63) * 255 / 63,
+			  (pixel & 31) * 255 / 31);
+}
+
 static int shm_attach_error;
 
 static int mark_shm_error(Display *display, XErrorEvent *event)
@@ -355,10 +365,10 @@ static void setup_shm(Display *display, XShmSegmentInfo *shm)
 	int screen = DefaultScreen(display);
 	XImage *image = XShmCreateImage(display, DefaultVisual(display, screen),
 				       DefaultDepth(display, screen), ZPixmap, NULL,
-				       shm, WIDTH, HEIGHT);
+				       shm, WIDTH, CAPTURE_READ_ROWS);
 	if (!image)
 		return;
-	int id = shmget(IPC_PRIVATE, (size_t)image->bytes_per_line * HEIGHT, IPC_CREAT | 0600);
+	int id = shmget(IPC_PRIVATE, (size_t)image->bytes_per_line * CAPTURE_READ_ROWS, IPC_CREAT | 0600);
 	XDestroyImage(image);
 	if (id < 0)
 		return;
@@ -405,71 +415,80 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 		   uint8_t *frame, struct rect pointer, int vertical, struct capture_stats *stats,
 		   XShmSegmentInfo *shm)
 {
-	static uint8_t lightness[PIXELS];
+	static uint8_t lightness[CAPTURE_READ_ROWS][WIDTH];
 	int uses_contrast = gray_profile != GRAY_UI;
 	int draw_pointer = nonempty(pointer);
 	struct rect area = clipped(dirty, uses_contrast);
-	struct rect read_area = clipped(area, uses_contrast);
-	uint64_t start = now_us();
-	XImage *image = read_image(display, root, read_area.left + offset, read_area.top,
-				  read_area.right - read_area.left, read_area.bottom - read_area.top,
-				  shm);
-	if (!image)
-		return -1;
-	stats->read_us += now_us() - start;
-	start = now_us();
-	int rgbx = image->bits_per_pixel == 32 && image->byte_order == LSBFirst &&
-		   image->red_mask == 0xff0000 && image->green_mask == 0xff00 &&
-		   image->blue_mask == 0xff;
-	for (int y = read_area.top; y < read_area.bottom; y++) {
-		const uint8_t *row = (const uint8_t *)image->data +
-				     (y - read_area.top) * image->bytes_per_line;
-		for (int x = read_area.left; x < read_area.right; x++) {
-			int column = x - read_area.left;
-			unsigned int r, g, b;
-			if (rgbx) {
-				const uint8_t *color = row + column * 4;
-				b = color[0];
-				g = color[1];
-				r = color[2];
-			} else {
-				unsigned long pixel = XGetPixel(image, column, y - read_area.top);
-				r = channel(pixel, image->red_mask);
-				g = channel(pixel, image->green_mask);
-				b = channel(pixel, image->blue_mask);
-			}
-			lightness[y * WIDTH + x] = gray_value(r, g, b);
-		}
-	}
-	XDestroyImage(image);
-	for (int y = area.top; y < area.bottom; y++)
-		for (int x = area.left; x < area.right; x++) {
-			const uint8_t *pixel = lightness + y * WIDTH + x;
-			unsigned int value = *pixel;
-			uint8_t next = value / 17;
-			/* Exact levels are independent of the contrast and dither thresholds. */
-			if (value != 17u * next) {
-				unsigned int contrast = 0;
-				if (uses_contrast) {
-					unsigned int lx = x > 0 ? pixel[-1] : value;
-					unsigned int rx = x + 1 < WIDTH ? pixel[1] : value;
-					unsigned int ty = y > 0 ? pixel[-WIDTH] : value;
-					unsigned int by = y + 1 < HEIGHT ? pixel[WIDTH] : value;
-					contrast = abs((int)value - (int)lx) + abs((int)value - (int)rx) +
-						   abs((int)value - (int)ty) + abs((int)value - (int)by);
+	if (!nonempty(area))
+		return 0;
+	for (int top = area.top; top < area.bottom; top += CAPTURE_ROWS) {
+		struct rect strip = area;
+		strip.top = top;
+		strip.bottom = top + CAPTURE_ROWS < area.bottom ? top + CAPTURE_ROWS : area.bottom;
+		struct rect read_area = clipped(strip, uses_contrast);
+		uint64_t start = now_us();
+		XImage *image = read_image(display, root, read_area.left + offset, read_area.top,
+					  read_area.right - read_area.left, read_area.bottom - read_area.top,
+					  shm);
+		if (!image)
+			return -1;
+		stats->read_us += now_us() - start;
+		start = now_us();
+		int rgbx = image->bits_per_pixel == 32 && image->byte_order == LSBFirst &&
+			   image->red_mask == 0xff0000 && image->green_mask == 0xff00 &&
+			   image->blue_mask == 0xff;
+		int rgb565 = image->bits_per_pixel == 16 && image->byte_order == LSBFirst &&
+			     image->red_mask == 0xf800 && image->green_mask == 0x07e0 &&
+			     image->blue_mask == 0x001f;
+		for (int y = read_area.top; y < read_area.bottom; y++) {
+			const uint8_t *row = (const uint8_t *)image->data +
+					     (y - read_area.top) * image->bytes_per_line;
+			uint8_t *dest = lightness[y - read_area.top];
+			for (int x = read_area.left; x < read_area.right; x++) {
+				int column = x - read_area.left;
+				if (rgb565) {
+					const uint8_t *color = row + column * 2;
+					dest[x] = rgb565_gray(color[0] | ((unsigned int)color[1] << 8));
+				} else if (rgbx) {
+					const uint8_t *color = row + column * 4;
+					dest[x] = gray_value(color[2], color[1], color[0]);
+				} else {
+					unsigned long pixel = XGetPixel(image, column, y - read_area.top);
+					dest[x] = gray_value(channel(pixel, image->red_mask),
+							     channel(pixel, image->green_mask),
+							     channel(pixel, image->blue_mask));
 				}
-				next = quantize(value, contrast, x, y);
-			}
-			uint8_t *output = frame + y * WIDTH + x;
-			if (draw_pointer)
-				next = pointer_level(pointer, vertical, x, y, next);
-			if (*output != next) {
-				stats->changed++;
-				dirty_tiles[y / TILE][x / TILE] = 1;
-				*output = next;
 			}
 		}
-	stats->quant_us += now_us() - start;
+		XDestroyImage(image);
+		for (int y = strip.top; y < strip.bottom; y++)
+			for (int x = strip.left; x < strip.right; x++) {
+				const uint8_t *pixel = lightness[y - read_area.top] + x;
+				unsigned int value = *pixel;
+				uint8_t next = value / 17;
+				if (value != 17u * next) {
+					unsigned int contrast = 0;
+					if (uses_contrast) {
+						unsigned int lx = x > 0 ? pixel[-1] : value;
+						unsigned int rx = x + 1 < WIDTH ? pixel[1] : value;
+						unsigned int ty = y > 0 ? lightness[y - read_area.top - 1][x] : value;
+						unsigned int by = y + 1 < HEIGHT ? lightness[y - read_area.top + 1][x] : value;
+						contrast = abs((int)value - (int)lx) + abs((int)value - (int)rx) +
+							   abs((int)value - (int)ty) + abs((int)value - (int)by);
+					}
+					next = quantize(value, contrast, x, y);
+				}
+				size_t i = (size_t)y * WIDTH + x;
+				if (draw_pointer)
+					next = pointer_level(pointer, vertical, x, y, next);
+				if (nibble_get(frame, i) != next) {
+					stats->changed++;
+					dirty_tiles[y / TILE][x / TILE] = 1;
+					nibble_set(frame, i, next);
+				}
+			}
+		stats->quant_us += now_us() - start;
+	}
 	stats->pixels += (area.right - area.left) * (area.bottom - area.top);
 	return 0;
 }
@@ -686,7 +705,7 @@ static int a2_eligible(const struct shared_frame *frame, const uint8_t *panel)
                     uint8_t sample = frame->pixels[i];
                     if (sample == KEEP)
                         continue;
-                    unsigned int old = panel[i], level = sample & WHITE;
+                    unsigned int old = nibble_get(panel, i), level = sample & WHITE;
                     if ((sample & SCRUB) ||
                         !((old == 0 && level == WHITE) || (old == WHITE && level == 0)))
                         return 0;
@@ -699,7 +718,8 @@ static int a2_eligible(const struct shared_frame *frame, const uint8_t *panel)
 enum fast_profile { FAST_DU, FAST_A2, FAST_DU4, FAST_AUTO };
 
 /* Count completed fast transitions. This budget does not model reflectance. */
-static uint8_t fast_changes[PIXELS];
+static uint8_t fast_changes[PACKED_PIXELS];
+_Static_assert(CLEAN_AFTER <= 15, "ghosting counter fits a nibble");
 static uint16_t cleanup_pixels[TILE_ROWS][TILE_COLS];
 static int clean_halo = 1;
 
@@ -717,7 +737,7 @@ static int cleanup_near_tile(int tx, int ty)
 static int needs_scrub(const uint8_t *panel, int x, int y)
 {
 	size_t pixel = y * WIDTH + x;
-	if (fast_changes[pixel] == CLEAN_AFTER)
+	if (nibble_get(fast_changes, pixel) == CLEAN_AFTER)
 		return 1;
 	if (!clean_halo)
 		return 0;
@@ -728,7 +748,7 @@ static int needs_scrub(const uint8_t *panel, int x, int y)
 	for (int ny = y ? y - 1 : y; ny <= y + 1 && ny < HEIGHT; ny++)
 		for (int nx = x ? x - 1 : x; nx <= x + 1 && nx < WIDTH; nx++) {
 			size_t neighbor = ny * WIDTH + nx;
-			if (fast_changes[neighbor] == CLEAN_AFTER && panel[neighbor] == panel[pixel])
+			if (nibble_get(fast_changes, neighbor) == CLEAN_AFTER && nibble_get(panel, neighbor) == nibble_get(panel, pixel))
 				return 1;
 		}
 	return 0;
@@ -758,7 +778,7 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 	if (command == RESET) {
 		memset(frame->tiles, 1, sizeof(frame->tiles));
 		for (size_t i = 0; i < PIXELS; i++)
-			frame->pixels[i] = desired[i] | SCRUB;
+			frame->pixels[i] = nibble_get(desired, i) | SCRUB;
 		return PIXELS;
 	}
 	memset(frame->tiles, 0, sizeof(frame->tiles));
@@ -771,7 +791,7 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 			for (int y = ty * TILE; y < bottom; y++)
 				for (int x = tx * TILE; x < right; x++) {
 					size_t i = y * WIDTH + x;
-					uint8_t target = desired[i], old = panel[i];
+					uint8_t target = nibble_get(desired, i), old = nibble_get(panel, i);
 					int scrub = command == CLEAN && target == old && needs_scrub(panel, x, y);
 					uint8_t level = target;
 					differs |= target != old;
@@ -800,7 +820,7 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 		memset(fast_changes, 0, sizeof(fast_changes));
 		memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
 		memset(dirty_tiles, 0, sizeof(dirty_tiles));
-		memcpy(panel, desired, PIXELS);
+		memcpy(panel, desired, PACKED_PIXELS);
 		return;
 	}
 	for (int ty = 0; ty < TILE_ROWS; ty++)
@@ -815,22 +835,23 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 					size_t i = y * WIDTH + x;
 					uint8_t sample = frame->pixels[i];
 					if (sample == KEEP) {
-						differs |= panel[i] != desired[i];
+						differs |= nibble_get(panel, i) != nibble_get(desired, i);
 						continue;
 					}
 					uint8_t level = sample & WHITE;
-					differs |= level != desired[i];
+					differs |= level != nibble_get(desired, i);
 					if (sample & SCRUB) {
-						if (fast_changes[i] == CLEAN_AFTER)
+						if (nibble_get(fast_changes, i) == CLEAN_AFTER)
 							cleanup_pixels[ty][tx]--;
-						fast_changes[i] = 0;
+						nibble_set(fast_changes, i, 0);
 					} else if ((command == PREVIEW || command == PREVIEW_A2 ||
-                             command == PREVIEW_DU4) && panel[i] != level &&
-                             fast_changes[i] < CLEAN_AFTER) {
-						if (++fast_changes[i] == CLEAN_AFTER)
+                             command == PREVIEW_DU4) && nibble_get(panel, i) != level &&
+                             nibble_get(fast_changes, i) < CLEAN_AFTER) {
+						nibble_set(fast_changes, i, nibble_get(fast_changes, i) + 1);
+						if (nibble_get(fast_changes, i) == CLEAN_AFTER)
 							cleanup_pixels[ty][tx]++;
 					}
-					panel[i] = level;
+					nibble_set(panel, i, level);
 				}
 			dirty_tiles[ty][tx] = differs;
 		}
@@ -954,7 +975,7 @@ int main(int argc, char **argv)
 			sources[source_count++] = (struct pollfd){ .fd = fd, .events = POLLIN };
 	}
 	free(paths);
-	static uint8_t frame[PIXELS], previous[PIXELS];
+	static uint8_t frame[PACKED_PIXELS], previous[PACKED_PIXELS];
 	const struct rect full = {0, 0, WIDTH, HEIGHT};
 	struct rect pointer = {0};
 	const char *halo = getenv("PB626_EPD_CLEAN_HALO");

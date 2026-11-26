@@ -92,8 +92,15 @@ if [ -f /proc/device-tree/chosen/pb626,emmc-root ]; then
     bridge_pid=$!
     export PB626_EPD_BRIDGE_PID="$bridge_pid"
 fi
+# Explicit compatibility override, normally use the packaged default depth.
+# Only these two known TrueColor visuals are supported.
+case ${PB626_XORG_DEPTH:-} in
+    16|24) set -- -depth "$PB626_XORG_DEPTH" ;;
+    '') set -- ;;
+    *) echo 'PB626_XORG_DEPTH must be 16 or 24' >&2; exit 2 ;;
+esac
 xinit "$client" "$waveform" "$work/ready" -- \
-    /usr/bin/Xorg :0 vt2 -nolisten tcp -nocursor -auth "$XAUTHORITY" \
+    /usr/bin/Xorg :0 vt2 -nolisten tcp -nocursor -auth "$XAUTHORITY" "$@" \
     -config "$work/xorg.conf" -logfile /run/pb626-xorg.log &
 xinit_pid=$!
 wait "$xinit_pid"

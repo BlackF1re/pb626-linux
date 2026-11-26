@@ -45,7 +45,7 @@ runtime=(
   kmod procps psmisc util-linux util-linux-extra e2fsprogs usbutils i2c-tools
   lm-sensors v4l-utils curl openssh-server nano htop mc
   xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-evdev
-  xinit xauth x11-xserver-utils x11-utils x11-apps x11-xkb-utils xkb-data
+  xinit xauth x11-xserver-utils x11-utils x11-apps x11-xkb-utils xkb-data xrestop
   xfonts-base xfonts-utils xbitmaps fonts-liberation xdotool xterm nedit
   matchbox-window-manager matchbox-desktop matchbox-keyboard matchbox-panel
   matchbox-common libmatchbox1 tk mupdf
@@ -167,7 +167,7 @@ sudo install -m 755 display/{pb626-desktop,pb626-control-center,pb626-open-docum
 # Debian /bin/sh is dash; the existing X11 session uses wait -n.
 sed '1s|^#!/bin/sh$|#!/bin/bash|' display/pb626-xsession | sudo tee "$pkg/usr/bin/pb626-xsession" >/dev/null
 sudo chmod 755 "$pkg/usr/bin/pb626-xsession"
-sudo install -D -m 644 display/xorg.conf "$pkg/etc/pb626/xorg.conf"
+sudo install -D -m 644 display/xorg-debian.conf "$pkg/etc/pb626/xorg.conf"
 sudo install -D -m 644 display/matchbox/keyboard.desktop "$pkg/etc/pb626/keyboard.desktop"
 sudo install -D -m 644 display/matchbox/Xresources "$pkg/etc/X11/pb626.Xresources"
 sudo install -D -m 644 display/eink-fonts.conf "$pkg/etc/fonts/conf.d/99-pb626-eink.conf"
@@ -282,7 +282,7 @@ in_root /bin/bash -euc '
     ! grep -q "not found" /tmp/pb626-ldd
   done
   rm /tmp/pb626-ldd
-  for exe in Xorg iwgtk iwctl systemctl wish mupdf xterm matchbox-desktop; do command -v "$exe"; done
+  for exe in Xorg iwgtk iwctl systemctl wish mupdf xterm matchbox-desktop xrestop; do command -v "$exe"; done
   ! command -v apk
   ! command -v gcc
   test -x /usr/bin/dbus-run-session

@@ -30,6 +30,23 @@ static void test_worker_deadlines(void)
 	assert(wait_child(child, 1000) == 0);
 }
 
+static void test_packed_rgb565(void)
+{
+	uint8_t packed[2] = {0};
+	for (unsigned int i = 0; i < 16; i++)
+		for (unsigned int j = 0; j < 16; j++) {
+			nibble_set(packed, 0, i);
+			nibble_set(packed, 1, j);
+			assert(nibble_get(packed, 0) == i && nibble_get(packed, 1) == j);
+		}
+	for (int profile = GRAY_BALANCED; profile <= GRAY_LEGACY; profile++) {
+		setup_gray(profile, 0, 1.0);
+		for (unsigned int p = 0; p <= 65535; p++)
+			assert(rgb565_gray(p) == gray_value(channel(p, 0xf800),
+					channel(p, 0x07e0), channel(p, 0x001f)));
+	}
+}
+
 static void test_gray(void)
 {
 	quant_reference = 1;
@@ -77,38 +94,120 @@ static void test_gray(void)
 	puts("E Ink grayscale profiles, exact lookup and stable dithering passed");
 }
 
+/* Optional real-X-server regression: compare the packed strip path with
+ * a full XGetImage reference, including partial regions and strip edges. */
+static void test_x11_capture(void)
+{
+	Display *display = XOpenDisplay(NULL);
+	assert(display);
+	int screen = DefaultScreen(display);
+	assert(DisplayWidth(display, screen) >= WIDTH && DisplayHeight(display, screen) >= HEIGHT);
+	Window root = RootWindow(display, screen);
+	int offset = (DisplayWidth(display, screen) - WIDTH) / 2;
+	GC gc = XCreateGC(display, root, 0, NULL);
+	for (int y = 0; y < HEIGHT; y += 13)
+		for (int x = 0; x < WIDTH; x += 17) {
+			XColor color = {
+				.red = (x * 137 + y * 53) & 65535,
+				.green = (x * 71 + y * 167) & 65535,
+				.blue = (x * 211 + y * 31) & 65535,
+			};
+			assert(XAllocColor(display, DefaultColormap(display, screen), &color));
+			XSetForeground(display, gc, color.pixel);
+			XFillRectangle(display, root, x + offset, y, 17, 13);
+		}
+	XSync(display, False);
+	XShmSegmentInfo shm = {0}, fallback = {0};
+	setup_shm(display, &shm);
+	assert(shm.shmaddr);
+	static uint8_t full_luma[PIXELS], reference[PACKED_PIXELS], candidate[PACKED_PIXELS];
+	struct rect full = {0, 0, WIDTH, HEIGHT};
+	struct rect pointer = {125, 125, 136, 136};
+	for (int profile = GRAY_BALANCED; profile <= GRAY_LEGACY; profile++) {
+		setup_gray(profile, 0, 1.0);
+		setup_quantization();
+		XImage *image = XGetImage(display, root, offset, 0, WIDTH, HEIGHT, AllPlanes, ZPixmap);
+		assert(image);
+		for (int y = 0; y < HEIGHT; y++)
+			for (int x = 0; x < WIDTH; x++) {
+				unsigned long p = XGetPixel(image, x, y);
+				full_luma[y * WIDTH + x] = gray_value(channel(p, image->red_mask),
+					channel(p, image->green_mask), channel(p, image->blue_mask));
+			}
+		XDestroyImage(image);
+		for (int y = 0; y < HEIGHT; y++)
+			for (int x = 0; x < WIDTH; x++) {
+				size_t i = y * WIDTH + x;
+				unsigned int v = full_luma[i], contrast = 0;
+				if (profile != GRAY_UI) {
+					contrast = abs((int)v - (int)(x ? full_luma[i - 1] : v)) +
+						abs((int)v - (int)(x + 1 < WIDTH ? full_luma[i + 1] : v)) +
+						abs((int)v - (int)(y ? full_luma[i - WIDTH] : v)) +
+						abs((int)v - (int)(y + 1 < HEIGHT ? full_luma[i + WIDTH] : v));
+				}
+				uint8_t level = v % 17 ? quantize_reference(v, contrast, x, y) : v / 17;
+				nibble_set(reference, i, pointer_level(pointer, 1, x, y, level));
+			}
+		struct capture_stats stats = {0};
+		memset(candidate, 0, sizeof(candidate));
+		assert(!capture(display, root, offset, full, candidate, pointer, 1, &stats, &shm));
+		assert(stats.pixels == PIXELS);
+		assert(!memcmp(reference, candidate, sizeof(reference)));
+		memset(candidate, 0, sizeof(candidate));
+		for (int top = 0; top < HEIGHT; top += 173)
+			for (int left = 0; left < WIDTH; left += 181) {
+				struct rect area = {left, top, left + 181 < WIDTH ? left + 181 : WIDTH,
+					top + 173 < HEIGHT ? top + 173 : HEIGHT};
+				assert(!capture(display, root, offset, area, candidate, pointer, 1, &stats, &fallback));
+			}
+		assert(!memcmp(reference, candidate, sizeof(reference)));
+	}
+	XShmDetach(display, &shm);
+	XSync(display, False);
+	shmdt(shm.shmaddr);
+	XFreeGC(display, gc);
+	XCloseDisplay(display);
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	puts("X11 strip capture matches full-frame reference in the server visual");
+}
+
 int main(void)
 {
+	if (getenv("PB626_TEST_X11")) {
+		test_x11_capture();
+		return 0;
+	}
 	test_worker_deadlines();
+	test_packed_rgb565();
 	test_gray();
 	static struct shared_frame frame;
-	static uint8_t desired[PIXELS], panel[PIXELS];
+	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
 	const size_t pixel = 100 * WIDTH + 50;
 	const int tx = 50 / TILE, ty = 100 / TILE;
-	memset(desired, WHITE, sizeof(desired));
-	memset(panel, WHITE, sizeof(panel));
-	desired[pixel] = 6;
+	memset(desired, 0xff, sizeof(desired));
+	memset(panel, 0xff, sizeof(panel));
+	nibble_set(desired, pixel, 6);
 	dirty_tiles[ty][tx] = 1;
 
 	assert(prepare(PREVIEW, desired, panel, &frame) == 1);
 	assert(frame.tiles[ty][tx] && !frame.tiles[0][0]);
 	assert(frame.pixels[pixel] == 0 && frame.pixels[pixel + 1] == KEEP);
-	assert(panel[pixel] == WHITE);
+	assert(nibble_get(panel, pixel) == WHITE);
 	acknowledge(PREVIEW, &frame, desired, panel);
-	assert(panel[pixel] == 0 && dirty_tiles[ty][tx]);
+	assert(nibble_get(panel, pixel) == 0 && dirty_tiles[ty][tx]);
 	assert(prepare(PREVIEW, desired, panel, &frame) == 0);
 	assert(dirty_tiles[ty][tx]);
 	assert(prepare(SETTLE, desired, panel, &frame) == 1);
 	acknowledge(SETTLE, &frame, desired, panel);
-	assert(panel[pixel] == 6 && !dirty_tiles[ty][tx]);
+	assert(nibble_get(panel, pixel) == 6 && !dirty_tiles[ty][tx]);
 
 	for (int i = 0; i < CLEAN_AFTER + 2; i++) {
-		desired[pixel] = desired[pixel] ? 0 : WHITE;
+		nibble_set(desired, pixel, nibble_get(desired, pixel) ? 0 : WHITE);
 		dirty_tiles[ty][tx] = 1;
 		assert(prepare(PREVIEW, desired, panel, &frame) == 1);
 		acknowledge(PREVIEW, &frame, desired, panel);
 	}
-	assert(fast_changes[pixel] == CLEAN_AFTER && cleanup_pixels[ty][tx] == 1);
+	assert(nibble_get(fast_changes, pixel) == CLEAN_AFTER && cleanup_pixels[ty][tx] == 1);
 	assert(automatic_command(100000, 0, 1, 1, 1) == PREVIEW);
 	assert(automatic_command(200000, 0, 0, 1, 1) == 0);
 	assert(automatic_command(QUIET_US, 0, 0, 1, 1) == SETTLE);
@@ -120,48 +219,48 @@ int main(void)
 	assert(automatic_command(LARGE_CLEAN_QUIET_US, 0, 0, 0, LARGE_CLEAN_PIXELS) == CLEAN);
 	clean_halo = 0;
 	assert(prepare(CLEAN, desired, panel, &frame) == 1);
-	assert(frame.pixels[pixel] == (panel[pixel] | SCRUB));
+	assert(frame.pixels[pixel] == (nibble_get(panel, pixel) | SCRUB));
 	assert(frame.pixels[pixel + 1] == KEEP);
 	assert(frame.tiles[ty][tx] && !frame.tiles[0][0]);
 	acknowledge(CLEAN, &frame, desired, panel);
-	assert(fast_changes[pixel] == 0 && cleanup_pixels[ty][tx] == 0 && !dirty_tiles[ty][tx]);
+	assert(nibble_get(fast_changes, pixel) == 0 && cleanup_pixels[ty][tx] == 0 && !dirty_tiles[ty][tx]);
 
 	clean_halo = 1;
 	const size_t edge = (TILE - 1) * WIDTH + TILE - 1;
-	fast_changes[edge] = CLEAN_AFTER;
+	nibble_set(fast_changes, edge, CLEAN_AFTER);
 	cleanup_pixels[0][0] = 1;
-	fast_changes[edge + WIDTH] = 2;
-	desired[edge + 1] = panel[edge + 1] = 0;
+	nibble_set(fast_changes, edge + WIDTH, 2);
+	nibble_set(desired, edge + 1, 0); nibble_set(panel, edge + 1, 0);
 	assert(prepare(CLEAN, desired, panel, &frame) == 8);
 	assert(frame.pixels[edge + 1] == KEEP);
 	assert(frame.pixels[edge + WIDTH + 1] == (WHITE | SCRUB) && frame.tiles[1][1]);
 	assert(frame.pixels[edge + WIDTH + 2] == KEEP && !frame.tiles[0][2]);
 	acknowledge(CLEAN, &frame, desired, panel);
 	assert(!cleanup_pixels[0][0] && !cleanup_pixels[1][0]);
-	assert(!fast_changes[edge] && !fast_changes[edge + WIDTH]);
+	assert(!nibble_get(fast_changes, edge) && !nibble_get(fast_changes, edge + WIDTH));
 
 	dirty_tiles[ty][tx] = 1; /* Damage that reverted before the next capture. */
 	assert(prepare(SETTLE, desired, panel, &frame) == 0 && !dirty_tiles[ty][tx]);
     /* Fast-mode semantics: no fake gray->A2 conversion, exact DU4 levels. */
     static struct shared_frame ff;
-    static uint8_t fd[PIXELS], fp[PIXELS];
-    memset(fd, WHITE, PIXELS);
-    memset(fp, WHITE, PIXELS);
+    static uint8_t fd[PACKED_PIXELS], fp[PACKED_PIXELS];
+    memset(fd, 0xff, sizeof(fd));
+    memset(fp, 0xff, sizeof(fp));
     memset(dirty_tiles, 0, sizeof(dirty_tiles));
     const size_t p = 3 * WIDTH + 4;
-    fd[p] = 0; dirty_tiles[0][0] = 1;
+    nibble_set(fd, p, 0); dirty_tiles[0][0] = 1;
     assert(prepare(PREVIEW, fd, fp, &ff) == 1);
     assert(a2_eligible(&ff, fp));
-    fp[p] = 7;
+    nibble_set(fp, p, 7);
     assert(!a2_eligible(&ff, fp));
-    fp[p] = 0; fd[p] = WHITE;
+    nibble_set(fp, p, 0); nibble_set(fd, p, WHITE);
     assert(prepare(PREVIEW, fd, fp, &ff) == 1);
     assert(a2_eligible(&ff, fp));
-    fp[p] = WHITE; fd[p] = 9;
+    nibble_set(fp, p, WHITE); nibble_set(fd, p, 9);
     assert(prepare(PREVIEW_DU4, fd, fp, &ff) == 1);
     assert(ff.pixels[p] == 10 && !a2_eligible(&ff, fp));
     acknowledge(PREVIEW_DU4, &ff, fd, fp);
-    assert(fp[p] == 10 && fast_changes[p] == 1);
+    assert(nibble_get(fp, p) == 10 && nibble_get(fast_changes, p) == 1);
 	for (unsigned int i = 0; i <= WHITE; i++) {
 		assert(preview_level4(i) <= WHITE && preview_level4(i) % 5 == 0);
 	}
