@@ -1399,12 +1399,12 @@ int main(int argc, char **argv)
 		.menu_escape = menu && !strcmp(menu, "escape"),
 	};
 	controls.custom_buttons = load_button_bindings(&controls);
-	struct pollfd sources[6] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
+	struct pollfd sources[8] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
 	nfds_t source_count = 1;
 	const char *devices = getenv("PB626_BUTTON_DEVICES");
 	char *paths = devices ? strdup(devices) : NULL;
 	for (char *path = paths ? strtok(paths, " ") : NULL;
-	     path && source_count < sizeof(sources) / sizeof(sources[0]); path = strtok(NULL, " ")) {
+	     path && source_count + 2 < sizeof(sources) / sizeof(sources[0]); path = strtok(NULL, " ")) {
 		int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 		if (fd >= 0)
 			sources[source_count++] = (struct pollfd){ .fd = fd, .events = POLLIN };
@@ -1420,7 +1420,7 @@ int main(int argc, char **argv)
 		}
 	}
 	uint64_t power_pressed = 0;
-	int lock_pending = 0, request_sleep = 0, system_sleep = 0;
+	int lock_pending = 0, system_sleep = 0;
 	int sleep_fd = -1, geometry_changed = 0;
 	nfds_t sleep_index = 0;
 	if (getenv("PB626_SYSTEM_SLEEP")) {
@@ -1498,6 +1498,11 @@ int main(int argc, char **argv)
 				} else if (request == 'P' && has_frame &&
 					   (screen_locked || !grab_lock(display, root))) {
 					system_sleep = 1;
+					/* Consume button edges preceding the system transaction.
+					 * A release after wake without a new press cannot toggle. */
+					if (power_index && sources[power_index].fd >= 0)
+						(void)power_press(sources[power_index].fd, &power_pressed);
+					power_pressed = 0;
 					if (!screen_locked) {
 						screen_locked = 1;
 						lock_pending = 1;
@@ -1524,7 +1529,6 @@ int main(int argc, char **argv)
 						if (power_index && sources[power_index].fd >= 0)
 							(void)power_press(sources[power_index].fd, &power_pressed);
 						power_pressed = 0;
-						request_sleep = 0;
 						focus_changed = 1;
 						lock_pending = dirty = 1;
 						geometry_changed = 1;
@@ -1545,18 +1549,21 @@ int main(int argc, char **argv)
 				if (screen_locked) {
 					screen_locked = 0;
 					release_lock(display);
-					request_sleep = 0;
 					XResetScreenSaver(display);
 					geometry_changed = 1;
 					focus_changed = 1;
 					lock_pending = dirty = 1;
 				} else if (policy == POWER_OFF) {
 					(void)power_action("poweroff", NULL);
-				} else if (policy != POWER_IGNORE && !grab_lock(display, root)) {
+				} else if (policy == POWER_S2IDLE) {
+					/* systemd's required prepare unit owns the lock/filter
+					 * transaction. A refused request does not lock X11. */
+					if (power_action("suspend", NULL))
+						fprintf(stderr, "pb626: system suspend request refused\n");
+				} else if (policy == POWER_LOCK && !grab_lock(display, root)) {
 					screen_locked = 1;
 					controls.menu_pressed = 0;
 					lock_pending = dirty = 1;
-					request_sleep = policy == POWER_S2IDLE;
 				}
 				if (lock_pending)
 					next_capture = layout_until = 0;
@@ -1588,11 +1595,13 @@ int main(int argc, char **argv)
 			}
 			lock_pending = dirty = pending = cleanup_count = 0;
 			controls.clean_requested = 0;
-			(void)power_action("lock-indicator", "locked");
-			sleep_reply(&sleep_fd, 'P');
-			if (request_sleep) {
-				request_sleep = 0;
-				(void)power_action("suspend", NULL);
+			int indicator_error = power_action("lock-indicator", "locked");
+			if (indicator_error && system_sleep) {
+				/* Reject preparation. ExecStopPost will restore X11;
+				 * the PM core must not suspend on a failed preparation. */
+				sleep_reply(&sleep_fd, 0);
+			} else {
+				sleep_reply(&sleep_fd, 'P');
 			}
 		}
 		if (!screen_locked && geometry_changed) {
@@ -1751,8 +1760,8 @@ int main(int argc, char **argv)
 		}
 		if (lock_pending && captured && command == RESET && !screen_locked) {
 			lock_pending = 0;
-			(void)power_action("lock-indicator", "awake");
-			sleep_reply(&sleep_fd, 'R');
+			int indicator_error = power_action("lock-indicator", "awake");
+			sleep_reply(&sleep_fd, indicator_error ? 0 : 'R');
 		}
 		if (profile && (captured || changes))
 			fprintf(stderr, "x11-epd: mode=%c read_px=%u change_px=%u xget_us=%llu quant_us=%llu prepare_us=%llu ipc_update_us=%llu total_us=%llu capture_mono_us=%llu damage_wait_us=%llu ack_mono_us=%llu\n",

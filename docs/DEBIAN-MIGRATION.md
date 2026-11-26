@@ -238,11 +238,14 @@ The current dummy Xorg configuration only advertises portrait; actual
 rotation availability and input mapping require hardware qualification.
 
 systemd-suspend.service requires pb626-sleep.service, which sends a
-root-only bounded IPC request, waits for the physical ACK, and permits
-the current kernel's 5-second delayed rail shutdown before suspend.
+root-only bounded IPC request, waits for the physical ACK before
+sleep.target, and lets kernel system PM synchronously park the E Ink
+controller and shut down its supplies. No fixed userspace sleep delay.
 Its stop-post requests a fresh desktop after resume or failure. Power
 key s2idle, xidle, Settings and normal systemctl suspend use this path.
-A pending system sleep suppresses additional power-key toggles; resume
+The short power press uses the same systemd transaction instead of
+preemptively locking the screen. A pending system sleep suppresses
+additional power-key toggles; resume
 drains queued wake-key events, resets X idle time and restores the saved
 frontlight/LED policy after ACK. Convenience lock alone still unlocks
 with the next short press. Direct /sys/power/state writes bypass this.

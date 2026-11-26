@@ -11,4 +11,4 @@ TimeoutStartSec=125
 TimeoutStopSec=115
 ExecStart=/usr/bin/pb626-x11-epd --sleep-prepare
 # Kernel device PM synchronously parks E Ink and powers off the rails.
-ExecStopPost=-/usr/bin/pb626-x11-epd --sleep-resume
+ExecStopPost=/usr/bin/pb626-x11-epd --sleep-resume
