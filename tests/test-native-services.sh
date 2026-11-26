@@ -37,8 +37,8 @@ grep -Fq 'ENV{SYSTEMD_WANTS}+="pb626-desktop.service"' boot/debian/rootfs/usr/li
 grep -Fq 'unset PB626_DDX_SHARED' display/pb626-desktop
 grep -Fq '/etc/pb626/ddx-shared-qualified' display/pb626-desktop
 grep -Fq -- '-modulepath /usr/lib/pb626/xorg,/usr/lib/xorg/modules' display/pb626-desktop
-grep -Fq 'apt-get source --only-source xserver-xorg-video-dummy=1:0.4.0-1' scripts/build-debian-rootfs.sh
-grep -Fq -- 'patch --fuzz=0 -p1 < ../xorg-dummy-pb626-shared.patch' scripts/build-debian-rootfs.sh
+grep -Fq 'apt-get source --only-source xserver-xorg-video-dummy=1:0.4.0-1' scripts/compile-debian-native.sh
+grep -Fq -- 'patch --fuzz=0 -p1 < ../xorg-dummy-pb626-shared.patch' scripts/compile-debian-native.sh
 # The optional ELAN device must not make missing touch a fatal dependency.
 grep -Fq 'Wants=pb626-board.service dev-input-pb626_touch.device' "$unitdir/pb626-desktop.service"
 grep -Fxq 'JobTimeoutSec=5s' "$unitdir/dev-input-pb626_touch.device.d/60-pb626.conf"
