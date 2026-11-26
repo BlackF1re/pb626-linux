@@ -41,8 +41,8 @@ sudo chroot desktop-root /usr/bin/qemu-arm-static /sbin/apk add --no-cache --vir
   build-base linux-headers libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev
 sudo chroot desktop-root /usr/bin/qemu-arm-static /bin/sh -ec '
   cd /tmp
-  cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
-  cc -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
+  cc -mfpu=neon -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o /usr/bin/pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
+  cc -mfpu=neon -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
   ./test-pb626-x11-epd
   strip /usr/bin/pb626-x11-epd
   cc -O3 -Wall -Wextra -Werror -I uapi pb626-epd.c -o /tmp/native-worker

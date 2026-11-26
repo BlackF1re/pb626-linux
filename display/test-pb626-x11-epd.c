@@ -47,6 +47,32 @@ static void test_packed_rgb565(void)
 	}
 }
 
+static void test_contrast_row(void)
+{
+	uint8_t row[65], above[65], below[65];
+	uint16_t result[65];
+	for (int i = 0; i < 65; i++) {
+		row[i] = (i * 71 + 19) & 255;
+		above[i] = (i * 41 + 103) & 255;
+		below[i] = (i * 131 + 5) & 255;
+	}
+	for (int left = 0; left < 65; left++)
+		for (int right = left + 1; right <= 65; right++) {
+			memset(result, 0xff, sizeof(result));
+			contrast_row(row, above, below, result, left, right, 65);
+			for (int x = 0; x < 65; x++) {
+				if (x < left || x >= right) {
+					assert(result[x] == UINT16_MAX);
+					continue;
+				}
+				int v = row[x];
+				assert(result[x] == abs(v - row[x ? x-1 : x]) +
+				       abs(v - row[x+1 < 65 ? x+1 : x]) +
+				       abs(v - above[x]) + abs(v - below[x]));
+			}
+		}
+}
+
 static void test_gray(void)
 {
 	quant_reference = 1;
@@ -253,6 +279,7 @@ int main(void)
 	test_worker_deadlines();
 	test_packed_rgb565();
 	test_gray();
+	test_contrast_row();
 	test_stock_sleep();
 	static struct shared_frame frame;
 	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];

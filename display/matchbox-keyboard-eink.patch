@@ -174,7 +174,7 @@ Fit Matchbox Keyboard to a portrait E Ink screen and accept WM geometry.
    /* Background */
    XSetForeground(mb_kbd_ui_x_display(ui), 
 -		 xft_backend->xgc, xft_backend->xcol_f4f4f4.pixel);
-+		 xft_backend->xgc, WhitePixel(mb_kbd_ui_x_display(ui), mb_kbd_ui_x_screen(ui)));
++		 xft_backend->xgc, BlackPixel(mb_kbd_ui_x_display(ui), mb_kbd_ui_x_screen(ui)));
  
    XFillRectangle(mb_kbd_ui_x_display(ui), 
  		 mb_kbd_ui_backbuffer(ui), 

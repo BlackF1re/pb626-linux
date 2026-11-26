@@ -95,3 +95,12 @@ eligibility, repeat merging, temperature selection or the shared protocol.
 The host regression checks all 256 transition indices, active filtering and
 phase merging. Actual RSS savings depend on how many waveform pages were
 resident; compare PSS and update timings on hardware.
+
+### NEON and binary keyboard
+
+The ARMv7 bridge builds with NEON for exact four-neighbour L1 contrast.
+Scalar tails and reference tests preserve all gray profiles and dither.
+The keyboard uses black backgrounds, white non-antialiased labels and a
+small white pressed outline. Existing DU and per-pixel cleanup apply to
+binary changes without a separate keyboard renderer. Benchmark Cortex-A8
+before claiming a speedup; the waveform and cleanup policy are unchanged.

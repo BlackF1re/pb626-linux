@@ -32,6 +32,9 @@
 
 #include "pb626-epd.h"
 #include "pb626-sleep.h"
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 180000, QUIET_US = 300000,
        MAX_PENDING_US = 850000,
@@ -479,6 +482,35 @@ static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x,
 	return quant_table[y & mask][x & mask][value];
 }
 
+/* Exact L1 contrast: 4 unsigned byte differences, widened to 16 bits.
+ * Scalar boundaries/tails preserve the existing quantization and dither. */
+static void contrast_row(const uint8_t *row, const uint8_t *above,
+			 const uint8_t *below, uint16_t *out, int left, int right, int width)
+{
+	int x = left;
+	for (; x < right && x == 0; x++) {
+		int v = row[x];
+		out[x] = abs(v - row[width > 1 ? 1 : 0]) +
+			 abs(v - above[x]) + abs(v - below[x]);
+	}
+#if defined(__ARM_NEON)
+	for (; x + 8 <= right && x + 8 < width; x += 8) {
+		uint8x8_t v = vld1_u8(row + x);
+		uint16x8_t sum = vaddl_u8(vabd_u8(v, vld1_u8(row + x - 1)),
+					 vabd_u8(v, vld1_u8(row + x + 1)));
+		sum = vaddw_u8(sum, vabd_u8(v, vld1_u8(above + x)));
+		sum = vaddw_u8(sum, vabd_u8(v, vld1_u8(below + x)));
+		vst1q_u16(out + x, sum);
+	}
+#endif
+	for (; x < right; x++) {
+		int v = row[x];
+		out[x] = abs(v - row[x ? x-1 : x]) +
+			 abs(v - row[x+1 < width ? x+1 : x]) +
+			 abs(v - above[x]) + abs(v - below[x]);
+	}
+}
+
 /* Strips have a one-row contrast halo on both sides. */
 enum { CAPTURE_ROWS = 128, CAPTURE_READ_ROWS = CAPTURE_ROWS + 2 };
 
@@ -557,6 +589,7 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 		   XShmSegmentInfo *shm)
 {
 	static uint8_t lightness[3][HEIGHT];
+	uint16_t contrast[HEIGHT];
 	const int w = logical_width(capture_rotation), h = logical_height(capture_rotation);
 	int uses_contrast = gray_profile != GRAY_UI;
 	int draw_pointer = nonempty(pointer);
@@ -608,22 +641,19 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 			int output_y = y - 1;
 			if (output_y < strip.top || output_y >= strip.bottom)
 				continue;
+			if (uses_contrast) {
+				const uint8_t *row = lightness[output_y % 3];
+				contrast_row(row, output_y ? lightness[(output_y - 1) % 3] : row,
+					     output_y + 1 < h ? lightness[(output_y + 1) % 3] : row,
+					     contrast, strip.left, strip.right, w);
+			}
 			for (int x = strip.left; x < strip.right; x++) {
 				const uint8_t *pixel = lightness[output_y % 3] + x;
 				unsigned int value = *pixel;
 				uint8_t next = value / 17;
 				if (value != 17u * next) {
-					unsigned int contrast = 0;
-					if (uses_contrast) {
-						unsigned int lx = x > 0 ? pixel[-1] : value;
-						unsigned int rx = x + 1 < w ? pixel[1] : value;
-						unsigned int ty = output_y > 0 ? lightness[(output_y - 1) % 3][x] : value;
-						unsigned int by = output_y + 1 < h ? lightness[(output_y + 1) % 3][x] : value;
-						contrast = abs((int)value - (int)lx) + abs((int)value - (int)rx) +
-							   abs((int)value - (int)ty) + abs((int)value - (int)by);
-					}
 					size_t i = panel_index(capture_rotation, x, output_y);
-					next = quantize(value, contrast, (int)(i % WIDTH), (int)(i / WIDTH));
+					next = quantize(value, uses_contrast ? contrast[x] : 0, (int)(i % WIDTH), (int)(i / WIDTH));
 				}
 				size_t i = panel_index(capture_rotation, x, output_y);
 				if (draw_pointer && !screen_locked)

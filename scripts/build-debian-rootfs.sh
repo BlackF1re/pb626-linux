@@ -130,9 +130,9 @@ fetch_source matchbox-panel 886605280c1032f76e382f68f9a1d2e57012f4db
 in_build /bin/bash -euc '
   cd /tmp/pb626-build
   cc -O3 -Wall -Wextra -Werror -I uapi pb626-epd.c -o pb626-epd
-  cc -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
+  cc -mfpu=neon -O2 -Wall -Wextra -Werror pb626-x11-epd.c -o pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
   cc -O2 -Wall -Wextra -Werror -I uapi test-pb626-epd.c -o test-pb626-epd
-  cc -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
+  cc -mfpu=neon -O2 -Wall -Wextra -Werror test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
   ./test-pb626-epd
   ./test-pb626-x11-epd
   test "$(./pb626-epd --protocol)" = pb626-epd-shm-4
