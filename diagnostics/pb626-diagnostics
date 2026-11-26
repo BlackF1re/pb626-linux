@@ -1,0 +1,192 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# PB626 on-demand diagnostics; no daemon, no raw writes, no PM policy changes.
+set -eu
+export LC_ALL=C
+umask 077
+usage() {
+    cat <<'EOF'
+Usage: pb626-diagnostics [--output FILE] [--interval SECONDS]
+       [--bench] [--panel ROUNDS] [--input EVENT SECONDS]
+       [--ping HOST] [--suspend]
+Default: read-only inventory and battery/idle snapshots.
+--bench: SHA256 and 32 MiB direct MMC reads (no writes).
+--panel: INIT, DU, A2, DU4, GL16, GC16; root, stopped desktop required.
+--input: operator exercises one /dev/input/eventN; evtest required.
+--suspend: qualified s2idle only; wake manually. May disconnect SSH.
+No option enables a qualification marker or changes firmware.
+EOF
+}
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 2; }
+number() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]; }
+out= interval=10 bench=0 rounds=0 input= input_seconds=0 host= suspend=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --help|-h) usage; exit 0;;
+        --output) [ "$#" -ge 2 ] || die "$1 needs a path"; out=$2; shift;;
+        --interval) [ "$#" -ge 2 ] && number "$2" 1 120 || die 'interval 1..120'; interval=$2; shift;;
+        --bench) bench=1;;
+        --panel) [ "$#" -ge 2 ] && number "$2" 1 5 || die 'rounds 1..5'; rounds=$2; shift;;
+        --input) [ "$#" -ge 3 ] && number "$3" 1 60 || die 'input EVENT SECONDS (1..60)'; input=$2; input_seconds=$3; shift 2;;
+        --ping) [ "$#" -ge 2 ] || die 'missing host'; case "$2" in ''|-*) die 'invalid host';; esac; host=$2; shift;;
+        --suspend) suspend=1;;
+        *) die "unknown argument: $1";;
+    esac
+    shift
+done
+if [ -n "$input" ]; then
+    case "$input" in /dev/input/event*) n=${input#/dev/input/event}; number "$n" 0 4096 || die 'invalid input device';; *) die 'invalid input device';; esac
+fi
+if [ -n "$out" ]; then
+    set -C
+    exec >"$out" 2>&1
+    set +C
+fi
+section() { printf '\n=== %s ===\n' "$*"; }
+read_file() { printf '%s: ' "$1"; if [ -r "$1" ]; then cat "$1" || printf '[read failed]\n'; else printf '[unavailable]\n'; fi; }
+run() {
+    printf '\n$'; printf ' %s' "$@"; printf '\n'
+    if ! command -v "$1" >/dev/null 2>&1; then printf 'status=unavailable\n'; return 0; fi
+    if "$@"; then printf 'status=ok\n'; else printf 'status=error exit=%s\n' "$?"; fi
+}
+fields() {
+    dir=$1; shift
+    [ -d "$dir" ] || return 0
+    for field do
+        [ ! -e "$dir/$field" ] || read_file "$dir/$field"
+    done
+}
+clock() { awk '{print $1}' /proc/uptime; }
+snapshot() {
+    section "snapshot $1"
+    for f in /proc/uptime /proc/meminfo /proc/stat /proc/interrupts /proc/diskstats /proc/swaps /proc/modules /proc/net/dev /proc/pressure/* /sys/block/zram0/mm_stat /sys/power/state /sys/power/mem_sleep /sys/power/pm_test /sys/kernel/debug/wakeup_sources; do read_file "$f"; done
+    for d in /sys/class/power_supply/*; do fields "$d" type present online status capacity voltage_now current_now power_now charge_now energy_now; done
+    for d in /sys/class/thermal/thermal_zone* /sys/class/hwmon/hwmon*; do fields "$d" type name temp temp1_input; done
+    for d in /sys/class/backlight/* /sys/class/leds/*; do fields "$d" brightness actual_brightness max_brightness bl_power trigger; done
+    for d in /sys/class/rtc/rtc*; do fields "$d" name date time since_epoch wakealarm; done
+    for d in /sys/class/input/event*/device; do fields "$d" name capabilities/key capabilities/abs; done
+    for d in /sys/class/video4linux/video*; do fields "$d" name device/power/control device/power/runtime_status device/power/runtime_active_time device/power/runtime_suspended_time device/power/autosuspend_delay_ms; done
+    for d in /sys/class/mmc_host/mmc*/mmc*:* /sys/class/block/mmcblk*; do fields "$d" type name size ro stat; done
+    for d in /sys/class/net/* /sys/class/rfkill/rfkill*; do fields "$d" operstate carrier speed type soft hard; done
+    for d in /sys/devices/system/cpu/cpu*/cpufreq; do fields "$d" scaling_cur_freq scaling_min_freq scaling_max_freq scaling_governor scaling_available_frequencies scaling_available_governors; done
+    for d in /sys/devices/system/cpu/cpu*/cpuidle/state*; do fields "$d" name latency residency usage time disable; done
+    for d in /sys/bus/usb/devices/*; do fields "$d" idVendor idProduct speed power/control power/runtime_status power/runtime_active_time power/runtime_suspended_time power/wakeup; done
+    for d in /sys/bus/i2c/devices/*; do fields "$d" name pb626_boot_source pb626_external_present power/runtime_status power/wakeup; done
+    for d in /sys/class/regulator/regulator*; do fields "$d" name state microvolts num_users; done
+    fields /sys/power/suspend_stats success fail failed_freeze failed_prepare failed_suspend failed_resume last_failed_dev last_failed_errno
+    for d in /sys/fs/cgroup/pb626.slice /sys/fs/cgroup/pb626.slice/*; do fields "$d" memory.current memory.low memory.events cpu.stat; done
+    section 'process PSS KiB (root needed for complete results)'
+    for f in /proc/[0-9]*/smaps_rollup; do
+        [ -r "$f" ] || continue
+        p=${f%/*}
+        name=$(cat "$p/comm" 2>/dev/null) || continue
+        awk -v name="$name" -v pid="${p##*/}" '/^Pss:/ {print $2, pid, name}' "$f" 2>/dev/null || :
+    done | sort -nr
+}
+panel() (
+    section 'physical E-Ink scanout (not optical latency)'
+    [ "$(id -u)" = 0 ] || { echo 'status=blocked root required'; exit 0; }
+    wbf=/lib/firmware/pb626/default.wbf
+    [ -r "$wbf" ] && [ -c /dev/video0 ] || { echo 'status=unavailable panel/WBF'; exit 0; }
+    active=$(systemctl show pb626-desktop.service -p ActiveState --value 2>/dev/null) || active=unknown
+    [ "$active" = inactive ] || { echo 'status=blocked stop desktop from USB console first'; exit 0; }
+    command -v pb626-epd >/dev/null || { echo 'status=unavailable renderer'; exit 0; }
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    # Known panel dimensions and legal transition targets. PGM binary rows.
+    for levels in 1 2 4 16; do
+        awk -v n="$levels" 'BEGIN {printf "P5\n758 1024\n255\n"; row=""; for(x=0;x<758;x++) row=row sprintf("%c",n==1?0:int(x*n/758)*255/(n-1)); for(y=0;y<1024;y++) printf "%s",row}' >"$tmp/$levels.pgm"
+        [ "$(wc -c <"$tmp/$levels.pgm")" -eq 776208 ] || { echo 'status=error PGM length'; exit 0; }
+    done
+    # White image for binary A2. /dev/zero is only read, not written.
+    { printf 'P5\n758 1024\n255\n'; head -c 776192 /dev/zero | tr '\000' '\377'; } >"$tmp/white.pgm"
+    export PB626_EPD_PROFILE=1 PB626_EPD_RENDER=indexed PB626_EPD_FAST_MODE=du PB626_EPD_SCANOUT=pin32
+    unset PB626_EPD_PREFILL
+    i=1
+    while [ "$i" -le "$rounds" ]; do
+        for pair in reset:none du:1 a2:white du4:4 partial:16 full:16; do
+            mode=${pair%:*}; image=${pair#*:}
+            printf '\nround=%s mode=%s\n' "$i" "$mode"
+            start=$(clock)
+            if [ "$image" = none ]; then
+                if ! timeout 90 pb626-epd "$wbf" "$mode" >"$tmp/log" 2>&1; then cat "$tmp/log"; echo 'status=error'; exit 0; fi
+            else
+                if ! timeout 90 pb626-epd "$wbf" "$mode" "$tmp/$image.pgm" >"$tmp/log" 2>&1; then cat "$tmp/log"; echo 'status=error'; exit 0; fi
+            fi
+            cat "$tmp/log"
+            awk -v a="$start" -v b="$(clock)" 'BEGIN {printf "wall_seconds=%.2f\n",b-a}'
+            if ! grep -q "^epd: mode=$mode scans=" "$tmp/log"; then echo 'status=unconfirmed no scan ACK'; exit 0; fi
+            echo 'status=ok'
+        done
+        i=$((i+1))
+    done
+    echo 'Panel test changes visible image. Restart desktop manually after inspection.'
+)
+section 'PB626 diagnostic report schema=2'
+date -u
+uname -a
+section 'boot (kernel-relative; BootROM/SPL requires external timing)'
+run timeout 15 systemd-analyze time
+run timeout 15 systemd-analyze critical-chain
+run timeout 15 systemd-analyze blame
+run timeout 15 systemctl show pb626-desktop.service -p ActiveState -p ActiveEnterTimestampMonotonic -p ExecMainStartTimestampMonotonic
+run timeout 15 journalctl -b -u pb626-desktop.service -o short-monotonic --no-pager -n 100
+run timeout 10 v4l2-ctl -D -d /dev/video0
+run timeout 10 lsusb -t
+run timeout 10 iw dev
+run timeout 10 rfkill list
+[ ! -x /usr/libexec/pb626-charge ] || run timeout 10 /usr/libexec/pb626-charge probe
+snapshot before
+section 'battery samples (raw kernel units; no calibrated energy claim)'
+i=0
+while [ "$i" -lt "$interval" ]; do
+    printf 'uptime=%s\n' "$(clock)"
+    for d in /sys/class/power_supply/*; do fields "$d" type status capacity online voltage_now current_now power_now; done
+    sleep 1
+    i=$((i+1))
+done
+if [ "$bench" = 1 ]; then
+    section 'bounded CPU SHA256 benchmark: 32 MiB'
+    start=$(clock)
+    if head -c 33554432 /dev/zero | sha256sum; then
+        awk -v a="$start" -v b="$(clock)" 'BEGIN {if(b>a) printf "seconds=%.2f MiB_s=%.2f\n",b-a,32/(b-a); else print "status=below timer resolution"}'
+    fi
+    section 'MMC direct read: 32 MiB each (no writes)'
+    for d in /sys/class/block/mmcblk*; do
+        n=${d##*/}; suffix=${n#mmcblk}
+        case "$suffix" in ''|*[!0-9]*) continue;; esac
+        [ -b "/dev/$n" ] || continue
+        size=$(cat "$d/size" 2>/dev/null) || continue
+        [ "$size" -ge 65536 ] || continue
+        run timeout 30 dd "if=/dev/$n" of=/dev/null bs=1M count=32 iflag=direct,fullblock
+    done
+fi
+[ "$rounds" = 0 ] || panel
+if [ -n "$input" ]; then
+    section "operator input $input (event types/codes/values; exercise only test keys)"
+    run timeout "$input_seconds" evtest "$input"
+fi
+if [ -n "$host" ]; then section 'network latency'; run timeout 20 ping -c 5 -W 2 "$host"; fi
+if [ "$suspend" = 1 ]; then
+    section 'qualified s2idle (manual wake; use local/USB console)'
+    if [ "$(id -u)" = 0 ] && [ -f /etc/pb626/suspend-qualified ] && grep -q '\[s2idle\]' /sys/power/mem_sleep && { [ ! -e /sys/power/pm_test ] || grep -q '\[none\]' /sys/power/pm_test; }; then
+        before=$(cat /sys/power/suspend_stats/success 2>/dev/null || echo unknown)
+        start=$(clock)
+        if systemctl suspend; then
+            i=0
+            while [ "$i" -lt 180 ]; do
+                after=$(cat /sys/power/suspend_stats/success 2>/dev/null || echo unknown)
+                if [ "$before" != unknown ] && [ "$after" != unknown ] && [ "$after" -gt "$before" ]; then break; fi
+                sleep 1; i=$((i+1))
+            done
+            printf 'success_before=%s success_after=%s\n' "$before" "$after"
+            if [ "$before" != unknown ] && [ "$after" != unknown ] && [ "$after" -gt "$before" ]; then echo 'status=confirmed'; else echo 'status=unconfirmed'; fi
+            awk -v a="$start" -v b="$(clock)" 'BEGIN {printf "elapsed_including_sleep_seconds=%.2f\n",b-a}'
+        else echo 'status=error suspend request rejected'; fi
+        run timeout 15 journalctl -b -u systemd-suspend.service -o short-monotonic --no-pager -n 40
+    else echo 'status=blocked requires root, qualified s2idle and pm_test none'; fi
+fi
+snapshot after
+section 'end of report'
