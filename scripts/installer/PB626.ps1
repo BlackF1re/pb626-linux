@@ -1,7 +1,7 @@
-#Requires -Version 7.4
+#Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('Install','InstallFromDump','Backup','Restore','Preflight','Flash','Prepare')][string]$Action,
+    [ValidateSet('Install','InstallFromDump','Backup','Restore','Preflight','Flash','Validate','Prepare')][string]$Action,
     [string]$DataDir,
     [string]$Distro='Ubuntu',
     [switch]$UseRunningRecovery,
@@ -15,9 +15,15 @@ param(
 )
 $ErrorActionPreference='Stop'
 $kit=$PSScriptRoot
+$platform=[Environment]::OSVersion.Platform
+$script:PB626IsWindows=($platform -eq [PlatformID]::Win32NT)
+$script:PB626IsLinux=$false
+if ($platform -eq [PlatformID]::Unix) {
+    try { $script:PB626IsLinux=((& uname -s 2>$null) -eq 'Linux') } catch { $script:PB626IsLinux=$false }
+}
+if (!$script:PB626IsWindows -and !$script:PB626IsLinux) { throw 'Only Windows and Linux are supported.' }
+if (!$script:PB626IsWindows -and ((& id -u) -ne '0')) { throw 'Run sudo pwsh -File PB626.ps1 on Linux.' }
 if (!$DataDir) { $DataDir=Join-Path $kit 'private' }
-if (!$IsWindows -and !$IsLinux) { throw 'Only Windows and Linux are supported.' }
-if (!$IsWindows -and ((& id -u) -ne '0')) { throw 'Run sudo pwsh -File PB626.ps1 on Linux.' }
 if (!$Action) {
     Write-Host 'PocketBook 626 Plus (late ELAN/eMMC)'
     Write-Host '1 - Install Debian directly from the paired Actions artifact (no backup)'
@@ -29,15 +35,16 @@ if (!$Action) {
     Write-Host '7 - Backup microSD (experimental MMC0 profile)'
     Write-Host '8 - Restore microSD (experimental MMC0 profile)'
     Write-Host '9 - Preflight microSD restore'
-    Write-Host '10 - Prepare missing FEL input files (no device access)'
-    $Action=switch (Read-Host 'Choose 1-10') {
+    Write-Host '10 - Validate flash kit (no device access)'
+    Write-Host '11 - Prepare missing FEL input files (no device access)'
+    $Action=switch (Read-Host 'Choose 1-11') {
         '1' {'Install'} '2' {'Backup'} '3' {'Restore'} '4' {'Preflight'}
         '5' {$SkipBackup=$true; 'InstallFromDump'}
         '6' {'Flash'}
         '7' {$SD=$true; 'Backup'}
         '8' {$SD=$true; 'Restore'}
         '9' {$SD=$true; 'Preflight'}
-        '10' {'Prepare'}
+        '10' {'Validate'} '11' {'Prepare'}
         default {throw 'Cancelled'}
     }
 }
@@ -72,22 +79,35 @@ foreach ($required in @('dump-network.py','recovery/fel-boot.sh','recovery/Start
 }
 if ((Get-Content -Raw (Join-Path $kit 'native/BUILD-COMMIT')).Trim() -ne (Get-Content -Raw (Join-Path $kit 'recovery/BUILD-COMMIT')).Trim()) { throw 'Mixed source revisions' }
 
+if ($Action -eq 'Validate') {
+    foreach ($required in @('install-direct.py','native/SHA256SUMS','native/pb626-rootfs.ext4.gz','native/pb626-rootfs.bmap.json','native/pb626-bt0-menu.raw','fel-host/SHA256SUMS')) {
+        if (!$seen.ContainsKey($required)) { throw "Missing flash-kit artifact: $required" }
+    }
+    $map=Get-Content -Raw (Join-Path $kit 'native/pb626-rootfs.bmap.json') | ConvertFrom-Json
+    if ($map.version -ne 1 -or !$map.mapped -or $map.mapped.Count -lt 1) { throw 'Invalid rootfs allocation map' }
+    Write-Host "KIT SHA256 VERIFIED: $($seen.Count) files" -ForegroundColor Green
+    Write-Host "PAIRED BUILD: $((Get-Content -Raw (Join-Path $kit 'native/BUILD-COMMIT')).Trim())"
+    Write-Host "ROOTFS MAPPED CHUNKS: $($map.mapped.Count)"
+    Write-Host 'FLASH KIT VERIFIED' -ForegroundColor Green
+    return
+}
+
 function WslPath([string]$Path) {
     $full=[IO.Path]::GetFullPath($Path)
     if ($full -notmatch '^([A-Za-z]):\\(.*)$') { throw 'Use a local Windows drive, not a UNC path.' }
     return "/mnt/$($Matches[1].ToLowerInvariant())/$($Matches[2].Replace('\','/'))"
 }
 function Run-Linux([string[]]$Arguments) {
-    if ($IsWindows) { & wsl.exe -d $Distro -u root -- @Arguments }
+    if ($script:PB626IsWindows) { & wsl.exe -d $Distro -u root -- @Arguments }
     else { $exe=$Arguments[0]; $tail=@($Arguments | Select-Object -Skip 1); & $exe @tail }
     if ($LASTEXITCODE -ne 0) { throw "Linux command failed (exit $LASTEXITCODE)" }
 }
 function LinuxPath([string]$Path) {
-    if ($IsWindows) { return WslPath $Path }
+    if ($script:PB626IsWindows) { return WslPath $Path }
     return [IO.Path]::GetFullPath($Path)
 }
 function Find-RecoveryPort {
-    if ($IsWindows) {
+    if ($script:PB626IsWindows) {
         $ports=@(Get-PnpDevice -PresentOnly -Class Ports -ErrorAction SilentlyContinue | Where-Object {
             $_.InstanceId -match 'VID_0525&PID_A4A7' -and $_.FriendlyName -match '\(COM[1-9][0-9]*\)'
         } | ForEach-Object { [regex]::Match($_.FriendlyName,'\((COM[1-9][0-9]*)\)').Groups[1].Value })
@@ -134,7 +154,7 @@ if (!$UseRunningRecovery) {
     $null=Read-Host 'Press Enter when cold FEL is ready'
     $recovery=Join-Path $kit 'recovery'
     $variant=if ($EnableRecoverySD) { 'elan-emmc-sd-backup' } else { 'elan-emmc-backup' }
-    if ($IsWindows) {
+    if ($script:PB626IsWindows) {
         & (Join-Path $recovery 'Start-PB626.ps1') -BundleDir $recovery -Variant $variant -Profile diagnostic -Distro $Distro -LabDir $lab
     } else {
         Run-Linux @('env',"PB626_LAB_DIR=$lab","PB626_FEL_TOOL=$lab/sunxi-fel",'bash',(Join-Path $recovery 'fel-boot.sh'),$recovery,$variant,'diagnostic')
@@ -142,7 +162,7 @@ if (!$UseRunningRecovery) {
 }
 # The composite gadget must be attached to Linux as a whole, not opened
 # through Windows' serial driver. Keep ACM for an emergency shell.
-if ($IsWindows) {
+if ($script:PB626IsWindows) {
     $devices=@()
     for ($i=0; $i -lt 45 -and $devices.Count -eq 0; $i++) {
         $devices=@(& usbipd.exe list | Where-Object { $_ -match '^\s*\d+-\d+\s+0525:a4a7\b' })
