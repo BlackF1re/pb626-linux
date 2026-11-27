@@ -1,10 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <!--
   PB626 uses the classic, self-contained Matchbox Keyboard 0.1.1 layout
   format. Keep this file free of <include> elements: the pinned 0.1.1
   parser does not implement the newer Debian include-based layout format.
   Upstream US layout by Matt Reimer.
 -->
-<?xml version="1.0" encoding="UTF-8"?>
 <keyboard>
 
 <!--
