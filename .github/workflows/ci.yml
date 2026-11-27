@@ -206,6 +206,28 @@ jobs:
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x24' /tmp/test-pb626-x11-epd
           xvfb-run -a -s '-screen 0 760x1024x16' wish tests/test-debian-settings.tcl
+      - name: Compare native Debian armhf compiler profiles
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends qemu-user-static binfmt-support
+          sudo update-binfmts --enable qemu-arm
+          mkdir -p "$RUNNER_TEMP/pb626-compiler-audit"
+          docker run --rm --platform linux/arm/v7 \
+            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v /tmp/pb626-uapi:/uapi:ro \
+            -v "$RUNNER_TEMP/pb626-compiler-audit:/audit" \
+            debian:trixie-slim bash -euc '
+              apt-get update
+              apt-get install -y --no-install-recommends build-essential dpkg-dev libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev
+              bash /repo/scripts/audit-armhf-compiler.sh /uapi /audit
+            '
+      - name: Upload compiler comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pb626-armhf-compiler-audit
+          path: ${{ runner.temp }}/pb626-compiler-audit
+          if-no-files-found: ignore
       - name: Smoke-test pinned Matchbox Keyboard with the PB626 flat layout
         run: |
           set -euo pipefail
