@@ -99,7 +99,8 @@ else
         --fontcol black --no-outline --no-title --icon-size 112 --icon-padding 8 &
 fi
 desktop=$!
-trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} ${idle_pid:+"$idle_pid"} 2>/dev/null || true' EXIT
+watcher=
+trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} ${idle_pid:+"$idle_pid"} ${watcher:+"$watcher"} 2>/dev/null || true' EXIT
 trap 'exit 1' HUP INT TERM
 if [ -n "${PB626_EPD_BRIDGE_PID:-}" ]; then
     : > "${PB626_EPD_SESSION_STARTED:?}"
@@ -114,9 +115,12 @@ if [ -n "$screen" ]; then
 else
     # Debian's renderer is supervised by pb626-desktop.service. Keep the X
     # session alive independently of all clients; only loss of X itself ends it.
-    while xset q >/dev/null 2>&1; do
-        sleep 2
-    done
+    # xprop keeps an X connection open and blocks for root property events.
+    # X server disconnect terminates it; no recurring process or timer.
+    xprop -root -spy _NET_SUPPORTING_WM_CHECK >/dev/null 2>&1 &
+    watcher=$!
+    wait "$watcher" || :
+    watcher=
     echo 'PB626: X server connection lost; ending session for systemd recovery.' >&2
     exit 1
 fi

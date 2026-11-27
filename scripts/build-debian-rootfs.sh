@@ -121,7 +121,7 @@ Package: pb626-runtime
 Version: $version
 Architecture: armhf
 Maintainer: BlackF1re <55582873+BlackF1re@users.noreply.github.com>
-Depends: libc6, bash, evtest, iputils-ping, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, libxrandr2, tk, python3-tk, python3-pil.imagetk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
+Depends: libc6, bash, evtest, iputils-ping, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, x11-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, libxrandr2, tk, python3-tk, python3-pil.imagetk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
 Description: PocketBook 626 native E Ink desktop and hardware integration
  Includes the scanout worker, X11 bridge, patched Matchbox clients and
  board-specific systemd services. Uses the paired PB626 kernel and DTB.
