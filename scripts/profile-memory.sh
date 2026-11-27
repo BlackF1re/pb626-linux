@@ -3,7 +3,7 @@
 set -eu
 printf 'Kernel: '; uname -r
 printf '\nMemory (KiB):\n'
-grep -E '^(MemTotal|MemFree|MemAvailable|Cached|Shmem|Slab|SReclaimable|SUnreclaim|KernelStack|PageTables|CmaTotal|CmaFree|SwapTotal|SwapFree):' /proc/meminfo
+grep -E '^(MemTotal|MemFree|MemAvailable|Buffers|Cached|SwapCached|AnonPages|Mapped|Shmem|Slab|SReclaimable|SUnreclaim|KernelStack|PageTables|CmaTotal|CmaFree|SwapTotal|SwapFree|Unevictable|Mlocked|VmallocUsed):' /proc/meminfo
 printf '\nProcess PSS (KiB, root sees all processes):\n'
 for p in /proc/[0-9]*; do
     [ -r "$p/smaps_rollup" ] || continue
@@ -11,6 +11,17 @@ for p in /proc/[0-9]*; do
     pss=$(awk '/^Pss:/ {print $2}' "$p/smaps_rollup" 2>/dev/null) || continue
     [ -z "$pss" ] || printf '%s %s %s\n' "$pss" "${p##*/}" "$name"
 done | sort -nr
+printf '\nMemory reclaim counters (cumulative):\n'
+grep -E '^(pgmajfault|pswpin|pswpout|pgscan_[^ ]+|pgsteal_[^ ]+|allocstall[^ ]*|compact_[^ ]+|oom_kill) ' /proc/vmstat || :
+printf '\nMemory policy:\n'
+for field in swappiness page-cluster; do
+    printf '%s=' "$field"
+    cat "/proc/sys/vm/$field"
+done
+if [ -r /sys/kernel/mm/lru_gen/enabled ]; then
+    printf 'lru_gen='
+    cat /sys/kernel/mm/lru_gen/enabled
+fi
 printf '\nLoaded modules:\n'
 cat /proc/modules
 printf '\nZram mm_stat:\n'
