@@ -61,6 +61,11 @@ sudo qemu-arm "$root/bin/busybox" sh -n "$root/init"
 sudo qemu-arm "$root/bin/busybox" sh -n "$root/usr/libexec/pb626-restore-fast.sh"
 (sudo qemu-arm "$root/bin/busybox" blockdev --help 2>&1 || :) | grep -- --getsz >/dev/null
 (sudo qemu-arm "$root/bin/busybox" setsid --help 2>&1 || :) | grep -- '-c' >/dev/null
+# Exercise the actual ARM BusyBox dd option used for durable writes, on
+# a regular temporary file; no physical disk is involved.
+printf 'PB626 fsync check' >"$work/dd-input"
+sudo qemu-arm "$root/bin/busybox" dd if="$work/dd-input" of="$work/dd-output" bs=512 conv=notrunc,fsync status=none
+sudo cmp "$work/dd-input" "$work/dd-output"
 mkdir -p "$out"/{recovery,tools,source}
 cp "$kernel/pb626-megi-zImage" "$out/recovery/"
 printf '\0\0\0\0' >> "$out/recovery/pb626-megi-zImage"

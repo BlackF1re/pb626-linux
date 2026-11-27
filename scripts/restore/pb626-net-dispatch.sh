@@ -12,8 +12,8 @@ cid_check() {
 ready() {
     test -e /run/pb626-emmc-ready || fail 'Storage not ready'
 }
-# The daemon handles only one connection at a time. Also serialize with
-# legacy emergency operations by keeping all writes explicitly locked.
+# The daemon handles only one connection at a time. Do not use legacy
+# emergency writes concurrently with the network service.
 case "$1" in
     hello)
         test "$#" = 1
@@ -56,7 +56,7 @@ case "$1" in
         mnt=/run/pb626-net-theme
         mkdir -p "$mnt"
         mount -t ext4 -o ro,noload /dev/mmcblk2p8 "$mnt"
-        trap 'busybox umount "$mnt"' EXIT
+        trap 'status=$?; busybox umount "$mnt" || status=1; exit "$status"' EXIT
         test "$(wc -c <"$mnt/themes/Line.pbt")" = 770198
         cat "$mnt/themes/Line.pbt"
         ;;

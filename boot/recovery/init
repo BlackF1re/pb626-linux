@@ -61,6 +61,7 @@ echo 0x0525 >"$g/idVendor"
 echo 0xa4a7 >"$g/idProduct"
 echo 0x02 >"$g/bDeviceClass"
 echo 0x02 >"$g/bDeviceSubClass"
+echo 0x00 >"$g/bDeviceProtocol"
 echo PB626RECOVERY >"$g/strings/0x409/serialnumber"
 echo PocketBook >"$g/strings/0x409/manufacturer"
 echo 'PB626 Debian recovery' >"$g/strings/0x409/product"
@@ -73,21 +74,40 @@ if mkdir "$g/functions/ncm.usb0" &&
    echo 02:50:42:62:60:01 >"$g/functions/ncm.usb0/dev_addr" &&
    echo 02:50:42:62:60:02 >"$g/functions/ncm.usb0/host_addr" &&
    ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/ncm.usb0"; then
+    # IAD composite class is needed for Windows composite enumeration.
+    echo 0xef >"$g/bDeviceClass"
+    echo 0x02 >"$g/bDeviceSubClass"
+    echo 0x01 >"$g/bDeviceProtocol"
+    echo 'ACM + NCM recovery' >"$g/configs/c.1/strings/0x409/configuration"
     ncm=yes
 else
     rm -f "$g/configs/c.1/ncm.usb0"
     echo 'PB626 recovery: NCM unavailable; ACM diagnostics only' >/dev/kmsg
 fi
-bound=no
-for n in $(seq 1 30); do
-    for udc in /sys/class/udc/*; do
-        [ -d "$udc" ] || continue
-        if echo "${udc##*/}" >"$g/UDC"; then bound=yes; break; fi
+bind_udc() {
+    for n in $(seq 1 "$1"); do
+        for udc in /sys/class/udc/*; do
+            [ -d "$udc" ] || continue
+            if echo "${udc##*/}" >"$g/UDC"; then return 0; fi
+        done
+        sleep 1
     done
-    [ "$bound" = no ] || break
-    sleep 1
-done
-test "$bound" = yes || fatal 'no UDC'
+    return 1
+}
+if ! bind_udc 5; then
+    if test "$ncm" = yes; then
+        # An endpoint allocation error must not take out emergency ACM.
+        printf '\n' >"$g/UDC" 2>/dev/null || :
+        rm -f "$g/configs/c.1/ncm.usb0"
+        echo 0x02 >"$g/bDeviceClass"
+        echo 0x02 >"$g/bDeviceSubClass"
+        echo 0x00 >"$g/bDeviceProtocol"
+        echo 'ACM recovery' >"$g/configs/c.1/strings/0x409/configuration"
+        ncm=no
+        echo 'PB626 recovery: composite bind failed; using emergency ACM' >/dev/kmsg
+    fi
+    bind_udc 30 || fatal 'no UDC'
+fi
 # USB enumerates first; storage failure cannot prevent a shell.
 storage_init &
 sd_init &

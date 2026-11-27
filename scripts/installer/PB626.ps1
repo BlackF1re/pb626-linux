@@ -126,7 +126,9 @@ if ($Action -eq 'InstallFromDump') {
     if ((Read-Host 'Type INSTALL to continue') -cne 'INSTALL') { throw 'Cancelled' }
 }
 # No automatic retry of SPL. The previous launcher is preserved unchanged
-# in its FEL algorithm; this merely supplies local paths and finds the ACM.
+# in its FEL algorithm; this supplies local paths and attaches USB NCM.
+Run-Linux @('python3','-c','import sys, shutil; assert sys.version_info >= (3,7) and shutil.which("ip"), "Python 3.7+ and iproute2 required"')
+if ($Action -eq 'Install') { Run-Linux @('openssl','version') }
 if (!$UseRunningRecovery) {
     Write-Host 'Power the reader fully off, unplug it, hold Menu and connect USB.'
     $null=Read-Host 'Press Enter when cold FEL is ready'
@@ -157,7 +159,6 @@ if ($IsWindows) {
         if ($LASTEXITCODE -ne 0) { throw 'Recovery USB attach failed' }
     }
 }
-Run-Linux @('python3','-c','import sys; assert sys.version_info >= (3,7)')
 $direct=LinuxPath (Join-Path $kit 'install-direct.py')
 $dump=LinuxPath (Join-Path $kit 'dump-network.py')
 $sdargs=@()

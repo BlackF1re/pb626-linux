@@ -103,11 +103,14 @@ def main():
     if args.action=="preflight": return
     d.require(input("Type RESTORE "+cid+" to continue: ")=="RESTORE "+cid,"Cancelled")
     for region,name,size in images:
-        rows=r.lines("dump",cid,sectors,"scan",region,timeout=3600)
+        rows=r.lines("dump",cid,sectors,"scan",region,timeout=3600,
+                     max_response=32*1024*1024)
         actual={}
         for line in rows:
             m=re.fullmatch("BLOCK ([0-9]+) ([0-9a-f]{64})",line)
-            if m: actual[int(m[1])]=m[2]
+            if m:
+                index=int(m[1]); d.require(index not in actual,"Duplicate scan entry")
+                actual[index]=m[2]
         count=(size+CHUNK-1)//CHUNK
         d.require(set(actual)==set(range(count)),"Incomplete disk scan")
         with (path/name).open("rb") as f:
@@ -115,7 +118,9 @@ def main():
             if region=="user": order=order[1:]+order[:1]
             for i in order:
                 f.seek(i*CHUNK)
-                data=f.read(min(CHUNK,size-i*CHUNK))
+                length=min(CHUNK,size-i*CHUNK)
+                data=f.read(length)
+                d.require(len(data)==length,"Dump changed during restore")
                 if d.sha(data)!=actual[i]:
                     write_block(r,cid,sectors,region,i,data)
                     print(region,"written block",i+1,flush=True)

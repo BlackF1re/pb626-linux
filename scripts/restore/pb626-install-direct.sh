@@ -19,6 +19,10 @@ identity() {
     test "$(blockdev --getsz "$D")" = 15269888
     test "$(blockdev --getro "$D")" = 1
     test "$(blockdev --getro "$P")" = 1
+    for node in "$D"boot0 "$D"boot1; do
+        test "$(blockdev --getro "$node")" = 1
+        test "$(cat "$S${node##*mmcblk2}/force_ro")" = 1
+    done
     awk '$1 ~ /\/mmcblk/ {bad=1} END {exit bad}' /proc/mounts /proc/swaps
 }
 lock() {

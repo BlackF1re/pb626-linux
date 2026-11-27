@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Flash the paired CI artifact without creating or reading a full eMMC dump.
+"""Flash the paired CI artifact over USB NCM without a full eMMC dump.
 
-Windows: Python 3.7+ and pyserial; WSL openssl for password hashing.
-Linux: Python 3.7+, pyserial and openssl. Invoked by PB626.ps1.
+Run on WSL/Linux with Python 3.7+, iproute2, openssl and cdc_ncm.
+The old Recovery class is retained for emergency compatibility tests only.
 """
 import argparse
 import base64
@@ -10,6 +10,7 @@ import getpass
 import gzip
 import json
 import socket
+import shutil
 import hashlib
 import importlib
 import os
@@ -132,8 +133,10 @@ class EthernetRecovery:
         if configure:
             require(os.name != "nt", "Run this installer in WSL or Linux")
             require(os.geteuid() == 0, "Run as root to configure USB NCM")
-            subprocess.run(["modprobe","cdc_ncm"], check=False,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            require(shutil.which("ip"), "Install iproute2 in WSL/Linux")
+            if shutil.which("modprobe"):
+                subprocess.run(["modprobe","cdc_ncm"], check=False,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             deadline = time.monotonic()+45
             while time.monotonic() < deadline:
                 interfaces = [p.name for p in Path("/sys/class/net").iterdir()
@@ -162,7 +165,7 @@ class EthernetRecovery:
     def close(self):
         pass
 
-    def request(self, *args, payload=None, timeout=120):
+    def request(self, *args, payload=None, timeout=120, max_response=8*1024*1024):
         words = [str(x) for x in args]
         require(all(re.fullmatch(r"[A-Za-z0-9_./-]+", x) for x in words),
                 "Invalid network request")
@@ -185,7 +188,7 @@ class EthernetRecovery:
                 if not part:
                     break
                 out.extend(part)
-                require(len(out) <= 8*1024*1024, "Oversized recovery response")
+                require(len(out) <= max_response, "Oversized recovery response")
         match = re.search(rb"\nPB626_STATUS ([0-9]+)\n\Z", out)
         require(match is not None, "Incomplete TCP response; no automatic write retry")
         require(match[1] == b"0", "Recovery command failed: "+

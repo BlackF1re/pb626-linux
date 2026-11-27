@@ -32,6 +32,18 @@ class Tests(unittest.TestCase):
                     src.seek(i*d.CHUNK); dst.seek(i*d.CHUNK)
                     dst.write(src.read(d.CHUNK))
             subprocess.check_call(["e2fsck","-fn",str(target)])
+    def test_map_validation(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/"map.json"
+            m={"version":1,"image_bytes":d.CHUNK*3,"chunk_bytes":d.CHUNK,"mapped":[0,2]}
+            p.write_text(json.dumps(m))
+            self.assertEqual(d.mapped_chunks(p,d.CHUNK*3),{0,2})
+            for bad in ([1,2],[0,0],[0,3],[0,True],[0,-1],[0,2,1]):
+                m["mapped"]=bad
+                p.write_text(json.dumps(m))
+                with self.assertRaises(RuntimeError):
+                    d.mapped_chunks(p,d.CHUNK*3)
     def test_tcp(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp=Path(tmp)

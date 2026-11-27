@@ -1,2 +1,2 @@
-Full qualification: USB NCM recovery, TCP direct install and full dumps, allocated ext4 map
-Parent: 0015bb516a0cb8af79f9e33d8583d14bf6d81f59
+Full qualification: NCM composite descriptor and emergency fallback; validate ARM fsync and sparse map
+Parent: 7f7bf10b7eed6d76f5ed92248ceac245866cfb09

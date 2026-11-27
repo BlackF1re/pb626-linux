@@ -1,6 +1,6 @@
 # USB Ethernet recovery (new paired kit)
 
-Normal Install, Backup, Restore and Preflight use a dedicated CDC NCM USB Ethernet link (169.254.62.1/30 device, .2 host; TCP 6262). ACM stays available for diagnostic/emergency shell access. Windows attaches the composite gadget to WSL via usbipd; use a WSL kernel with cdc_ncm and install iproute2, Python 3.7+ and openssl in WSL. Native Linux uses the same transport. No Windows Python/pyserial needed for normal installation. Existing ACM dump tools remain emergency tools only; never use them concurrently with the TCP service. The NCM driver and USB composite enumeration require physical qualification. The recovery service binds only usb0 and accepts only the dedicated peer; it is not a general remote shell. Do not bridge this interface to other networks.
+Normal Install, Backup, Restore and Preflight use a dedicated CDC NCM USB Ethernet link (169.254.62.1/30 device, .2 host; TCP 6262). ACM stays available for diagnostic/emergency shell access. Windows attaches the composite gadget to WSL via usbipd; use a WSL kernel with cdc_ncm and install iproute2, Python 3.7+ and openssl in WSL. Native Linux uses the same transport. No Windows Python/pyserial needed for normal installation. Existing ACM dump tools remain emergency tools only; never use them concurrently with the TCP service. The NCM driver and USB composite enumeration require physical qualification. If the composite UDC cannot bind, recovery falls back to ACM-only diagnostics; normal bulk actions then fail closed rather than silently using slow ACM. The recovery service binds only usb0 and accepts only the dedicated peer; it is not a general remote shell. Do not bridge this interface to other networks.
 
 Direct Install requires the new paired kernel and recovery. The new kit includes a CI-generated ext4 allocation map; only chunks consisting entirely of filesystem-free zero blocks are omitted. This is not a secure erase of old free space. Mapped blocks are hash-verified and read back; full dumps are still byte-for-byte, with existing manifest filenames. A 4 MiB random TCP integrity test and verification of personalization input happen before the first write. Rootfs is written first, then personalized, then raw kernel/DTB, then exact BT0 last. No full backup is read or created by Install. A failed write is never automatically retried. Keep the book in recovery if it fails.
 
@@ -47,8 +47,8 @@ run `bash pb626.sh`. Choose Install, Backup, Restore or Preflight.
 For command-line use pass `-Action Install` etc. `-DataDir` selects
 a private folder; the default is private/ inside the kit. The installer
 prompts for cold FEL (fully power off, disconnect, hold Menu and
-connect), discovers the ACM port, and verifies board identity and CID
-with the existing recovery protocol. Never execute SPL twice in one
+connect), discovers the USB composite gadget, attaches it to Linux and
+verifies board identity and CID over TCP. Never execute SPL twice in one
 power cycle. `-UseRunningRecovery` is for a previously confirmed RAM
 recovery only, not an ordinary boot.
 
