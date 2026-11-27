@@ -1,3 +1,3 @@
-Full qualification request for current source revision 997c8073dedd85f1953497f6a85c65b581c478fb
-Trigger: full firmware qualification (pre-merge)
-Scope: full build graph; publish paired Debian flash kit and full build report.
+Full qualification request after Ubuntu runner APT feed workaround
+Source branch: enhance/native-reliability
+Scope: complete full firmware build graph and publish paired Debian flash kit plus full build report.
