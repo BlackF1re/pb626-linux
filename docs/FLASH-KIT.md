@@ -4,7 +4,7 @@ Normal Install, Backup, Restore and Preflight use a dedicated CDC NCM USB Ethern
 
 Direct Install requires the new paired kernel and recovery. The new kit includes a CI-generated ext4 allocation map; only chunks consisting entirely of filesystem-free zero blocks are omitted. This is not a secure erase of old free space. Mapped blocks are hash-verified and read back; full dumps are still byte-for-byte, with existing manifest filenames. A 4 MiB random TCP integrity test and verification of personalization input happen before the first write. Rootfs is written first, then personalized, then raw kernel/DTB, then exact BT0 last. No full backup is read or created by Install. A failed write is never automatically retried. Keep the book in recovery if it fails.
 
-`PB626.ps1 -Action Install -Distro XperiaDev` is unchanged on Windows. Do not use the old running recovery with the new kit; cold boot its paired RAM recovery first. The old ACM scripts in tools are reserved for emergencies. New network dump commands require exact CID and EXT_CSD layout; the legacy AllowOtherCard option is not provided by the normal launcher.
+`PB626.ps1 -Action Install -Distro XperiaDev` runs on Windows PowerShell 5.1 and PowerShell 7. The Windows installer and FEL launcher do not require PowerShell 7; Linux-native use of `pb626.sh` still requires PowerShell 7.4+. Do not use the old running recovery with the new kit; cold boot its paired RAM recovery first. The old ACM scripts in tools are reserved for emergencies. New network dump commands require exact CID and EXT_CSD layout; the legacy AllowOtherCard option is not provided by the normal launcher.
 
 # PB626 Debian flash kit (candidate)
 
@@ -20,7 +20,7 @@ FEL after a corrupt SPL has not been demonstrated independently.
 
 ## One-time computer setup
 
-Windows 10/11: install PowerShell 7.4+, Ubuntu WSL2 and usbipd-win
+Windows 10/11: use the built-in Windows PowerShell 5.1, install Ubuntu WSL2 and usbipd-win
 (`winget install Microsoft.PowerShell`, `winget install dorssel.usbipd-win`,
 `wsl --install -d Ubuntu`). Complete Ubuntu first-run setup. In Ubuntu:
 `sudo apt install python3 e2fsprogs device-tree-compiler mtools clang lld llvm usbutils libusb-1.0-0 openssl`.
@@ -42,8 +42,10 @@ arbitrary substitutes. This is the only unsolved distribution input.
 ## Normal use
 
 Extract the one artifact on a local disk. On Windows run PB626.cmd
-(or `pwsh -File PB626.ps1` from an elevated PowerShell). On Linux
-run `bash pb626.sh`. Choose Install, Backup, Restore or Preflight.
+(or `powershell.exe -NoProfile -ExecutionPolicy Bypass -File PB626.ps1`
+from an elevated Windows PowerShell 5.1). On Linux run `bash pb626.sh`.
+Choose Install, Backup, Restore or Preflight. Use `-Action Validate` first
+to verify every packaged file without accessing the reader.
 For command-line use pass `-Action Install` etc. `-DataDir` selects
 a private folder; the default is private/ inside the kit. The installer
 prompts for cold FEL (fully power off, disconnect, hold Menu and
@@ -171,7 +173,7 @@ inputs remain preferred. The rebuilt host binary is not yet physically
 USB-qualified; its two modified C sources are checked against the original
 laboratory hashes. Install libfdt1 and zlib1g in addition to libusb in WSL.
 
-Explicitly opt in to preparing missing inputs with menu item 10 or
+Explicitly opt in to preparing missing inputs with menu item 11 or
 `PB626.ps1 -Action Prepare` (no device access). You can pass
 `-OriginalUboot PATH` to use the original combined file offline. It downloads the historical upstream
 U-Boot from xff.cz directly, only accepts SHA256
