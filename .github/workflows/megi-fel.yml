@@ -237,6 +237,17 @@ jobs:
           bash scripts/configure-megi-kernel.sh --check kernel-complete/pb626-megi.config
           cp -a kernel-complete kernel-stage
           rm kernel-stage/SHA256SUMS
+      - name: Report resolved kernel optimization and compatibility options
+        run: |
+          set -euo pipefail
+          cfg=kernel-stage/pb626-megi.config
+          bash scripts/configure-megi-kernel.sh --check "$cfg"
+          for key in SMP HOTPLUG_CPU NR_CPUS ARM_PSCI PREEMPT PREEMPT_DYNAMIC PREEMPT_NONE PREEMPT_VOLUNTARY THUMB2_KERNEL ARM_UNWIND CC_OPTIMIZE_FOR_SIZE BASE_SMALL HAVE_LD_DEAD_CODE_DATA_ELIMINATION LD_DEAD_CODE_DATA_ELIMINATION KALLSYMS KALLSYMS_ALL LOG_BUF_SHIFT DEBUG_INFO PERF_EVENTS TASKSTATS TASK_IO_ACCOUNTING CPU_FREQ_STAT CFG80211_DEBUGFS MAC80211_DEBUGFS CFG80211_WEXT OF_OVERLAY BOOT_CONFIG PM_WAKELOCKS THERMAL_STATISTICS CMA_DEBUGFS MODVERSIONS SERIAL_8250_NR_UARTS SERIAL_8250_RUNTIME_UARTS CRYPTO_AES_TI CRYPTO_AES_ARM_CE CRYPTO_GHASH_ARM_CE CRYPTO_SHA1_ARM_CE CRYPTO_SHA1_ARM_NEON CRYPTO_AES_ARM_BS CRYPTO_LZO CRYPTO_ZSTD CRYPTO_DEFLATE CRYPTO_LZ4 ZRAM_BACKEND_LZ4 LRU_GEN HZ; do
+            grep -E "^(CONFIG_$key=|# CONFIG_$key is not set$)" "$cfg" || echo "CONFIG_$key: absent"
+          done
+          stat -c '%s bytes %n' kernel-stage/pb626-megi-zImage kernel-stage/kernel-modules.tar.gz
+          echo "Installed loadable modules:"
+          tar -tzf kernel-stage/kernel-modules.tar.gz | awk '/\\.ko(\\.(gz|xz|zst))?$/ {n++} END {print n+0}'
       - name: Restore static RAM E Ink worker
         if: ${{ !inputs.debian_only }}
         id: ram-worker
