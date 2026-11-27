@@ -3,7 +3,7 @@ name: Full firmware qualification (pre-merge)
 # No ordinary code commit triggers this expensive build.
 on:
   push:
-    branches: [enhance/native-reliability]
+    branches: [enhance/native-reliability, optimization/debian-runtime]
     paths:
       - '.github/firmware-build-request'
   workflow_dispatch:
