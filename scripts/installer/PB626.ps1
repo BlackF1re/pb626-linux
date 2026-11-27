@@ -84,10 +84,11 @@ if ($Action -eq 'Validate') {
         if (!$seen.ContainsKey($required)) { throw "Missing flash-kit artifact: $required" }
     }
     $map=Get-Content -Raw (Join-Path $kit 'native/pb626-rootfs.bmap.json') | ConvertFrom-Json
-    if ($map.version -ne 1 -or !$map.mapped -or $map.mapped.Count -lt 1) { throw 'Invalid rootfs allocation map' }
+    $mappedCount=@($map.mapped).Count
+    if ($map.version -ne 1 -or $null -eq $map.mapped -or $mappedCount -lt 1) { throw 'Invalid rootfs allocation map' }
     Write-Host "KIT SHA256 VERIFIED: $($seen.Count) files" -ForegroundColor Green
     Write-Host "PAIRED BUILD: $((Get-Content -Raw (Join-Path $kit 'native/BUILD-COMMIT')).Trim())"
-    Write-Host "ROOTFS MAPPED CHUNKS: $($map.mapped.Count)"
+    Write-Host "ROOTFS MAPPED CHUNKS: $mappedCount"
     Write-Host 'FLASH KIT VERIFIED' -ForegroundColor Green
     return
 }
