@@ -10,6 +10,18 @@ with tempfile.TemporaryDirectory() as td:
     tree = Path(td)
     files = {
         "arch/arm/mach-sunxi/Makefile": "obj-y += board.o\n",
+        "arch/arm/cpu/armv7/sunxi/timer.c": r'''#include <common.h>
+ulong timer_get_us(void)
+{
+	return ~readl(&timer->val);
+}
+''',
+        "arch/arm/mach-sunxi/board.c": r'''#include <common.h>
+void board_init_f(ulong dummy)
+{
+	gpio_init();
+}
+''',
         "common/spl/spl.c": r'''#include <spl.h>
 void crc(void)
 {
@@ -56,7 +68,6 @@ static int spl_mmc_find_device(struct mmc **mmcp, u32 boot_device)
 		return mmc_dev;
 	err = mmc_init_device(mmc_dev);
 	if (err) {
-		printf("spl: could not initialize mmc. error: %d\n", err);
 		return err;
 	}
 	*mmcp = find_mmc_device(mmc_dev);
@@ -67,6 +78,17 @@ static int spl_mmc_find_device(struct mmc **mmcp, u32 boot_device)
 		return err;
 	}
 
+	return 0;
+}
+static int spl_mmc_init_device(int mmc_dev)
+{
+	err = mmc_init_device(mmc_dev);
+	if (err) {
+#ifdef CONFIG_SPL_LIBCOMMON_SUPPORT
+			printf("spl: mmc init failed with error: %d\n", err);
+#endif
+			return err;
+	}
 	return 0;
 }
 ''',
@@ -107,6 +129,8 @@ void sunxi_board_init(void)
         assert "PB626_ERR_" + code in mmc
     assert "PB626_ERR_DRAM_TIMEOUT" in (tree / "arch/arm/mach-sunxi/dram_helpers.c").read_text()
     assert "PB626_ERR_DRAM_INIT" in (tree / "board/sunxi/board.c").read_text()
+    assert "pb626_led_boot_tick" in (tree / "arch/arm/cpu/armv7/sunxi/timer.c").read_text()
+    assert "pb626_led_boot_start" in (tree / "arch/arm/mach-sunxi/board.c").read_text()
     assert (tree / "arch/arm/mach-sunxi/pb626-led.c").read_bytes() == (
         root / "BT0-uncaged/pb626-led.c").read_bytes()
 
