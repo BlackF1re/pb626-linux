@@ -60,14 +60,15 @@ grep -Fq 'DISPLAY is unset' display/pb626-xsession
 grep -Fq 'cannot connect to X server' display/pb626-xsession
 grep -Fxq '    supervise_client matchbox-desktop --mode desktop &' display/pb626-xsession
 grep -Fq '    supervise_client matchbox-desktop --bg col-solid:white' display/pb626-xsession
-# A broken accessory must not terminate the X session; only WM/renderer are waited on.
+# A broken X client must not terminate the X session; only X server loss or the legacy local renderer is fatal.
 grep -Fxq '    export MB_KBD_CONFIG=/usr/share/pb626/matchbox-keyboard/keyboard-us.xml' display/pb626-xsession
 grep -Fxq '    supervise_client matchbox-keyboard --daemon &' display/pb626-xsession
-grep -Fxq 'wait -n "$wm" ${screen:+"$screen"}' display/pb626-xsession
-wait_line=$(grep '^wait -n ' display/pb626-xsession)
-case "$wait_line" in
-    *keyboard*|*panel*|*desktop*) echo "Accessory is still session-critical: $wait_line" >&2; exit 1 ;;
-esac
+grep -Fxq 'supervise_client matchbox-window-manager -theme PB626 -use_titlebar yes &' display/pb626-xsession
+grep -Fxq 'if [ -n "$screen" ]; then' display/pb626-xsession
+grep -Fxq '    while xset q >/dev/null 2>&1; do' display/pb626-xsession
+! grep -q '^wait -n ' display/pb626-xsession
+grep -Fq 'while :; do' display/pb626-xsession
+! grep -Fq 'restart budget exhausted' display/pb626-xsession
 grep -Fq 'display/keyboard-us.xml' scripts/build-debian-rootfs.sh
 python3 tests/test-matchbox-keyboard-layout.py
 # The physical PE8 power LED is the DTS node named "led"; ignore USB LEDs.

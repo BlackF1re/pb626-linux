@@ -42,29 +42,36 @@ if ! xrdb -nocpp -merge /etc/X11/pb626.Xresources; then
     echo 'PB626: xrdb failed; using session resource file' >&2
     export XENVIRONMENT=/etc/X11/pb626.Xresources
 fi
-# Restart accessory clients independently. Only the WM and E Ink bridge are
-# session-critical; panel, keyboard and desktop-launcher failures must not
-# terminate xinit and take down every other client. Bound short-lived retries.
+# Supervise every X client independently. Client failures must not terminate
+# xinit; only loss of X itself (or the legacy local E Ink renderer) ends the
+# session and lets the outer desktop service recover it.
 supervise_client() (
     child=
     trap 'if [ -n "$child" ]; then kill "$child" 2>/dev/null || :; fi; exit 0' HUP INT TERM
     failures=0
-    while [ "$failures" -lt 3 ]; do
+    while :; do
         started=$(date +%s)
         "$@" &
         child=$!
         wait "$child" || :
         child=
         ended=$(date +%s)
-        if [ "$((ended - started))" -ge 60 ]; then failures=0; fi
-        failures=$((failures + 1))
-        echo "PB626: $1 exited; retry $failures/3" >&2
-        sleep 2
+        if [ "$((ended - started))" -ge 60 ]; then
+            failures=0
+        else
+            failures=$((failures + 1))
+        fi
+        delay=2
+        if [ "$failures" -ge 3 ]; then
+            # Avoid a tight crash loop, but keep trying indefinitely.
+            delay=30
+            failures=0
+        fi
+        echo "PB626: $1 exited; retrying in ${delay}s" >&2
+        sleep "$delay"
     done
-    echo "PB626: $1 restart budget exhausted" >&2
-    exit 1
 )
-matchbox-window-manager -theme PB626 -use_titlebar yes &
+supervise_client matchbox-window-manager -theme PB626 -use_titlebar yes &
 wm=$!
 panel=
 if command -v matchbox-panel >/dev/null; then
@@ -101,4 +108,15 @@ if [ -n "${PB626_EPD_BRIDGE_PID:-}" ]; then
         screen=$!
     fi
 fi
-wait -n "$wm" ${screen:+"$screen"}
+if [ -n "$screen" ]; then
+    # The local E Ink renderer is session-critical on the legacy Alpine path.
+    wait "$screen"
+else
+    # Debian's renderer is supervised by pb626-desktop.service. Keep the X
+    # session alive independently of all clients; only loss of X itself ends it.
+    while xset q >/dev/null 2>&1; do
+        sleep 2
+    done
+    echo 'PB626: X server connection lost; ending session for systemd recovery.' >&2
+    exit 1
+fi
