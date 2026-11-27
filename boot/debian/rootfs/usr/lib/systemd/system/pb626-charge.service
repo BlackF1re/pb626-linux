@@ -1,0 +1,15 @@
+[Unit]
+Description=PocketBook minimal E Ink charging indicator
+ConditionPathExists=/run/pb626-charge-mode
+Requires=pb626-boot-select.service
+Wants=dev-video0.device
+After=pb626-boot-select.service dev-video0.device
+Before=pb626-desktop.service pb626-poweroff-screen.service
+OnFailure=pb626-charge-fallback.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/pb626-charge run
+Environment=PB626_EPD_RENDER=indexed
+Nice=5
+TimeoutStopSec=30s

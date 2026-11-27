@@ -1,0 +1,50 @@
+/* PB626 Matchbox Desktop: stable monochrome focus outline.
+ * Draw focus inside the tile so selection never changes its geometry.
+ * Preserve the icon and label contrast in all pointer/keyboard states.
+ */
+
+#TakuWindow flowbox flowboxchild {
+    border: none;
+    border-radius: 0;
+    background-color: #ffffff;
+    background-image: none;
+    color: #000000;
+    opacity: 1;
+}
+
+/* Draw selection without changing widget dimensions. */
+#TakuWindow flowbox flowboxchild:selected,
+#TakuWindow flowbox flowboxchild:focus,
+#TakuWindow flowbox flowboxchild:hover {
+    border: none;
+    background-color: #ffffff;
+    background-image: none;
+    box-shadow: inset 0 0 0 2px #000000;
+    color: #000000;
+    opacity: 1;
+}
+
+/* Keep launcher buttons visually neutral. */
+#TakuWindow flowbox flowboxchild button,
+#TakuWindow flowbox flowboxchild button:hover,
+#TakuWindow flowbox flowboxchild button:active,
+#TakuWindow flowbox flowboxchild button:focus {
+    background-color: #ffffff;
+    background-image: none;
+    box-shadow: none;
+    border-color: transparent;
+    color: #000000;
+    opacity: 1;
+}
+
+/* Prevent GTK from dimming icons and labels on focus/selection. */
+#TakuWindow flowbox flowboxchild label,
+#TakuWindow flowbox flowboxchild image {
+    color: #000000;
+    opacity: 1;
+}
+
+#TakuWindow flowbox flowboxchild image {
+    -gtk-icon-effect: none;
+    -gtk-icon-shadow: none;
+}

@@ -1,0 +1,2 @@
+# Match the ELAN evdev name used by the qualified board variant.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*[Ee][Ll][Aa][Nn]*", SYMLINK+="input/pb626_touch", TAG+="systemd", ENV{SYSTEMD_ALIAS}+="/dev/input/pb626_touch"

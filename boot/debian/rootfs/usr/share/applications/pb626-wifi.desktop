@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Wi-Fi Networks
+Exec=iwgtk -N
+Icon=network-wireless
+Categories=Settings;Network;

@@ -1,0 +1,15 @@
+[Unit]
+Description=Retain an explicit normal reboot across PMIC startup-source latch
+DefaultDependencies=no
+ConditionPathExists=/etc/pb626/charge-qualified
+ConditionPathExists=/run/pb626-normal-boot
+After=local-fs.target
+Before=shutdown.target umount.target reboot.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pb626-charge reboot-marker
+TimeoutStartSec=10s
+
+[Install]
+WantedBy=reboot.target

@@ -6,17 +6,26 @@ on:
     paths:
       - '.github/workflows/restore.yml'
       - 'scripts/restore/**'
+      - 'boot/recovery/**'
+      - 'scripts/build-debian-recovery.sh'
+      - 'scripts/installer/**'
+      - 'scripts/prepare-install.sh'
       - '!scripts/restore/README.md'
   pull_request:
     branches: [main]
     paths:
       - '.github/workflows/restore.yml'
       - 'scripts/restore/**'
+      - 'boot/recovery/**'
+      - 'scripts/build-debian-recovery.sh'
+      - 'scripts/installer/**'
+      - 'scripts/prepare-install.sh'
       - '!scripts/restore/README.md'
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
-  group: restore-${{ github.ref }}
+  group: restore-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -25,14 +34,15 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Build ARM recovery helper
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            busybox gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user
+            busybox gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user \
+            mmdebstrap debian-archive-keyring cpio device-tree-compiler
           arm-linux-gnueabihf-gcc -O2 -Wall -Wextra -Werror -static -s \
             scripts/restore/pb626-restore-scan.c -o pb626-restore-scan
       - name: Verify scans and full readback on a temporary image
@@ -54,6 +64,19 @@ jobs:
             echo 'Short read unexpectedly succeeded' >&2
             exit 1
           fi
+          # A real SD card need not end on a 4 MiB boundary.
+          cp sample.img partial.img
+          truncate -s $((4194304+1536)) partial.img
+          {
+            printf 'BLOCK 0 '
+            head -c 4194304 partial.img | sha256sum | cut -d ' ' -f1
+            printf 'BLOCK 1 '
+            tail -c 1536 partial.img | sha256sum | cut -d ' ' -f1
+          } >expected-partial
+          qemu-arm ./pb626-restore-scan scan partial.img 2 1536 | diff -u expected-partial -
+          printf 'SHA256 %s\n' "$(sha256sum partial.img | cut -d ' ' -f1)" >expected-full-partial
+          qemu-arm ./pb626-restore-scan verify partial.img 2 1536 | tail -n1 | diff -u expected-full-partial -
+          if qemu-arm ./pb626-restore-scan scan partial.img 2 513; then exit 1; fi
           truncate -s 7818182656 sample.img
           qemu-arm ./pb626-restore-scan verify sample.img 1864 | tail -n1 >actual-large
           printf 'SHA256 %s\n' "$(sha256sum sample.img | cut -d ' ' -f1)" | diff -u - actual-large
@@ -62,6 +85,9 @@ jobs:
           gcc -O2 -Wall -Wextra -Werror scripts/restore/pb626-restore-scan.c -o native-scanner
           busybox sh -n scripts/restore/pb626-restore-fast.sh
           python3 scripts/restore/test-transport.py ./native-scanner
+          ! grep -Eq '\$serial\.ReadLine\(|\$serial\.Read\(' scripts/restore/Backup-PB626Fast.ps1
+          grep -Fq '$serial.BaseStream.ReadByte()' scripts/restore/Backup-PB626Fast.ps1
+          grep -Fq '$serial.BaseStream.Read(' scripts/restore/Backup-PB626Fast.ps1
           pwsh -NoProfile -Command '
             $tokens = $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile(
@@ -71,6 +97,36 @@ jobs:
               "$PWD/scripts/restore/Backup-PB626Fast.ps1", [ref]$tokens, [ref]$errors)
             if ($errors) { $errors; exit 1 }
           '
+      - name: Build and inspect minimal Debian recovery (fixture kernel, never publish)
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          mkdir "$work/kernel"
+          printf 'NOT A BOOTABLE KERNEL\n' >"$work/kernel/pb626-megi-zImage"
+          cat >"$work/board.dts" <<'EOF'
+          /dts-v1/;
+          / {
+            chosen { pb626,emmc-backup; };
+            regulator-mmc0 { };
+            soc {
+              mmc@1c11000 { status = "okay"; };
+              mmc@1c0f000 {
+                status = "disabled";
+                bus-width = <4>;
+                cd-gpios = <1 2 3>;
+                vmmc-supply = <1>;
+              };
+            };
+          };
+          EOF
+          dtc -q -I dts -O dtb -o "$work/kernel/pb626-elan-emmc-backup.dtb" "$work/board.dts"
+          bash scripts/build-debian-recovery.sh "$work/kernel" "$work/fixture"
+          (cd "$work/fixture/recovery" && sha256sum -c SHA256SUMS)
+          gzip -dc "$work/fixture/recovery/pb626-megi-initramfs.cpio.gz" | cpio -it >"$work/files"
+          grep -Eq '^([.]/)?init$' "$work/files"
+          grep -Eq '^([.]/)?usr/libexec/pb626-restore-scan$' "$work/files"
+          if grep -Eq '(^|/)(Xorg|systemd|modules|apt-get)$' "$work/files"; then exit 1; fi
+          rm -rf "$work"
       - name: Package fast restore
         run: |
           mkdir dist

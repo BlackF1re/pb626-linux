@@ -1,0 +1,174 @@
+diff --git a/src/dummy.h b/src/dummy.h
+--- a/src/dummy.h
++++ b/src/dummy.h
+@@ -42,7 +42,12 @@
+ {
+     /* options */
+     OptionInfoPtr Options;
+-    Bool swCursor;
++    Bool swCursor;
++    /* Optional PB626 shared backing; zero-initialized with the private. */
++    void *pb626_map;
++    size_t pb626_length;
++    Bool pb626_published;
++    char pb626_pending[128];
+     /* proc pointer */
+     CloseScreenProcPtr CloseScreen;
+     xf86CursorInfoPtr CursorInfo;
+diff --git a/src/dummy_driver.c b/src/dummy_driver.c
+--- a/src/dummy_driver.c
++++ b/src/dummy_driver.c
+@@ -34,7 +34,81 @@
+ /*
+  * Driver data structures.
+  */
+-#include "dummy.h"
++#include "dummy.h"
++#include "pb626-ddx-fb.h"
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++/* The existing Xorg software pixmap is the sole backing store. */
++static void
++pb626_metadata(ScrnInfoPtr pScrn)
++{
++    DUMMYPtr d = DUMMYPTR(pScrn);
++    if (!d->pb626_map)
++        return;
++    struct pb626_ddx_fb *h = d->pb626_map;
++    h->width = pScrn->virtualX;
++    h->height = pScrn->virtualY;
++    h->stride = pScrn->displayWidth * (pScrn->bitsPerPixel / 8);
++    h->bpp = pScrn->bitsPerPixel;
++    h->depth = pScrn->depth;
++    h->red = pScrn->mask.red;
++    h->green = pScrn->mask.green;
++    h->blue = pScrn->mask.blue;
++}
++
++static void
++pb626_unmap(DUMMYPtr d)
++{
++    if (d->pb626_published)
++        unlink(PB626_DDX_FB_PATH);
++    else if (d->pb626_pending[0])
++        unlink(d->pb626_pending);
++    if (d->pb626_map)
++        munmap(d->pb626_map, d->pb626_length);
++    d->pb626_map = NULL;
++    d->pb626_published = FALSE;
++    d->pb626_pending[0] = 0;
++}
++
++static void *
++pb626_backing(ScrnInfoPtr pScrn)
++{
++    DUMMYPtr d = DUMMYPTR(pScrn);
++    size_t bytes = (size_t)pScrn->videoRam * 1024;
++    const char *enabled = getenv("PB626_DDX_SHARED");
++    if (!enabled || strcmp(enabled, "1") || pScrn->scrnIndex != 0 ||
++        geteuid() != 0 || !bytes || bytes > PB626_DDX_FB_MAX ||
++        (pScrn->bitsPerPixel != 16 && pScrn->bitsPerPixel != 32))
++        return calloc(1, bytes);
++    snprintf(d->pb626_pending, sizeof(d->pb626_pending),
++             PB626_DDX_FB_PATH ".XXXXXX");
++    int fd = mkstemp(d->pb626_pending);
++    if (fd < 0) {
++        d->pb626_pending[0] = 0;
++        return calloc(1, bytes);
++    }
++    d->pb626_length = PB626_DDX_FB_OFFSET + bytes;
++    if (fchmod(fd, 0600) == 0 && ftruncate(fd, d->pb626_length) == 0) {
++        void *map = mmap(NULL, d->pb626_length, PROT_READ | PROT_WRITE,
++                         MAP_SHARED, fd, 0);
++        if (map != MAP_FAILED)
++            d->pb626_map = map;
++    }
++    close(fd);
++    if (!d->pb626_map) {
++        pb626_unmap(d);
++        return calloc(1, bytes);
++    }
++    struct pb626_ddx_fb *h = d->pb626_map;
++    h->magic = PB626_DDX_FB_MAGIC;
++    h->version = PB626_DDX_FB_VERSION;
++    h->capacity = bytes;
++    pb626_metadata(pScrn);
++    return (char *)d->pb626_map + PB626_DDX_FB_OFFSET;
++}
+ 
+ /* These need to be checked */
+ #include <X11/X.h>
+@@ -394,9 +468,10 @@
+             pPixmap->devPrivate.ptr);
+     pScrn->virtualX = width;
+     pScrn->virtualY = height;
+-    pScrn->displayWidth = displayWidth;
+-
+-    return TRUE;
++    pScrn->displayWidth = displayWidth;
++    pb626_metadata(pScrn);
++
++    return TRUE;
+ }
+ 
+ /**********************
+@@ -459,8 +534,9 @@
+ {
+     if (pScrn->driverPrivate == NULL)
+ 	return;
+-    free(pScrn->driverPrivate);
+-    pScrn->driverPrivate = NULL;
++    pb626_unmap(DUMMYPTR(pScrn));
++    free(pScrn->driverPrivate);
++    pScrn->driverPrivate = NULL;
+ }
+ 
+ static const OptionInfoRec *
+@@ -787,8 +863,8 @@
+     DUMMYScrn = pScrn;
+ 
+ 
+-    if (!(pixels = malloc(pScrn->videoRam * 1024)))
+-	return FALSE;
++    if (!(pixels = pb626_backing(pScrn)))
++	return FALSE;
+ 
+     /*
+      * Reset visual list.
+@@ -942,7 +1018,20 @@
+     dPtr->CreateWindow = pScreen->CreateWindow;
+     pScreen->CreateWindow = DUMMYCreateWindow;
+ 
+-    /* Report any unused options (only for the first generation) */
++    /* Publish only after successful ScreenInit. Never truncate an inode
++     * which another process may still have mapped from an earlier server. */
++    if (dPtr->pb626_map) {
++        pb626_metadata(pScrn);
++        if (rename(dPtr->pb626_pending, PB626_DDX_FB_PATH) == 0) {
++            dPtr->pb626_published = TRUE;
++            dPtr->pb626_pending[0] = 0;
++            xf86DrvMsg(pScrn->scrnIndex, X_INFO, "PB626 shared framebuffer enabled\n");
++        } else {
++            xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "PB626 framebuffer publication failed\n");
++        }
++    }
++
++    /* Report any unused options (only for the first generation) */
+     if (serverGeneration == 1) {
+ 	xf86ShowUnusedOptions(pScrn->scrnIndex, pScrn->options);
+     }
+@@ -970,7 +1059,10 @@
+     ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
+     DUMMYPtr dPtr = DUMMYPTR(pScrn);
+ 
+-    free(pScreen->GetScreenPixmap(pScreen)->devPrivate.ptr);
++    if (dPtr->pb626_map)
++        pb626_unmap(dPtr);
++    else
++        free(pScreen->GetScreenPixmap(pScreen)->devPrivate.ptr);
+ 
+     if (dPtr->CursorInfo)
+ 	xf86DestroyCursorInfoRec(dPtr->CursorInfo);

@@ -1,10 +1,39 @@
 #!/bin/sh
 set -eu
+# Native Debian ships patched clients in a package-owned private directory.
+# Alpine continues to use the original /usr/bin builds.
+if [ -d /usr/libexec/pb626/bin ]; then
+    export PATH="/usr/libexec/pb626/bin:$PATH"
+fi
+# GTK4 software rendering on the unaccelerated Xorg session.
+if [ -f /etc/debian_version ]; then
+    export GSK_RENDERER=cairo
+    # The private Matchbox Keyboard 0.1.1 cannot parse Debian's newer
+    # include-based keyboard.xml. Use the PB626-owned flat XML layout.
+    export MB_KBD_CONFIG=/usr/share/pb626/matchbox-keyboard/keyboard-us.xml
+fi
 # Make HarfBuzz symbols available to FreeType's auto-hinter on musl.
-if [ -r /usr/lib/libharfbuzz.so.0 ]; then
+if [ ! -f /etc/debian_version ] && [ -r /usr/lib/libharfbuzz.so.0 ]; then
     export LD_PRELOAD="/usr/lib/libharfbuzz.so.0${LD_PRELOAD:+:$LD_PRELOAD}"
 fi
+if [ -z "${DISPLAY:-}" ]; then
+    echo 'PB626: DISPLAY is unset; launch this session through pb626-desktop/xinit.' >&2
+    exit 1
+fi
+if ! xset q >/dev/null 2>&1; then
+    echo "PB626: cannot connect to X server '$DISPLAY'; check Xorg and XAUTHORITY." >&2
+    exit 1
+fi
 xset s off
+xset -dpms 2>/dev/null || :
+# Optional standard X11 idle detector, only after board suspend qualification.
+case ${PB626_IDLE_MINUTES:-0} in
+    5|10|15|30|60)
+        if [ -f /etc/pb626/suspend-qualified ]; then
+            xidle -no -timeout "$((PB626_IDLE_MINUTES * 60))" -program '/usr/bin/doas /usr/sbin/pb626-admin suspend' &
+            idle_pid=$!
+        fi ;;
+esac
 xsetroot -solid white
 # Publish defaults to the X server, not just this process's environment.
 # xinit brings xrdb as a dependency. -nocpp avoids requiring a compiler.
@@ -13,28 +42,81 @@ if ! xrdb -nocpp -merge /etc/X11/pb626.Xresources; then
     echo 'PB626: xrdb failed; using session resource file' >&2
     export XENVIRONMENT=/etc/X11/pb626.Xresources
 fi
-matchbox-window-manager -theme PB626 -use_titlebar yes &
+# Supervise every X client independently. Client failures must not terminate
+# xinit; only loss of X itself (or the legacy local E Ink renderer) ends the
+# session and lets the outer desktop service recover it.
+supervise_client() (
+    child=
+    trap 'if [ -n "$child" ]; then kill "$child" 2>/dev/null || :; fi; exit 0' HUP INT TERM
+    failures=0
+    while :; do
+        started=$(date +%s)
+        "$@" &
+        child=$!
+        wait "$child" || :
+        child=
+        ended=$(date +%s)
+        if [ "$((ended - started))" -ge 60 ]; then
+            failures=0
+        else
+            failures=$((failures + 1))
+        fi
+        delay=2
+        if [ "$failures" -ge 3 ]; then
+            # Avoid a tight crash loop, but keep trying indefinitely.
+            delay=30
+            failures=0
+        fi
+        echo "PB626: $1 exited; retrying in ${delay}s" >&2
+        sleep "$delay"
+    done
+)
+supervise_client matchbox-window-manager -theme PB626 -use_titlebar yes &
 wm=$!
 panel=
 if command -v matchbox-panel >/dev/null; then
-    matchbox-panel --orientation south --size 48 --bgcolor white --no-session \
+    supervise_client matchbox-panel --orientation south --size 48 --bgcolor white --no-session \
         --default-apps 'mb-applet-menu-launcher,mb-applet-launcher --desktop /etc/pb626/keyboard.desktop,mb-applet-battery,mb-applet-clock' &
     panel=$!
 fi
-matchbox-keyboard --daemon us &
+if [ -f /etc/debian_version ]; then
+    supervise_client matchbox-keyboard --daemon &
+else
+    supervise_client matchbox-keyboard --daemon us &
+fi
 keyboard=$!
 screen=
 if [ -z "${PB626_EPD_BRIDGE_PID:-}" ]; then
     pb626-x11-epd "$1" "$2" &
     screen=$!
 fi
-matchbox-desktop --bg col-solid:white --font 'Sans bold 18px' \
-    --fontcol black --no-outline --no-title --icon-size 112 --icon-padding 8 &
+if [ -f /etc/debian_version ]; then
+    # Debian Trixie ships Matchbox Desktop 2.x; legacy 1.x flags are rejected.
+    supervise_client matchbox-desktop --mode desktop &
+else
+    # Alpine builds the pinned Matchbox Desktop 1.x, which retains these flags.
+    supervise_client matchbox-desktop --bg col-solid:white --font 'Sans bold 18px' \
+        --fontcol black --no-outline --no-title --icon-size 112 --icon-padding 8 &
+fi
 desktop=$!
-trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} 2>/dev/null || true' EXIT
+trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} ${idle_pid:+"$idle_pid"} 2>/dev/null || true' EXIT
+trap 'exit 1' HUP INT TERM
 if [ -n "${PB626_EPD_BRIDGE_PID:-}" ]; then
     : > "${PB626_EPD_SESSION_STARTED:?}"
-    (while [ -d "/proc/$PB626_EPD_BRIDGE_PID" ]; do sleep 1; done) &
-    screen=$!
+    if [ ! -f /etc/debian_version ]; then
+        (while [ -d "/proc/$PB626_EPD_BRIDGE_PID" ]; do sleep 1; done) &
+        screen=$!
+    fi
 fi
-wait -n "$desktop" "$screen"
+if [ -n "$screen" ]; then
+    # The local E Ink renderer is session-critical on the legacy Alpine path.
+    wait "$screen"
+else
+    # Debian's renderer is supervised by pb626-desktop.service. Keep the X
+    # session alive independently of all clients; only loss of X itself ends it.
+    while xset q >/dev/null 2>&1; do
+        sleep 2
+    done
+    echo 'PB626: X server connection lost; ending session for systemd recovery.' >&2
+    exit 1
+fi

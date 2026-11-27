@@ -29,8 +29,14 @@ static void test_sparse_scan(void)
 	struct buffer buffer = { .data = buffer_words };
 	const size_t row = HEADER_WORDS + DATA_ROW * CLOCKS + DATA_CLOCK;
 	struct phase phase = { .lut = { [0] = 1, [0xf0] = 2 }, .scans = 3 };
-	scan_template(renderer.neutral);
-	memcpy(buffer_words, renderer.neutral, sizeof(buffer_words));
+	static uint32_t neutral[FRAME_WORDS];
+	init_neutral_data(&renderer);
+	scan_template(neutral);
+	for (unsigned int y = 0; y < GATES; y++)
+		assert(!memcmp(renderer.neutral_data[y != 0],
+			       neutral + HEADER_WORDS + (DATA_ROW + y) * CLOCKS + DATA_CLOCK,
+			       GROUPS * sizeof(uint32_t)));
+	memcpy(buffer_words, neutral, sizeof(buffer_words));
 	assert(portrait_index(0, 0) == WIDTH - 1);
 	assert(portrait_index(GATES - 1, SOURCES - 1) == PIXELS - WIDTH);
 
@@ -39,20 +45,20 @@ static void test_sparse_scan(void)
 	renderer.transitions[3] = 1;
 	render(&buffer, &renderer, &phase, false);
 	assert(buffer_words[3] == htole32(2));
-	assert(buffer_words[row] == (renderer.neutral[row] | htole32(source_word(0x81))));
-	assert(buffer_words[row + 1] == renderer.neutral[row + 1]);
+	assert(buffer_words[row] == (neutral[row] | htole32(source_word(0x81))));
+	assert(buffer_words[row + 1] == neutral[row + 1]);
 
 	renderer.rows[0] = (struct span_range){ 2, 3 };
 	renderer.transitions[8] = 1;
 	render(&buffer, &renderer, &phase, false);
-	assert(buffer_words[row] == renderer.neutral[row]);
-	assert(buffer_words[row + 2] == (renderer.neutral[row + 2] | htole32(source_word(0x40))));
+	assert(buffer_words[row] == neutral[row]);
+	assert(buffer_words[row + 2] == (neutral[row + 2] | htole32(source_word(0x40))));
 
 	render(&buffer, &renderer, &phase, true);
-	assert(buffer_words[row] == (renderer.neutral[row] | htole32(source_word(0x55))));
+	assert(buffer_words[row] == (neutral[row] | htole32(source_word(0x55))));
 	renderer.rows[0] = (struct span_range){ 0, 0 };
 	render(&buffer, &renderer, &phase, false);
-	assert(!memcmp(buffer_words + HEADER_WORDS, renderer.neutral + HEADER_WORDS,
+	assert(!memcmp(buffer_words + HEADER_WORDS, neutral + HEADER_WORDS,
 		       FRAME_BYTES - SUN5I_EINK_HDR_SIZE));
 }
 
@@ -65,9 +71,9 @@ static void test_render_equivalence(void)
 	struct buffer candidate = { .data = candidate_words };
 	struct phase phase = { .scans = 4 };
 	renderer.group_codes = codes;
-	scan_template(renderer.neutral);
-	memcpy(reference_words, renderer.neutral, FRAME_BYTES);
-	memcpy(candidate_words, renderer.neutral, FRAME_BYTES);
+	init_neutral_data(&renderer);
+	scan_template(reference_words);
+	scan_template(candidate_words);
 	for (unsigned int pass = 0; pass < 12; pass++) {
 		memset(renderer.rows, 0, sizeof(renderer.rows));
 		memset(renderer.transitions, 0, sizeof(renderer.transitions));
@@ -106,6 +112,37 @@ static void test_render_equivalence(void)
 	assert(index_groups(&renderer) == 0);
 }
 
+static void set_cached_signal(struct cached_update *cache, unsigned int phase,
+			      unsigned int transition, uint8_t signal)
+{
+	unsigned int shift = 2 * (transition % 4);
+	uint8_t *byte = &cache->lut[phase * LUT_BYTES + transition / 4];
+	*byte = (*byte & ~(3u << shift)) | ((signal & 3u) << shift);
+}
+
+static void test_packed_cache(void)
+{
+	static struct renderer renderer;
+	struct cached_update *cache = &renderer.cache[GC16];
+	bool active[TRANSITIONS];
+	cache->count = 2;
+	for (unsigned int t = 0; t < TRANSITIONS; t++) {
+		active[t] = t % 2;
+		for (unsigned int i = 0; i < cache->count; i++) {
+			set_cached_signal(cache, i, t, (t + i) % 3);
+			assert(packed_signal(cache->lut + i * LUT_BYTES, t) == (t + i) % 3);
+		}
+	}
+	for (unsigned int filtered = 0; filtered < 2; filtered++) {
+		plan(&renderer, GC16, filtered ? active : NULL);
+		assert(renderer.planned.count == 2);
+		for (unsigned int i = 0; i < cache->count; i++)
+			for (unsigned int t = 0; t < TRANSITIONS; t++)
+				assert(renderer.planned.phases[i].lut[t] ==
+				       (!filtered || active[t] ? (t + i) % 3 : 0));
+	}
+}
+
 static void test_waveform_policy(void)
 {
 	static struct renderer renderer;
@@ -114,11 +151,11 @@ static void test_waveform_policy(void)
 	assert(!supports(&renderer, DU, active));
 	assert(supports(&renderer, GC16, active));
 	renderer.cache[GC16].count = 4;
-	renderer.cache[GC16].phases[0].lut[0x8f] = 1;
-	renderer.cache[GC16].phases[1].lut[0x8f] = 1;
-	renderer.cache[GC16].phases[1].lut[0x12] = 2;
-	renderer.cache[GC16].phases[2].lut[0x8f] = 2;
-	renderer.cache[GC16].phases[3].lut[0x8f] = 1;
+	set_cached_signal(&renderer.cache[GC16], 0, 0x8f, 1);
+	set_cached_signal(&renderer.cache[GC16], 1, 0x8f, 1);
+	set_cached_signal(&renderer.cache[GC16], 1, 0x12, 2);
+	set_cached_signal(&renderer.cache[GC16], 2, 0x8f, 2);
+	set_cached_signal(&renderer.cache[GC16], 3, 0x8f, 1);
 	plan(&renderer, GC16, active);
 	assert(renderer.planned.count == 3);
 	assert(renderer.planned.phases[0].scans == 2);
@@ -147,11 +184,44 @@ static void test_fast_mode_selection(void)
 	assert(select_a2_or_du(&renderer, active) == DU);
 }
 
+static void test_state_format(void)
+{
+	static uint8_t before[PACKED_PIXELS], after[PACKED_PIXELS];
+	for (size_t i = 0; i < PIXELS; i++)
+		nibble_set(before, i, (i ^ (i / WIDTH)) & WHITE);
+	FILE *file = tmpfile();
+	assert(file);
+	assert(write_state_data(file, before));
+	assert(ftell(file) == PIXELS);
+	rewind(file);
+	for (unsigned int gate = 0; gate < GATES; gate++)
+		for (unsigned int source = 0; source < SOURCES; source++)
+			assert(fgetc(file) == nibble_get(before, portrait_index(gate, source)));
+	rewind(file);
+	assert(read_state_data(file, after));
+	assert(!memcmp(before, after, PACKED_PIXELS));
+	assert(!fseek(file, 0, SEEK_SET));
+	assert(fputc(WHITE + 1, file) != EOF);
+	rewind(file);
+	assert(!read_state_data(file, after));
+	for (size_t i = 0; i < PIXELS; i++)
+		assert(nibble_get(after, i) == WHITE);
+	fclose(file);
+	file = tmpfile();
+	assert(file);
+	assert(fputc(0, file) != EOF);
+	rewind(file);
+	assert(!read_state_data(file, after));
+	fclose(file);
+}
+
 int main(void)
 {
+	test_state_format();
 	test_quantization();
 	test_sparse_scan();
 	test_render_equivalence();
+	test_packed_cache();
 	test_waveform_policy();
 	test_fast_mode_selection();
     assert(PREVIEW_A2 != PREVIEW && PREVIEW_DU4 != PREVIEW);

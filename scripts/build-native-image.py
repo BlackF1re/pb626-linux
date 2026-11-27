@@ -13,6 +13,10 @@ import subprocess
 import tempfile
 import time
 import zlib
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pb626_sleep_theme import install_sleep_theme
 
 SECTOR = 512
 USER_SIZE = 15269888 * SECTOR
@@ -115,15 +119,34 @@ def prompt_root_password(hash_file=None):
     require(password == getpass.getpass("Confirm root password: "), "Passwords do not match")
     return subprocess.check_output(["openssl", "passwd", "-6", "-stdin"], input=password + "\n", text=True).strip()
 
+def validate_native_init(root):
+    identity = regular(root / "etc/pb626-image-id").read_text().strip()
+    if identity == "pb626-native-debian13-armhf-v1":
+        # Do not follow the image's absolute symlinks into the build host.
+        init = root / "sbin/init"
+        require(init.is_symlink() and os.readlink(init) in (
+            "/lib/systemd/systemd", "/usr/lib/systemd/systemd",
+            "../lib/systemd/systemd", "../usr/lib/systemd/systemd",
+        ), "Debian PID 1 symlink missing")
+        require((root / "usr/lib/systemd/systemd").is_file()
+                and (root / "usr/lib/systemd/system/pb626-desktop.service").is_file()
+                and (root / "var/lib/dpkg/status").is_file(), "Debian native system incomplete")
+    else:
+        require(identity == "pb626-native-alpine-openrc-v2", "Unrecognized native image identity")
+        require((root/"etc/inittab").is_file() and (root/"sbin/openrc").is_file()
+                and (root/"etc/init.d/pb626-desktop").is_file(), "OpenRC native init missing")
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--backup", type=Path, required=True, help="Verified original or current full dump")
-    p.add_argument("--system", type=Path, required=True, help="pb626-native-system CI artifact")
+    p.add_argument("--system", type=Path, required=True, help="Verified pb626-native-system or pb626-native-debian13-armhf CI artifact")
     p.add_argument("--spl", type=Path, required=True, help="Exact verified BT0-uncaged.bin")
     p.add_argument("--waveform", type=Path, required=True, help="Owner's original default.wbf")
+    p.add_argument("--sleep-theme", type=Path, help="Optional original Line.pbt (default: preserved stock p8)")
     p.add_argument("--output", type=Path, required=True, help="New private directory")
     p.add_argument("--expected-cid", help="Original CID for a legacy backup")
     p.add_argument("--root-password-hash-file", type=Path, help="Private SHA-512 crypt hash file for noninteractive installation")
+    p.add_argument("--experimental-sd", action="store_true", help="Opt in to the unqualified native MMC0 SD profile; retain FEL recovery")
     p.add_argument("--accept-replace-p1", action="store_true", help="Replace p1 including all existing user data")
     a = p.parse_args()
     require(a.accept_replace_p1, "Explicit --accept-replace-p1 required")
@@ -157,10 +180,10 @@ def main():
     require(digest(a.spl) == SPL, "Not the hardware-tested SPL")
     require(digest(regular(a.waveform)) == WBF, "Not the validated factory waveform")
     syschecks = manifest(a.system)
-    raw = checked(a.system,syschecks,"raw-linux.img")
+    raw = checked(a.system,syschecks,"pb626-raw-linux-sd.img" if a.experimental_sd else "raw-linux.img")
     require(raw.stat().st_size <= 0x800000+512, "Raw image too large")
     validate_raw(raw.read_bytes())
-    dtb = checked(a.system,syschecks,"pb626-elan-emmc-native.dtb")
+    dtb = checked(a.system,syschecks,"pb626-elan-emmc-native-sd.dtb" if a.experimental_sd else "pb626-elan-emmc-native.dtb")
     kernel = checked(a.system,syschecks,"pb626-native-zImage")
     def padded(p):
         data=p.read_bytes()
@@ -168,9 +191,14 @@ def main():
     data=raw.read_bytes()
     n=struct.unpack_from(">I",data,12)[0]
     require(data[64:64+n].endswith(padded(kernel)+padded(dtb)), "Raw image/kernel/DTB mismatch")
-    for path,status in [("/soc/mmc@1c0f000","disabled"),("/soc/mmc@1c11000","okay")]:
+    for path,status in [("/soc/mmc@1c0f000","okay" if a.experimental_sd else "disabled"),("/soc/mmc@1c11000","okay")]:
         value=subprocess.check_output(["fdtget","-t","s",str(dtb),path,"status"],text=True).strip()
         require(value==status,"Unsafe native DTB storage configuration")
+    if a.experimental_sd:
+        node = "/soc/mmc@1c0f000"
+        require(subprocess.check_output(["fdtget","-t","u",str(dtb),node,"max-frequency"],text=True).strip() == "12500000", "Unexpected SD clock limit")
+        for prop in ("no-1-8-v","disable-wp","no-mmc","no-sdio"):
+            subprocess.run(["fdtget",str(dtb),node,prop],check=True)
     subprocess.run(["fdtget",str(dtb),"/chosen","pb626,emmc-root"],check=True)
     release=checked(a.system,syschecks,"KERNELRELEASE").read_text().strip()
     require(re.fullmatch(r"[A-Za-z0-9._+-]+",release),"Invalid kernel release")
@@ -182,12 +210,16 @@ def main():
         root.mkdir()
         subprocess.run(["tar","--numeric-owner","-xzf",str(archive.resolve()),"-C",str(root)],check=True)
         require((root/"lib/modules"/release/"modules.dep").is_file(),"Kernel modules missing")
-        require((root/"etc/inittab").is_file() and (root/"sbin/openrc").is_file() and (root/"etc/init.d/pb626-desktop").is_file(), "OpenRC native init missing")
+        validate_native_init(root)
         set_root_password(root, prompt_root_password(a.root_password_hash_file))
         wave=root/"lib/firmware/pb626/default.wbf"
         wave.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(a.waveform,wave)
         wave.chmod(0o644)
+        if (root / "etc/pb626-image-id").read_text().strip() == "pb626-native-debian13-armhf-v1":
+            if a.sleep_theme is not None:
+                regular(a.sleep_theme, 770198)
+            install_sleep_theme(source, wave.parent, a.sleep_theme)
         fs=work/"p1.ext4"
         with fs.open("wb") as f:
             f.truncate(P1_SIZE*SECTOR)

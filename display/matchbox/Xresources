@@ -14,8 +14,8 @@ XTerm*VT100.colorBDMode: false
 XTerm*VT100.colorULMode: false
 XTerm*VT100.colorBLMode: false
 XTerm*VT100.colorRVMode: false
-XTerm*VT100.highlightColor: #bbbbbb
-XTerm*VT100.highlightTextColor: black
+XTerm*VT100.highlightColor: black
+XTerm*VT100.highlightTextColor: white
 XTerm*VT100.highlightColorMode: true
 XTerm*resizeGravity: SouthWest
 XTerm*VT100.scrollBar: true
@@ -28,14 +28,14 @@ XTerm*VT100*scrollbar.translations: #override \n\
     <Btn1Motion>: MoveThumb() NotifyThumb()
 NEdit*textFont: -*-fixed-bold-r-normal-*-14-*-*-*-*-*-iso10646-1
 NEdit*highlightSyntax: False
-NEdit*background: #eeeeee
+NEdit*background: white
 NEdit*foreground: black
 NEdit*textFgColor: black
 NEdit*textBgColor: white
 NEdit*selectFgColor: white
 NEdit*selectBgColor: black
 NEdit*hiliteFgColor: black
-NEdit*hiliteBgColor: #bbbbbb
+NEdit*hiliteBgColor: white
 NEdit*cursorFgColor: black
 NEdit*lineNumFgColor: #444444
 NEdit*text.foreground: black
@@ -46,6 +46,6 @@ XCalc*font: 7x14
 XCalc*foreground: black
 XCalc*background: white
 XCalc*Command.foreground: black
-XCalc*Command.background: #eeeeee
+XCalc*Command.background: white
 XCalc*Toggle.foreground: black
-XCalc*Toggle.background: #dddddd
+XCalc*Toggle.background: white

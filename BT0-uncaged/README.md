@@ -35,3 +35,22 @@ use the offline image builder and verified full restore as described in
 complete original backup and the local FEL inputs. Normal cold boot and
 Menu FEL worked on the tested installed SPL; independent recovery when
 SPL itself fails is unproven. See [boot contract](../docs/BOOT.md).
+
+Deep sleep remains gated on a matching nondestructive DRAM resume path; see
+[resume compatibility contract](RESUME.md).
+
+## Recovering the original lab SPL from the installed uncaged binary
+
+If the original input is lost but the exact tested 24576-byte BT0-uncaged.bin
+is available, reverse the documented binary changes:
+
+    python3 BT0-uncaged/build.py --recover-base BT0-uncaged.bin pb626-spl.bin
+
+Or extract the installed SPL from an existing verified **native** user-area
+backup (not stock):
+
+    dd if=pb626-emmc-user.img of=BT0-uncaged.bin bs=512 skip=16 count=48
+    python3 BT0-uncaged/build.py --recover-base BT0-uncaged.bin pb626-spl.bin
+
+Both intermediate and final SHA-256 checks must match. This does not recover
+U-Boot source or establish deep resume. No device writes are performed.

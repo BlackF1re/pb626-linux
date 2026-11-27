@@ -1,0 +1,130 @@
+#!/bin/sh
+# Minimal Debian-package RAM recovery. Never mount or enable writes to MMC.
+set -eu
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin HOME=/root TERM=vt100
+export PS1='PB626 recovery # '
+fatal() { echo "PB626 recovery: $*" >/dev/kmsg; while :; do sleep 60; done; }
+mount -t proc proc /proc || fatal proc
+grep -q ' /dev devtmpfs ' /proc/mounts || mount -t devtmpfs devtmpfs /dev || fatal devtmpfs
+mount -t sysfs sysfs /sys || fatal sysfs
+mount -t tmpfs -o mode=0755,size=24m tmpfs /run || fatal run
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts || fatal devpts
+test -f /sys/firmware/devicetree/base/chosen/pb626,emmc-backup || fatal 'wrong DTB'
+test ! -e /sys/firmware/devicetree/base/chosen/pb626,emmc-root || fatal 'native DTB'
+disk=/dev/mmcblk2
+cp /usr/libexec/pb626-restore-fast.sh /run/pb626-restore-fast.sh
+cp /usr/libexec/pb626-restore-scan /run/pb626-restore-scan
+
+# Diagnose a damaged or absent eMMC over ACM, rather than withholding the
+# console. The transfer protocol independently rejects unready storage.
+storage_init() {
+    for n in $(seq 1 30); do
+        [ -b "$disk" ] && [ -b "${disk}boot0" ] && [ -b "${disk}boot1" ] && break
+        sleep 1
+    done
+    if [ -b "$disk" ]; then
+        if [ "$(cat /sys/class/block/mmcblk2/device/name)" = 8WPD3R ]; then
+            ok=yes
+            for node in "$disk" "${disk}boot0" "${disk}boot1" "$disk"p[0-9]*; do
+                [ -b "$node" ] || continue
+                if ! blockdev --setro "$node" || [ "$(blockdev --getro "$node")" != 1 ]; then
+                    ok=no
+                fi
+            done
+            if [ "$ok" = yes ] && PB626_STORAGE_INIT=1 /bin/sh /usr/libexec/pb626-restore-fast.sh probe >/run/board-id; then
+                touch /run/pb626-emmc-ready
+            fi
+        fi
+    fi
+    if [ ! -e /run/pb626-emmc-ready ]; then
+        echo 'PB626 recovery: eMMC unavailable or preflight failed; ACM diagnostic access remains' >/dev/kmsg
+    fi
+}
+sd_init() {
+    if [ -e /sys/firmware/devicetree/base/chosen/pb626,sd-backup ]; then
+        ok=yes
+        for card in /sys/bus/mmc/devices/mmc0:*/block/mmcblk*; do
+            [ -d "$card" ] || continue
+            for node in "/dev/${card##*/}" "/dev/${card##*/}"p[0-9]*; do
+                [ -b "$node" ] || continue
+                if ! blockdev --setro "$node"; then ok=no; fi
+            done
+        done
+        if [ "$ok" = yes ]; then touch /run/pb626-sd-ready; fi
+    fi
+}
+mount -t configfs configfs /sys/kernel/config || fatal configfs
+g=/sys/kernel/config/usb_gadget/pb626
+mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/acm.usb0" || fatal gadget
+echo 0x0525 >"$g/idVendor"
+echo 0xa4a7 >"$g/idProduct"
+echo 0x02 >"$g/bDeviceClass"
+echo 0x02 >"$g/bDeviceSubClass"
+echo 0x00 >"$g/bDeviceProtocol"
+echo PB626RECOVERY >"$g/strings/0x409/serialnumber"
+echo PocketBook >"$g/strings/0x409/manufacturer"
+echo 'PB626 Debian recovery' >"$g/strings/0x409/product"
+echo 'ACM recovery' >"$g/configs/c.1/strings/0x409/configuration"
+ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
+# Composite ACM (emergency shell) + NCM (all routine bulk transfers).
+# If NCM cannot be created, preserve the diagnostic ACM rather than hiding it.
+ncm=no
+if mkdir "$g/functions/ncm.usb0" &&
+   echo 02:50:42:62:60:01 >"$g/functions/ncm.usb0/dev_addr" &&
+   echo 02:50:42:62:60:02 >"$g/functions/ncm.usb0/host_addr" &&
+   ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/ncm.usb0"; then
+    # IAD composite class is needed for Windows composite enumeration.
+    echo 0xef >"$g/bDeviceClass"
+    echo 0x02 >"$g/bDeviceSubClass"
+    echo 0x01 >"$g/bDeviceProtocol"
+    echo 'ACM + NCM recovery' >"$g/configs/c.1/strings/0x409/configuration"
+    ncm=yes
+else
+    rm -f "$g/configs/c.1/ncm.usb0"
+    echo 'PB626 recovery: NCM unavailable; ACM diagnostics only' >/dev/kmsg
+fi
+bind_udc() {
+    for n in $(seq 1 "$1"); do
+        for udc in /sys/class/udc/*; do
+            [ -d "$udc" ] || continue
+            if echo "${udc##*/}" >"$g/UDC"; then return 0; fi
+        done
+        sleep 1
+    done
+    return 1
+}
+if ! bind_udc 5; then
+    if test "$ncm" = yes; then
+        # An endpoint allocation error must not take out emergency ACM.
+        printf '\n' >"$g/UDC" 2>/dev/null || :
+        rm -f "$g/configs/c.1/ncm.usb0"
+        echo 0x02 >"$g/bDeviceClass"
+        echo 0x02 >"$g/bDeviceSubClass"
+        echo 0x00 >"$g/bDeviceProtocol"
+        echo 'ACM recovery' >"$g/configs/c.1/strings/0x409/configuration"
+        ncm=no
+        echo 'PB626 recovery: composite bind failed; using emergency ACM' >/dev/kmsg
+    fi
+    bind_udc 30 || fatal 'no UDC'
+fi
+# USB enumerates first; storage failure cannot prevent a shell.
+storage_init &
+sd_init &
+if test "$ncm" = yes; then
+    if ip link set usb0 up && ip addr add 169.254.62.1/30 dev usb0; then
+        /usr/libexec/pb626-netd </dev/null >/dev/kmsg 2>&1 &
+    else
+        echo 'PB626 recovery: USB network setup failed' >/dev/kmsg
+    fi
+fi
+for led in /sys/class/leds/*; do
+    [ -w "$led/trigger" ] && echo heartbeat >"$led/trigger" || :
+done
+cd /root
+while :; do
+    if [ -c /dev/ttyGS0 ]; then
+        setsid -c sh -c 'printf "\r\nPB626 Debian 13 RAM recovery (storage: /run/pb626-*-ready)\r\n"; exec sh -i' </dev/ttyGS0 >/dev/ttyGS0 2>&1 || :
+    fi
+    sleep 1
+done

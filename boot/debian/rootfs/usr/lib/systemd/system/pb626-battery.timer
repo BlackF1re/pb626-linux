@@ -1,0 +1,14 @@
+[Unit]
+Requires=pb626-boot-select.service
+After=pb626-boot-select.service
+ConditionPathExists=/run/pb626-normal-boot
+Description=Fallback battery telemetry check (power_supply uevents also trigger it)
+ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=60s
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

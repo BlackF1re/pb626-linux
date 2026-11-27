@@ -3,6 +3,7 @@
 #define PB626_EPD_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include <time.h>
 
 enum { WIDTH = 758, HEIGHT = 1024, PIXELS = WIDTH * HEIGHT, WHITE = 15 };
@@ -14,13 +15,25 @@ struct shared_frame {
 	uint8_t pixels[PIXELS];
 };
 
+/* Logical levels and saturated counters are nibbles; IPC samples
+ * remain bytes because KEEP and SCRUB cannot alias gray levels. */
+enum { PACKED_PIXELS = (PIXELS + 1) / 2 };
+static inline uint8_t nibble_get(const uint8_t *data, size_t i)
+{
+	return (data[i >> 1] >> ((i & 1) * 4)) & 15;
+}
+static inline void nibble_set(uint8_t *data, size_t i, uint8_t value)
+{
+	unsigned int shift = (i & 1) * 4;
+	data[i >> 1] = (data[i >> 1] & ~(15u << shift)) | ((value & 15u) << shift);
+}
 static inline void tile_bounds(int tx, int ty, int *right, int *bottom)
 {
 	*right = tx + 1 == TILE_COLS ? WIDTH : (tx + 1) * TILE;
 	*bottom = ty + 1 == TILE_ROWS ? HEIGHT : (ty + 1) * TILE;
 }
 enum command { PREVIEW = 'D', PREVIEW_A2 = 'A', PREVIEW_DU4 = '4',
-               SETTLE = 'L', CLEAN = 'G', RESET = 'R', INIT_PANEL = 'I' };
+               SETTLE = 'L', CLEAN = 'G', RESET = 'R', INIT_PANEL = 'I', RELEASE_QUEUE = 'Q' };
 /* Stock DU4 targets only 0, 5, 10 and 15. */
 static inline uint8_t preview_level4(uint8_t target)
 {

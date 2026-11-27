@@ -65,9 +65,21 @@ PIN32 is required: the first 85 data clocks assert G_CLK and first/subsequent ga
 
 ### Application-level high contrast
 
-Keep the original Xorg 24-bit visual, grayscale profiles and all 16 physical
-levels. Do not force binary quantization: pictures, antialiased text and
-gray UI states must retain their luminance. Instead, publish neutral X11
+Keep Xorg color visuals and all 16 physical levels by default. The optional
+`mono` profile, selectable in Settings, thresholds the entire X11 image
+at luminance 128, disables dithering and contrast analysis, and emits only
+black and white. Use it for terminal work or text-heavy UI; switch back to
+`balanced` or `photo` for pictures and antialiased content. Sleep and
+shutdown images are composed separately and retain grayscale. Settings
+also exposes `du`, `auto`, `a2`, and `du4` fast waveform policies. The
+default remains DU. `auto` chooses DU4 when every changed target is
+exactly one of 0, 5, 10, 15 and at least one is gray. Otherwise it uses
+the DU preview, with A2 only for compatible binary transitions when the
+temperature-specific waveform is shorter. The worker still validates the
+actual WBF and falls back to GL16/GC16 for unsupported DU4 transitions.
+Unchanged gray pixels in dirty tiles are never quantized by DU4. Neither
+this selector nor the mono profile requires application changes. The
+session also publishes neutral X11
 resource defaults using xrdb before launching desktop clients
 (`/etc/X11/pb626.Xresources`), including XTerm, NEdit and XCalc. The
 existing Matchbox theme, keyboard patch, `mc -b` and `htop -C` remain.
@@ -82,5 +94,118 @@ Qt does not have a universal monochrome setting in this Matchbox session;
 select a verified monochrome palette when adding a Qt application.
 The new settings require visual acceptance testing on the RAM desktop.
 
-No claim that scanout ACK alone establishes optical quality. Stock
-advanced HQ/shadow filters and full optical calibration remain unimplemented.
+No claim that scanout ACK alone establishes optical quality. The stock
+HQ/Shadow mechanisms have now been identified at the transition-mask
+level; their opt-in adaptations below are not a full factory driver port.
+
+### Optional white halo filters (experimental)
+
+Evidence: factory epdc.ko SHA-256
+9e1c18a44cd79679ad776213e38b734d52305dd905cc81e866bfb35fae8556d2.
+The unstripped ARM ELF uses two interleaved byte planes in blocks of
+eight pixels. enqueue_ur_neon (0x3d24) compares the old high nibble of
+the transition plane with the new framebuffer high nibble; on enqueue
+it stores the old level in the low nibble and target in the high nibble,
+and writes the active LUT selector into the other plane. The scan
+routine at 0x3c4c masks each waveform lookup by equality of that selector
+to the current LUT number. Zeroing the selector therefore suppresses
+the selected update rather than changing the stored image.
+
+HQ (0x47e8) combines horizontal neighbour bytes with vertical neighbour
+bytes; VSLI #4 takes their low nibbles into the test for FF. It clears
+the selector for white-to-white pixels surrounded by old white.
+Shadow (0x48b8) ANDs the transition plane against the table at 0x496c,
+then clears the selector where the result equals FF. Four stages
+alternate which row and which byte parity are kept; the alternating
+mask shifts by one byte per eight source pixels and per row pair.
+The stock update call site selects HQ or Shadow, not both.
+
+The bridge's candidate adapts these rules only to **optional same-level
+white halos** of its existing local GC16 cleanup. Pixels whose fast
+transition count reached the mandatory threshold are always scrubbed.
+Changed pixels, INIT, RESET, SETTLE, sleep and the power-off image are
+unaffected. Nonwhite halo behavior is unchanged. HQ conservatively
+keeps panel-border pixels; Shadow anchors the pattern to physical
+gate/source coordinates rather than the stock rectangle origin and
+advances only after ACK. These are deliberate differences from the
+factory multi-LUT engine, whose scheduling and overlapping updates
+have not been replicated.
+
+Default: no filter. To opt into a measured candidate after qualification,
+create /etc/pb626/halo-filter-qualified and set
+PB626_EPD_HALO_FILTER=hq or shadow in a desktop service drop-in,
+then restart the desktop. Remove the marker or set none to revert.
+Compare residual edge shadows and white reflectance after repeated
+typing, scrolling and manual cleanup; never qualify from scanout ACK
+or host tests alone. Host tests prove each white pixel belongs to one
+of four retained phases and mandatory scrub cannot be suppressed.
+
+### Bounded grayscale starvation
+
+An incomplete fast preview keeps its pending age even when other pixels
+are successfully updated. After 850 ms of unresolved changes, the next
+preview candidate becomes SETTLE (GL16, with the existing GC16 fallback).
+A fully resolved binary frame clears that age, so continuous binary
+typing does not itself force periodic grayscale updates. The deadline is
+a scheduling bound, not a physical latency guarantee: capture and scanout
+take time. This deliberately trades some motion responsiveness for eventual
+gray accuracy in mixed-content animation. No changes to waveform tables,
+transition eligibility, panel timing or the ghosting counters.
+
+### Packed waveform temperature cache
+
+Keep the original WBF two-bit transition signals in the six decoded mode
+caches. Expand only the active update plan before rendering. This removes
+301,056 bytes of fixed cache allocation (294 KiB) and the 16 KiB decode
+scratch array, without changing the per-pixel PIN32 render loop, waveform
+eligibility, repeat merging, temperature selection or the shared protocol.
+The host regression checks all 256 transition indices, active filtering and
+phase merging. Actual RSS savings depend on how many waveform pages were
+resident; compare PSS and update timings on hardware.
+
+### NEON and binary keyboard
+
+The ARMv7 bridge builds with NEON for exact four-neighbour L1 contrast.
+RGB565 binary blocks and neutral RGBX blocks (when the gray tone table
+is the identity) also use eight-pixel SIMD conversion. Mixed colors,
+nonidentity tone curves and short tails retain the scalar reference.
+Regression tests compare both paths on unaligned partial rows and all
+profiles; throughput still needs Cortex-A8 measurements.
+Scalar tails and reference tests preserve all gray profiles and dither.
+The keyboard uses black backgrounds, white non-antialiased labels and a
+small white pressed outline. Existing DU and per-pixel cleanup apply to
+binary changes without a separate keyboard renderer. Benchmark Cortex-A8
+before claiming a speedup; the waveform and cleanup policy are unchanged.
+
+### Experimental shared-framebuffer DDX
+
+Trixie ships Dummy 0.4.0 (source package version 1:0.4.0-1). The native
+build fetches that signed Debian source, applies
+display/xorg-dummy-pb626-shared.patch without fuzzy matching and compiles
+against the target Xorg development headers. It installs the private
+dummy_drv.so under /usr/lib/pb626/xorg/drivers, leaving Debian's normal
+module untouched. Source licenses are retained in the runtime package.
+The existing Xorg software framebuffer is backed by a root-only shared
+file in the service RuntimeDirectory; no additional screen-sized buffer.
+The file is published atomically after ScreenInit, never truncated in
+place, and geometry/masks are updated on RandR resize. The bridge opens
+it read-only and verifies file ownership, size, ABI, geometry, bounds,
+color masks and depth. It grabs the X server only while processing a
+capture strip, not during waveform calculation or physical scanout.
+Invalid mappings fall back to XGetImage, and ordinary mode still uses
+MIT-SHM. The private module is not selected by default.
+
+Only the native Debian managed service can select it, via a root-owned
+/etc/pb626/ddx-shared-qualified marker. Removing the marker and restarting
+returns to the unmodified driver. A failed candidate must not be treated
+as proof that a different board's Xorg ABI is compatible. Host Xvfb tests
+exercise the bridge using a synthetic shared pixmap derived from XGetImage,
+with 16- and 24-bit depths, partial regions and nonzero offsets. This is
+not yet an actual private-module Xorg integration test. Before enabling
+by default, compare full and partial frames (including RandR, cursor,
+window exposure, fonts and lock/resume) with XGetImage on the real Xorg
+server. Measure PSS, capture/quantization latency, input delay during the
+server grab, and behavior on server restart. The mapped path removes the
+server-to-SHM copy and the ordinary SHM strip allocation when the mapping
+is present; X server grab duration can offset that benefit. No claim of
+speedup or physical validation is made.

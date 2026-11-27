@@ -1,0 +1,19 @@
+name: Full firmware qualification (pre-merge)
+
+# No ordinary code commit triggers this expensive build.
+on:
+  push:
+    branches: [enhance/native-reliability]
+    paths:
+      - '.github/firmware-build-request'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full:
+    uses: ./.github/workflows/megi-fel.yml
+    secrets: inherit
+    with:
+      debian_only: false

@@ -47,16 +47,17 @@ static void read_exact(int fd, unsigned char *buffer, size_t length)
     }
 }
 
-static void hash_block(int session, const unsigned char *buffer, bool last_block)
+static void hash_block(int session, const unsigned char *buffer, size_t length, bool last_block)
 {
-    for (size_t offset = 0; offset < BLOCK_SIZE; offset += HASH_INPUT) {
-        int flags = last_block && offset + HASH_INPUT == BLOCK_SIZE ? 0 : MSG_MORE;
+    for (size_t offset = 0; offset < length; offset += HASH_INPUT) {
+        size_t bytes = length - offset < HASH_INPUT ? length - offset : HASH_INPUT;
+        int flags = last_block && offset + bytes == length ? 0 : MSG_MORE;
         ssize_t count;
 
         do {
-            count = send(session, buffer + offset, HASH_INPUT, flags);
+            count = send(session, buffer + offset, bytes, flags);
         } while (count < 0 && errno == EINTR);
-        if (count != HASH_INPUT) {
+        if (count < 0 || (size_t)count != bytes) {
             if (count >= 0)
                 errno = EIO;
             fail("AF_ALG send");
@@ -91,14 +92,22 @@ int main(int argc, char **argv)
     };
     char *end;
 
-    if (argc != 4 || (strcmp(argv[1], "scan") && strcmp(argv[1], "verify"))) {
-        fprintf(stderr, "Usage: %s scan|verify device blocks\n", argv[0]);
+    if ((argc != 4 && argc != 5) || (strcmp(argv[1], "scan") && strcmp(argv[1], "verify"))) {
+        fprintf(stderr, "Usage: %s scan|verify device blocks [last-block-bytes]\n", argv[0]);
         return EXIT_FAILURE;
     }
     long blocks = strtol(argv[3], &end, 10);
-    if (*end || blocks < 1 || blocks > 1864) {
+    if (*end || blocks < 1 || blocks > (argc == 5 ? 262144 : 1864)) {
         fprintf(stderr, "Invalid block count\n");
         return EXIT_FAILURE;
+    }
+    long tail = BLOCK_SIZE;
+    if (argc == 5) {
+        tail = strtol(argv[4], &end, 10);
+        if (*end || tail < 512 || tail > BLOCK_SIZE || tail % 512) {
+            fprintf(stderr, "Invalid final block length\n");
+            return EXIT_FAILURE;
+        }
     }
     bool scan = !strcmp(argv[1], "scan");
 
@@ -117,8 +126,9 @@ int main(int argc, char **argv)
 
     setvbuf(stdout, NULL, _IOLBF, 0);
     for (long index = 0; index < blocks; index++) {
-        read_exact(disk, buffer, BLOCK_SIZE);
-        hash_block(session, buffer, scan || index + 1 == blocks);
+        size_t length = index + 1 == blocks ? (size_t)tail : BLOCK_SIZE;
+        read_exact(disk, buffer, length);
+        hash_block(session, buffer, length, scan || index + 1 == blocks);
         if (scan) {
             printf("BLOCK %ld ", index);
             print_digest(session);

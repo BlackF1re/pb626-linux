@@ -24,18 +24,17 @@ boot_source=RAM
 log "$boot_source Linux reached PID 1, kernel $(uname -r)"
 # PE8 LED gives read-only boot status without UART/USB. Do not touch
 # other GPIOs or eMMC. Linux triggers are implemented by the kernel.
+# The board DTS names its physical PE8 power indicator "led". Never alter
+# peripheral LEDs registered later by drivers such as rtl8xxxu.
+power_led=/sys/class/leds/led
 led_pattern() {
-  for led in /sys/class/leds/*; do
-    [ -w "$led/trigger" ] || continue
-    echo timer > "$led/trigger" 2>/dev/null || true
-    echo "$1" > "$led/delay_on" 2>/dev/null || true
-    echo "$2" > "$led/delay_off" 2>/dev/null || true
-  done
+  [ -w "$power_led/trigger" ] || return 0
+  echo timer > "$power_led/trigger" 2>/dev/null || return 0
+  [ ! -w "$power_led/delay_on" ] || echo "$1" > "$power_led/delay_on" 2>/dev/null || true
+  [ ! -w "$power_led/delay_off" ] || echo "$2" > "$power_led/delay_off" 2>/dev/null || true
 }
 led_heartbeat() {
-  for led in /sys/class/leds/*; do
-    [ -w "$led/trigger" ] && echo heartbeat > "$led/trigger" 2>/dev/null || true
-  done
+  [ -w "$power_led/trigger" ] && echo heartbeat > "$power_led/trigger" 2>/dev/null || true
 }
 # 150/150 = PID1 reached; later LED codes diagnose the gadget stage.
 led_pattern 150 150

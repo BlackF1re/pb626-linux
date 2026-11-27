@@ -1,0 +1,17 @@
+[Unit]
+Description=Draw the persistent PocketBook power-off screen
+DefaultDependencies=no
+ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
+ConditionPathExists=/lib/firmware/pb626/default.wbf
+After=local-fs.target pb626-desktop.service pb626-charge.service
+Before=shutdown.target umount.target poweroff.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/pb626-admin poweroff-screen
+# The paired kernel parks the panel synchronously on renderer close and
+# again at device shutdown if needed; no arbitrary userspace rail delay.
+TimeoutStartSec=65s
+
+[Install]
+WantedBy=poweroff.target

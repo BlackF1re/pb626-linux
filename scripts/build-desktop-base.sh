@@ -29,7 +29,7 @@ build_userspace() {
   in_root() { sudo chroot desktop-root /usr/bin/qemu-arm-static "$@"; }
   in_root /sbin/apk add --no-cache \
     xf86-video-dummy xf86-input-evdev xinit xauth xset xsetroot xdotool libxtst libxdamage \
-    libxfont2 pixman nettle libxcvt libpciaccess libxft harfbuzz libpng libjpeg-turbo libxcursor libxfixes libfakekey \
+    libxfont2 pixman nettle libxcvt libpciaccess libxft harfbuzz libpng libjpeg-turbo libxcursor libxfixes libxrandr libfakekey \
     xorg-server-common libxau libxdmcp libxshmfence libdrm eudev-libs \
     xkbcomp xkeyboard-config font-misc-misc font-cursor-misc font-liberation \
     xterm mc nedit xcalc htop

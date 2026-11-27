@@ -24,14 +24,17 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$BundleDir,
-    [ValidateSet('elan-display','elan-emmc-backup')][string]$Variant='elan-display',
+    [ValidateSet('elan-display','elan-emmc-backup','elan-emmc-sd-backup')][string]$Variant='elan-display',
     [ValidateSet('standard','diagnostic')][string]$Profile='standard',
     [string]$Distro='Ubuntu',
+    [string]$LabDir,
+    [switch]$SourceCandidate,
     [switch]$NoExecute
 )
 
 & {
     $ErrorActionPreference='Stop'
+    if ($SourceCandidate -and -not $LabDir) { throw '-SourceCandidate requires -LabDir pointing to the source CI artifact' }
 
     foreach ($cmd in @('wsl.exe','usbipd.exe')) {
         if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
@@ -90,7 +93,13 @@ param(
     $argsLinux=@($wslLinuxScript,$wslBundle,$Variant,$Profile)
     if ($NoExecute) { $argsLinux+='--no-execute' }
     Write-Host "Starting RAM-only Megi: variant=$Variant profile=$Profile"
-    & wsl.exe -d $Distro -u root -- bash @argsLinux
+    if ($LabDir) {
+        $lab=ConvertTo-WslPath $LabDir
+        $candidateFlag=[int]$SourceCandidate.IsPresent
+        & wsl.exe -d $Distro -u root -- env "PB626_LAB_DIR=$lab" "PB626_FEL_TOOL=$lab/sunxi-fel" "PB626_FEL_SOURCE_CANDIDATE=$candidateFlag" bash @argsLinux
+    } else {
+        & wsl.exe -d $Distro -u root -- bash @argsLinux
+    }
     $exit=$LASTEXITCODE
     Write-Host "`nFEL loader exit: $exit (NOT proof of Linux boot)"
     if ($exit -ne 0) { throw "FEL upload/verification failed: exit $exit" }

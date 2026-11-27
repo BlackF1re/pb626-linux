@@ -1,0 +1,17 @@
+[Unit]
+Description=Prepare PocketBook E Ink sleep image and restore desktop on resume
+After=pb626-desktop.service
+# An assertion fails the required start job; a Condition would skip it.
+AssertPathExists=/etc/pb626/suspend-qualified
+Requisite=pb626-desktop.service
+Before=sleep.target systemd-suspend.service
+StopWhenUnneeded=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=125
+TimeoutStopSec=115
+ExecStart=/usr/bin/pb626-x11-epd --sleep-prepare
+# Kernel device PM synchronously parks E Ink and powers off the rails.
+ExecStopPost=/usr/bin/pb626-x11-epd --sleep-resume

@@ -17,3 +17,9 @@
   /delete-property/ linux,initrd-end;
   /delete-property/ pb626,emmc-backup;
 };
+
+/* Native UI exposes every percent of the existing linear PWM range.
+ * Keep zero on first boot and leave the tested pin-off sequence intact. */
+&{/backlight} {
+  num-interpolated-steps = <10>;
+};

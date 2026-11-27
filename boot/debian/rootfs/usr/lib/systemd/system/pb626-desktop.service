@@ -1,0 +1,33 @@
+[Unit]
+Requires=pb626-boot-select.service
+After=pb626-boot-select.service
+ConditionPathExists=/run/pb626-normal-boot
+Description=PocketBook X11 desktop and E Ink renderer
+ConditionPathExists=/proc/device-tree/chosen/pb626,emmc-root
+Wants=pb626-board.service dev-input-pb626_touch.device
+BindsTo=dev-video0.device
+After=local-fs.target systemd-udev-trigger.service pb626-board.service dev-video0.device dev-input-pb626_touch.device
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+RuntimeDirectory=pb626-desktop
+RuntimeDirectoryMode=0750
+ExecStart=/usr/sbin/pb626-native-desktop
+ExecStopPost=-/usr/sbin/pb626-admin lock-indicator awake
+Restart=always
+RestartSec=5s
+TimeoutStopSec=20s
+KillMode=control-group
+OOMPolicy=continue
+MemoryAccounting=yes
+Slice=pb626.slice
+Environment=MALLOC_ARENA_MAX=2
+EnvironmentFile=-/var/lib/pb626/desktop.conf
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pb626-desktop
+
+[Install]
+WantedBy=multi-user.target

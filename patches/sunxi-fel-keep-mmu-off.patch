@@ -1,23 +1,54 @@
 diff --git a/fel.c b/fel.c
 --- a/fel.c
 +++ b/fel.c
-@@ -954,8 +954,15 @@
- 	if (strcmp(header_signature, "eGON.FEL") != 0)
+@@ -955,8 +955,12 @@
  		pr_fatal("SPL: failure code '%s'\n", header_signature);
  
--	/* re-enable the MMU if it was enabled by BROM */
+ 	/* re-enable the MMU if it was enabled by BROM */
 -	if (tt != NULL)
 -		aw_restore_and_enable_mmu(dev, soc_info, tt);
-+	/* PocketBook 626: BROM MMU re-enable after SPL breaks FEL USB access.
-+	 * This override is used only for the RAM-only FEL workflow. In normal
-+	 * operation retain the upstream restore behavior.
-+	 */
 +	if (tt != NULL) {
-+		if (getenv("PB626_FEL_KEEP_MMU_OFF"))
-+			free(tt);
-+		else
-+			aw_restore_and_enable_mmu(dev, soc_info, tt);
-+	}
++        if (getenv("PB626_FEL_KEEP_MMU_OFF"))
++            free(tt);
++        else
++            aw_restore_and_enable_mmu(dev, soc_info, tt);
++    }
  
  	return spl_len;
  }
+@@ -1027,6 +1031,14 @@
+ 	pr_info("Writing image \"%.*s\", %u bytes @ 0x%08X.\n",
+ 		IH_NMLEN, buf + HEADER_NAME_OFFSET, data_size, load_addr);
+ 
++    if (getenv("PB626_FEL_KEEP_MMU_OFF")) {
++        uint8_t probe[16];
++        pr_info("Checking the beginning of DRAM (0x40000000)... ");
++        aw_fel_read(dev, 0x40000000, probe, sizeof(probe));
++        pr_info("OK. Checking the U-Boot destination (0x%08X)... ", load_addr);
++        aw_fel_read(dev, load_addr, probe, sizeof(probe));
++        pr_info("OK.\n");
++    }
+ 	aw_write_buffer(dev, buf + HEADER_SIZE, load_addr, data_size, false);
+ 
+ 	/* keep track of U-Boot memory region in global vars */
+diff --git a/fel_lib.c b/fel_lib.c
+--- a/fel_lib.c
++++ b/fel_lib.c
+@@ -69,7 +69,7 @@
+  * timeout, and "slow" transfers take place at approx. 64 KiB/sec - so we can
+  * expect the maximum chunk being transmitted within 8 seconds or less.
+  */
+-static const int AW_USB_MAX_BULK_SEND = 512 * 1024; /* 512 KiB per bulk request */
++static const int AW_USB_MAX_BULK_SEND = 8 * 1024; /* 8 KiB per bulk request */
+ 
+ static void usb_bulk_send(libusb_device_handle *usb, int ep, const void *data,
+ 			  size_t length, bool progress)
+@@ -80,7 +80,7 @@
+ 	 * more frequent status updates. 128 KiB per request seem suitable.
+ 	 * (Worst case of "slow" transfers -> one update every two seconds.)
+ 	 */
+-	size_t max_chunk = progress ? 128 * 1024 : AW_USB_MAX_BULK_SEND;
++	size_t max_chunk = AW_USB_MAX_BULK_SEND;
+ 
+ 	size_t chunk;
+ 	int rc, sent;

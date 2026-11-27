@@ -1,0 +1,508 @@
+#!/bin/sh
+# Narrow privileged interface; never source user-controlled configuration.
+set -eu
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+umask 077
+state=/var/lib/pb626
+valid_percent() {
+    case "$1" in 0|[1-9]|[1-9][0-9]|100) return 0 ;; *) return 2 ;; esac
+}
+valid_level() { valid_percent "$1" && [ "$1" -gt 0 ]; }
+read_light() {
+    enabled=0
+    level=50
+    if [ -r "$state/frontlight" ]; then
+        a= b= extra=
+        read -r a b extra <"$state/frontlight" || :
+        if [ -z "$b" ] && valid_percent "$a"; then
+            # Migration from the former single-value format.
+            if [ "$a" -gt 0 ]; then enabled=1; level=$a; fi
+        elif [ -z "$extra" ] && { [ "$a" = 0 ] || [ "$a" = 1 ]; } && valid_level "$b"; then
+            enabled=$a; level=$b
+        fi
+    fi
+}
+apply_light() {
+    for light in /sys/class/backlight/*; do
+        [ -r "$light/max_brightness" ] || continue
+        max=$(cat "$light/max_brightness")
+        [ "$max" -gt 0 ] || return 1
+        if [ "$enabled" = 0 ]; then
+            # Power gate first; remember the selected brightness in sysfs too.
+            printf '4\n' >"$light/bl_power" || return 1
+        fi
+        raw=$(( (max * level + 50) / 100 ))
+        [ "$raw" -gt 0 ] || raw=1
+        printf '%s\n' "$raw" >"$light/brightness" || return 1
+        if [ "$enabled" = 1 ]; then printf '0\n' >"$light/bl_power" || return 1; fi
+        return 0
+    done
+    echo "No frontlight device" >&2
+    return 1
+}
+atomic_save() {
+    file=$1; shift
+    tmp=$(mktemp "$state/.settings.XXXXXX")
+    if ! printf '%s\n' "$@" >"$tmp" || ! mv -f "$tmp" "$state/$file"; then
+        rm -f "$tmp"
+        return 1
+    fi
+}
+lock_state() {
+    mkdir -p "$state"
+    exec 9>"$state/settings.lock"
+    flock -x -w 5 9 || { echo "Board settings are busy; retry" >&2; exit 1; }
+}
+valid_governor() {
+    case "$1" in ondemand|conservative|powersave|performance|schedutil) return 0 ;; *) return 2 ;; esac
+}
+apply_governor() {
+    valid_governor "$1"
+    found=0
+    for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+        [ -r "$policy/scaling_available_governors" ] || continue
+        grep -qw "$1" "$policy/scaling_available_governors" || return 1
+        found=1
+    done
+    [ "$found" = 1 ] || return 1
+    for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+        [ -w "$policy/scaling_governor" ] || continue
+        printf '%s\n' "$1" >"$policy/scaling_governor" || return 1
+    done
+}
+# Use only OPPs the kernel exposes, not guessed factory voltages/frequencies.
+# Keep thermal QoS and regulator constraints in the kernel.
+restore_cpu_policy() {
+    governor=ondemand
+    if [ -r "$state/governor" ]; then read -r governor <"$state/governor" || :; fi
+    for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+        [ -r "$policy/cpuinfo_min_freq" ] && [ -r "$policy/cpuinfo_max_freq" ] || continue
+        low=$(cat "$policy/cpuinfo_min_freq")
+        high=$(cat "$policy/cpuinfo_max_freq")
+        case "$low:$high" in *[!0-9:]*|:|:*|*:) continue ;; esac
+        # Raise max first, then lower min; avoid an invalid transient range.
+        printf '%s\n' "$high" >"$policy/scaling_max_freq" || :
+        printf '%s\n' "$low" >"$policy/scaling_min_freq" || :
+    done
+    apply_governor "$governor" || echo "CPU governor unavailable: $governor" >&2
+}
+tune_ondemand() {
+    # On transition-latency-limited kernels the minimum is authoritative.
+    for knobs in /sys/devices/system/cpu/cpufreq/ondemand /sys/devices/system/cpu/cpufreq/policy*/ondemand; do
+        [ -w "$knobs/sampling_rate" ] || continue
+        rate=30000
+        if [ -r "$knobs/sampling_rate_min" ]; then
+            minimum=$(cat "$knobs/sampling_rate_min")
+            case "$minimum" in ''|*[!0-9]*) ;; *) [ "$minimum" -le "$rate" ] || rate=$minimum ;; esac
+        fi
+        printf '%s\n' "$rate" >"$knobs/sampling_rate" || :
+        if [ -w "$knobs/up_threshold" ]; then printf '75\n' >"$knobs/up_threshold" || :; fi
+        if [ -w "$knobs/sampling_down_factor" ]; then printf '1\n' >"$knobs/sampling_down_factor" || :; fi
+    done
+}
+# The board DTS names its physical PE8 power indicator "led". Ignore
+# additional class LEDs registered by peripheral drivers (e.g. rtl8xxxu).
+led_path() {
+    led=/sys/class/leds/led
+    [ -d "$led" ] && [ -r "$led/max_brightness" ] || return 1
+    printf '%s\n' "$led"
+}
+apply_led() {
+    case "$1" in on|off|heartbeat) ;; *) return 2 ;; esac
+    led=$(led_path) || return 1
+    if [ "$1" = heartbeat ]; then printf 'heartbeat\n' >"$led/trigger"; return; fi
+    if [ -w "$led/trigger" ]; then printf 'none\n' >"$led/trigger" || return 1; fi
+    raw=0
+    if [ "$1" = on ]; then raw=$(cat "$led/max_brightness") || return 1; fi
+    printf '%s\n' "$raw" >"$led/brightness"
+}
+# Only an SD card physically attached to external MMC0 is eligible.
+# The soldered MMC2 root cannot match this check.
+sd_device() {
+    for sys in /sys/class/block/mmcblk*; do
+        [ -r "$sys/device/type" ] || continue
+        [ "$(cat "$sys/device/type")" = SD ] || continue
+        case "$(readlink -f "$sys/device")" in */1c0f000.mmc/*) ;; *) continue ;; esac
+        name=$(basename "$sys")
+        case "$name" in mmcblk[0-9]|mmcblk[0-9][0-9]) ;; *) continue ;; esac
+        if [ -b "/dev/$name"p1 ]; then
+            printf '/dev/%sp1\n' "$name"
+        elif [ -b "/dev/$name" ]; then
+            # A partitioned card without p1 needs manual administration.
+            for partition in "/sys/class/block/$name"p*; do
+                [ ! -e "$partition" ] || return 1
+            done
+            printf '/dev/%s\n' "$name"
+        else
+            return 1
+        fi
+        return 0
+    done
+    return 1
+}
+valid_desktop() {
+    case "$1" in arrows|pages) ;; *) return 2 ;; esac
+    case "$2" in keyboard|home) ;; *) return 2 ;; esac
+    case "$3" in menu|escape) ;; *) return 2 ;; esac
+    case "$4" in balanced|ui|photo|legacy|mono) ;; *) return 2 ;; esac
+    case "$5" in 16|24) ;; *) return 2 ;; esac
+    case "$6" in 0|5|10|15|30|60) ;; *) return 2 ;; esac
+    [ "$6" = 0 ] || [ -f /etc/pb626/suspend-qualified ]
+}
+# A single real battery, sane integer capacity, and confirmed discharge.
+# Unknown or contradictory charger telemetry must never trigger shutdown.
+battery_capacity() {
+    battery=
+    charger_seen=0
+    for p in /sys/class/power_supply/*; do
+        [ -r "$p/type" ] || continue
+        case "$(cat "$p/type")" in
+            Battery) [ -z "$battery" ] || return 1; battery=$p ;;
+            *) if [ -r "$p/online" ]; then
+                   [ "$(cat "$p/online")" = 0 ] || return 1
+                   charger_seen=1
+               fi ;;
+        esac
+    done
+    [ "$charger_seen" = 1 ] && [ -n "$battery" ] &&
+        [ "$(cat "$battery/present" 2>/dev/null)" = 1 ] &&
+        [ "$(cat "$battery/status")" = Discharging ] || return 1
+    capacity=$(cat "$battery/capacity") || return 1
+    valid_percent "$capacity" || return 1
+    printf '%s\n' "$capacity"
+}
+valid_battery() {
+    valid_percent "$1" && valid_percent "$2" &&
+    [ "$1" -ge 5 ] && [ "$1" -le 30 ] &&
+    [ "$2" -ge 2 ] && [ "$2" -le 10 ] && [ "$1" -gt "$2" ]
+}
+read_battery() {
+    warning=10 critical=3
+    if [ -r "$state/battery" ]; then
+        a= b= extra=
+        read -r a b extra <"$state/battery" || :
+        if [ -z "$extra" ] && valid_battery "$a" "$b"; then warning=$a critical=$b; fi
+    fi
+}
+valid_button_action() {
+    case "$1" in
+        none|Left|Right|Up|Down|Page_Up|Page_Down|Home|End|Escape|Return|BackSpace|Tab|space|Menu|F[1-9]|F1[012]|keyboard|refresh|light-toggle) return 0 ;;
+        *) return 2 ;;
+    esac
+}
+button_defaults() {
+    left=Left right=Right home=keyboard menu=Menu
+    if [ -r "$state/desktop.conf" ]; then
+        if grep -qx PB626_BUTTONS=pages "$state/desktop.conf"; then left=Page_Up right=Page_Down; fi
+        if grep -qx PB626_HOME_KEY=home "$state/desktop.conf"; then home=Home; fi
+        if grep -qx PB626_MENU_KEY=escape "$state/desktop.conf"; then menu=Escape; fi
+    fi
+    printf '%s\n' "$left none none $right none none $home none none $menu refresh none"
+}
+case "${1:-}" in
+frontlight|light-level|light-on|light-off|light-toggle)
+    if [ "$1" = frontlight ]; then
+        [ "$#" -eq 2 ] && valid_percent "$2" || exit 2
+    elif [ "$1" = light-level ]; then
+        [ "$#" -eq 2 ] && valid_level "$2" || exit 2
+    else
+        [ "$#" -eq 1 ] || exit 2
+    fi
+    lock_state
+    read_light
+    case "$1" in
+        frontlight) if [ "$2" = 0 ]; then enabled=0; else level=$2; enabled=1; fi ;;
+        light-level) level=$2 ;;
+        light-on) enabled=1 ;;
+        light-off) enabled=0 ;;
+        light-toggle) enabled=$((1-enabled)) ;;
+    esac
+    apply_light
+    atomic_save frontlight "$enabled $level"
+    ;;
+light-status)
+    [ "$#" -eq 1 ] || exit 2
+    read_light
+    printf '%s %s\n' "$enabled" "$level"
+    ;;
+restore-board|restore-light)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    # First boot has no saved preference: leave the kernel's safe default.
+    if [ -r "$state/frontlight" ]; then
+        read_light
+        apply_light || echo "Frontlight restore failed" >&2
+    fi
+    if [ "$1" = restore-board ]; then
+        restore_cpu_policy
+        tune_ondemand
+    fi
+    if [ "$1" = restore-board ]; then
+        led_mode=heartbeat
+        if [ -r "$state/led" ]; then read -r led_mode <"$state/led"; fi
+        apply_led "$led_mode" || echo "LED restore failed" >&2
+    fi
+    ;;
+led)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in on|off|heartbeat) ;; *) exit 2 ;; esac
+    lock_state
+    apply_led "$2"
+    atomic_save led "$2"
+    ;;
+led-status)
+    [ "$#" -eq 1 ] || exit 2
+    if led=$(led_path); then
+        if grep -q '\[heartbeat\]' "$led/trigger"; then echo heartbeat; exit 0; fi
+        raw=$(cat "$led/brightness")
+        if [ "$raw" -gt 0 ]; then echo on; else echo off; fi
+    else
+        echo unavailable
+    fi
+    ;;
+sd-status)
+    [ "$#" -eq 1 ] || exit 2
+    if mountpoint -q /media/sdcard; then echo mounted
+    elif device=$(sd_device); then printf 'Available: %s\n' "$device"
+    else echo 'No external SD card detected'; fi
+    ;;
+sd-mount|sd-unmount)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    [ ! -L /media/sdcard ] || exit 1
+    if [ "$1" = sd-unmount ]; then
+        if mountpoint -q /media/sdcard; then umount /media/sdcard; fi
+    else
+        mountpoint -q /media/sdcard && exit 0
+        device=$(sd_device) || { echo 'No external SD card detected' >&2; exit 1; }
+        fs=$(blkid -p -s TYPE -o value "$device") || exit 1
+        case "$fs" in
+            vfat|exfat) opts=nosuid,nodev,noexec,uid=1000,gid=1000,umask=022 ;;
+            ext4) opts=nosuid,nodev,noexec ;;
+            *) echo "Unsupported SD filesystem: $fs" >&2; exit 1 ;;
+        esac
+        mkdir -p /media/sdcard
+        mount -t "$fs" -o "$opts" "$device" /media/sdcard
+    fi
+    ;;
+ntp)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in true|false) ;; *) exit 2 ;; esac
+    exec timedatectl set-ntp "$2"
+    ;;
+hostname)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in ''|-*|*-|*[!a-zA-Z0-9-]*) exit 2 ;; esac
+    [ "${#2}" -le 63 ] || exit 2
+    exec hostnamectl hostname "$2"
+    ;;
+governor)
+    [ "$#" -eq 2 ] && valid_governor "$2" || exit 2
+    lock_state
+    apply_governor "$2"
+    if [ "$2" = ondemand ]; then tune_ondemand; fi
+    atomic_save governor "$2"
+    ;;
+desktop-status)
+    [ "$#" -eq 1 ] || exit 2
+    if [ -r "$state/desktop.conf" ]; then cat "$state/desktop.conf"; fi
+    ;;
+desktop-settings)
+    { [ "$#" -eq 7 ] || [ "$#" -eq 8 ]; } && valid_desktop "$2" "$3" "$4" "$5" "$6" "$7" || exit 2
+    fast_mode=${8-du}
+    case "$fast_mode" in du|auto|a2|du4) ;; *) exit 2 ;; esac
+    lock_state
+    atomic_save desktop.conf "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" \
+        "PB626_MENU_KEY=$4" "PB626_EPD_GRAY_PROFILE=$5" "PB626_XORG_DEPTH=$6" "PB626_IDLE_MINUTES=$7" "PB626_EPD_FAST_MODE=$fast_mode"
+    ;;
+restart-desktop)
+    [ "$#" -eq 1 ] || exit 2
+    exec systemctl --no-block restart pb626-desktop.service
+    ;;
+power-key)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in ignore|lock|poweroff) ;; s2idle) [ -f /etc/pb626/suspend-qualified ] || exit 2 ;; *) exit 2 ;; esac
+    lock_state
+    atomic_save power-key "$2"
+    ;;
+power-key-status)
+    [ "$#" -eq 1 ] || exit 2
+    if [ -r "$state/power-key" ]; then cat "$state/power-key"; else echo lock; fi
+    ;;
+lock-indicator)
+    [ "$#" -eq 2 ] || exit 2
+    lock_state
+    case "$2" in
+    locked|sleep)
+        : > /run/pb626-lock-indicator
+        for light in /sys/class/backlight/*; do
+            [ -w "$light/bl_power" ] || continue
+            printf '4\n' >"$light/bl_power"
+        done
+        if led=$(led_path); then
+            if [ "$2" = sleep ]; then
+                apply_led off || exit 1
+            else
+                printf 'timer\n' >"$led/trigger"
+                printf '150\n' >"$led/delay_on"
+                printf '1800\n' >"$led/delay_off"
+            fi
+        fi
+        ;;
+    awake)
+        [ -f /run/pb626-lock-indicator ] || exit 0
+        # Restore independent outputs even if one driver fails to resume.
+        # Leave the marker on error so service teardown/recovery can retry.
+        restore_error=0
+        read_light
+        for light in /sys/class/backlight/*; do
+            [ -r "$light/max_brightness" ] || continue
+            apply_light || restore_error=1
+            break
+        done
+        led_mode=heartbeat
+        if [ -r "$state/led" ]; then read -r led_mode <"$state/led" || led_mode=heartbeat; fi
+        if led_path >/dev/null; then apply_led "$led_mode" || restore_error=1; fi
+        [ "$restore_error" = 0 ] || exit 1
+        rm -f /run/pb626-lock-indicator
+        ;;
+    *) exit 2 ;;
+    esac
+    ;;
+suspend)
+    [ "$#" -eq 1 ] || exit 2
+    [ -f /etc/pb626/suspend-qualified ] || { echo "Suspend not qualified on this board" >&2; exit 1; }
+    exec systemctl --no-block --check-inhibitors=yes suspend
+    ;;
+wifi-on)
+    [ "$#" -eq 1 ] || exit 2
+    rfkill unblock wifi
+    systemctl enable --now iwd.service
+    ;;
+wifi-off)
+    [ "$#" -eq 1 ] || exit 2
+    rfkill block wifi
+    systemctl disable --now iwd.service
+    ;;
+button-bindings-status)
+    [ "$#" -eq 1 ] || exit 2
+    if [ -r "$state/button-bindings" ]; then cat "$state/button-bindings"; else button_defaults; fi
+    ;;
+button-bindings)
+    [ "$#" -eq 13 ] || exit 2
+    shift
+    for action in "$@"; do valid_button_action "$action" || exit 2; done
+    lock_state
+    atomic_save button-bindings "$*"
+    ;;
+button-bindings-reset)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    rm -f "$state/button-bindings"
+    ;;
+battery-status)
+    [ "$#" -eq 1 ] || exit 2
+    read_battery
+    printf '%s %s\n' "$warning" "$critical"
+    ;;
+battery-settings)
+    [ "$#" -eq 3 ] && valid_battery "$2" "$3" || exit 2
+    lock_state
+    atomic_save battery "$2 $3"
+    ;;
+battery-check)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    read_battery
+    if ! capacity=$(battery_capacity); then
+        rm -f /run/pb626-battery-warning
+        if [ -e /run/pb626-battery-critical ]; then
+            rm -f /run/pb626-battery-critical
+            systemctl --no-block stop pb626-battery-confirm.timer || :
+        fi
+        exit 0
+    fi
+    if [ "$capacity" -le "$warning" ]; then
+        if [ ! -e /run/pb626-battery-warning ]; then
+            # Separate on-demand GUI notification; no modal wait as root.
+            if systemctl is-active --quiet pb626-desktop.service &&
+               [ -s /run/pb626-desktop/ready ]; then
+                systemctl --no-block start pb626-battery-warning.service
+                : > /run/pb626-battery-warning
+            fi
+        fi
+    elif [ "$capacity" -ge "$((warning+3))" ]; then
+        rm -f /run/pb626-battery-warning
+    fi
+    if [ "$capacity" -le "$critical" ]; then
+        # Confirm across independent samples, not a burst of uevents.
+        read -r uptime rest </proc/uptime
+        now="${uptime%%.*}"
+        first=
+        if [ -r /run/pb626-battery-critical ]; then read -r first </run/pb626-battery-critical || :; fi
+        case "$first" in ''|*[!0-9]*)
+                printf '%s\n' "$now" >/run/pb626-battery-critical
+                # One extra sample only when needed, not a faster polling loop.
+                if ! systemctl --no-block start pb626-battery-confirm.timer; then
+                    rm -f /run/pb626-battery-critical
+                    exit 1
+                fi
+                ;;
+            *) if [ "$now" -ge "$((first+10))" ]; then
+                   # Recheck charger state immediately before asking PID 1.
+                   if current=$(battery_capacity) && [ "$current" -le "$critical" ]; then
+                       systemctl --no-block poweroff
+                   fi
+               fi ;;
+        esac
+    else
+        if [ -e /run/pb626-battery-critical ]; then
+            rm -f /run/pb626-battery-critical
+            systemctl --no-block stop pb626-battery-confirm.timer || :
+        fi
+    fi
+    ;;
+shutdown-image-status)
+    [ "$#" -eq 1 ] || exit 2
+    if [ -f "$state/shutdown.pgm" ]; then echo custom; else echo white; fi
+    ;;
+shutdown-image-clear)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    rm -f "$state/shutdown.pgm"
+    ;;
+shutdown-image-save)
+    [ "$#" -eq 1 ] || exit 2
+    lock_state
+    # Only bounded raw grayscale samples from stdin, never a user-selected
+    # path or image decoder running as root. All bytes are valid PGM samples.
+    tmp=$(mktemp "$state/.shutdown.XXXXXX")
+    trap 'rm -f "$tmp"' EXIT HUP INT TERM
+    printf 'P5\n758 1024\n255\n' >"$tmp"
+    head -c 776193 >>"$tmp"
+    [ "$(wc -c <"$tmp")" -eq 776208 ] || exit 2
+    mv -f "$tmp" "$state/shutdown.pgm"
+    ;;
+poweroff-screen)
+    [ "$#" -eq 1 ] || exit 2
+    # The standalone worker owns the panel only after the desktop has stopped.
+    if systemctl is-active --quiet pb626-desktop.service; then exit 1; fi
+    image="$state/shutdown.pgm"
+    if [ ! -f "$image" ]; then
+        image=$(mktemp /run/pb626-white.XXXXXX)
+        trap 'rm -f "$image"' EXIT HUP INT TERM
+        printf 'P5\n758 1024\n255\n' >"$image"
+        head -c 776192 /dev/zero | tr '\000' '\377' >>"$image"
+    fi
+    for light in /sys/class/backlight/*; do
+        [ ! -w "$light/bl_power" ] || printf '4\n' >"$light/bl_power" || :
+    done
+    apply_led off || :
+    PB626_EPD_RENDER=indexed /usr/bin/pb626-epd /lib/firmware/pb626/default.wbf full "$image"
+    ;;
+reboot|poweroff)
+    [ "$#" -eq 1 ] || exit 2
+    exec systemctl --no-block "$1"
+    ;;
+*) exit 2 ;;
+esac

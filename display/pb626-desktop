@@ -10,28 +10,61 @@ fi
 waveform=$(realpath "$waveform")
 umask 077
 work=/run/pb626-desktop
-mkdir "$work"
+managed=no
+if [ "${RUNTIME_DIRECTORY:-}" = "$work" ]; then
+    [ -d "$work" ] || exit 1
+    managed=yes
+else
+    mkdir "$work"
+fi
+# Opt-in only. Never allow a user session to select a privileged module
+# path. The packaged Xorg dummy remains installed and is the default.
+unset PB626_DDX_SHARED
+if [ "$managed" = yes ] && [ -f /etc/debian_version ] &&
+   [ -f /etc/pb626/ddx-shared-qualified ] &&
+   [ -f /usr/lib/pb626/xorg/drivers/dummy_drv.so ]; then
+    export PB626_DDX_SHARED=1
+fi
 bridge_pid=
 xinit_pid=
 cleanup() {
     if [ -n "$xinit_pid" ]; then kill "$xinit_pid" 2>/dev/null || :; wait "$xinit_pid" || :; fi
     if [ -n "$bridge_pid" ]; then kill "$bridge_pid" 2>/dev/null || :; wait "$bridge_pid" || :; fi
-    rm -rf "$work"
+    if [ "$managed" = no ]; then rm -rf "$work"; fi
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
+# Debian uses a weak, bounded systemd device dependency for ELAN.
+# Manual/Alpine launches retain the existing bounded discovery window.
+if [ "$managed" = no ]; then
+    for attempt in $(seq 1 20); do
+        found=no
+        for event in /sys/class/input/event*; do
+            [ -r "$event/device/name" ] || continue
+            case "$(cat "$event/device/name")" in
+                *[Ee][Ll][Aa][Nn]*) [ ! -c "/dev/input/${event##*/}" ] || found=yes ;;
+            esac
+        done
+        [ "$found" = no ] || break
+        sleep 0.25
+    done
+fi
 count=0
 touch=no
 button_devices=
+power_device=
 for event in /sys/class/input/event*; do
-    [ -r "$event/device/name" ] || continue
+    [ -r "$event/device/name" ] && [ -c "/dev/input/${event##*/}" ] || continue
     name=$(cat "$event/device/name")
     case "$name" in
         *[Ee][Ll][Aa][Nn]*)
             touch=yes
             role=CorePointer
             ;;
+        axp20x-pek)
+            if [ -f /etc/debian_version ]; then power_device="/dev/input/${event##*/}"; fi
+            continue ;;
         'GPIO Keys'|*.lradc)
             button_devices="$button_devices /dev/input/${event##*/}"
             continue
@@ -58,6 +91,7 @@ echo 'EndSection' >>"$work/xorg.conf"
 
 export XAUTHORITY="$work/Xauthority"
 export PB626_BUTTON_DEVICES="$button_devices"
+if [ -n "$power_device" ]; then export PB626_POWER_DEVICE="$power_device"; fi
 if [ "$touch" = no ]; then
     export PB626_POINTER_FALLBACK=1
     echo 'Touch unavailable. Left/Right move the pointer, Home changes axis, Menu clicks.'
@@ -75,12 +109,48 @@ if [ -f /proc/device-tree/chosen/pb626,emmc-root ]; then
     export XDG_RUNTIME_DIR="$work/session"
     export PB626_EPD_SESSION_STARTED="$work/session/clients.started"
     client=/usr/libexec/pb626-user-session
-    DISPLAY=:0 /usr/bin/pb626-x11-epd "$waveform" "$work/ready" &
+    if [ -f /etc/debian_version ]; then export PB626_SYSTEM_SLEEP=1; fi
+    # Only the hardware bridge/worker inherit modest OOM protection.
+    # systemd-run --scope execs the command in place (systemd 257), so
+    # wait -n and the existing PID handoff remain valid. BindsTo/After
+    # stop the separate cgroup before desktop shutdown or restart.
+    (
+        printf '%s\n' -500 >/proc/self/oom_score_adj || :
+        if [ "$managed" = yes ] && [ -f /etc/debian_version ] && [ "${PB626_RESOURCE_SCOPE:-1}" = 1 ]; then
+            exec systemd-run --scope --quiet --collect --expand-environment=no \
+                --unit="pb626-renderer-$$.scope" --slice=pb626.slice \
+                --property=BindsTo=pb626-desktop.service \
+                --property=After=pb626-desktop.service \
+                --property=CPUWeight=200 --property=MemoryLow=16M \
+                --property=OOMPolicy=stop --property=TimeoutStopSec=10s \
+                --nice=-3 env DISPLAY=:0 /usr/bin/pb626-x11-epd "$waveform" "$work/ready"
+        fi
+        exec nice -n -3 env DISPLAY=:0 /usr/bin/pb626-x11-epd "$waveform" "$work/ready"
+    ) &
     bridge_pid=$!
     export PB626_EPD_BRIDGE_PID="$bridge_pid"
 fi
+# Explicit compatibility override, normally use the packaged default depth.
+# Only these two known TrueColor visuals are supported.
+case ${PB626_XORG_DEPTH:-} in
+    16|24) set -- -depth "$PB626_XORG_DEPTH" ;;
+    '') set -- ;;
+    *) echo 'PB626_XORG_DEPTH must be 16 or 24' >&2; exit 2 ;;
+esac
+xorg=/usr/bin/Xorg
+if [ -f /etc/debian_version ] && [ -x /usr/lib/xorg/Xorg ]; then
+    xorg=/usr/lib/xorg/Xorg
+fi
+if [ "${PB626_DDX_SHARED:-0}" = 1 ]; then
+    set -- "$@" -modulepath /usr/lib/pb626/xorg,/usr/lib/xorg/modules
+fi
 xinit "$client" "$waveform" "$work/ready" -- \
-    /usr/bin/Xorg :0 vt2 -nolisten tcp -nocursor -auth "$XAUTHORITY" \
+    "$xorg" :0 vt2 -nolisten tcp -nocursor -auth "$XAUTHORITY" "$@" \
     -config "$work/xorg.conf" -logfile /run/pb626-xorg.log &
 xinit_pid=$!
-wait "$xinit_pid"
+if [ -f /etc/debian_version ] && [ -n "$bridge_pid" ]; then
+    # Debian runs this wrapper under Bash; no periodic process polling.
+    wait -n "$xinit_pid" "$bridge_pid"
+else
+    wait "$xinit_pid"
+fi

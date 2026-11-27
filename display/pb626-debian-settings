@@ -1,0 +1,362 @@
+#!/usr/bin/wish
+# On-demand, touch-oriented control centre. No resident settings daemon.
+tk_setPalette background white foreground black activeBackground #cccccc \
+    activeForeground black selectBackground black selectForeground white
+option add *Font {{Liberation Sans} 15}
+option add *Button.padY 9
+option add *Button.padX 12
+option add *Scale.sliderLength 40
+option add *highlightColor black
+ttk::style theme use clam
+ttk::style configure TNotebook -background white -borderwidth 2
+ttk::style configure TNotebook.Tab -padding {12 14} -font {{Liberation Sans} 15 bold} -foreground black -background white
+ttk::style map TNotebook.Tab -background {selected black} -foreground {selected white}
+wm title . "PocketBook Settings"
+wm geometry . 700x840
+
+proc readfile {path} {
+    if {[catch {set fd [open $path r]}]} {return ""}
+    set failed [catch {set value [string trim [read $fd]]}]
+    catch {close $fd}
+    if {$failed} {return ""}
+    return $value
+}
+proc query {args} {
+    if {[catch {exec /usr/bin/timeout -k 2s 15s /usr/bin/doas /usr/sbin/pb626-admin {*}$args 2>@1} result]} {
+        tk_messageBox -icon error -title "Operation failed" -message $result
+        return -code error $result
+    }
+    return $result
+}
+proc act {args} {
+    return [expr {![catch {query {*}$args}]}]
+}
+proc term {title args} {
+    if {[catch {exec xterm -T $title -e {*}$args &} err]} {
+        tk_messageBox -icon error -message $err
+    }
+}
+proc choose {parent name caption variable choices} {
+    frame $parent.$name
+    label $parent.$name.label -text $caption -anchor w
+    tk_optionMenu $parent.$name.select $variable {*}$choices
+    $parent.$name.select configure -width 13 -anchor center -padx 8 -pady 9
+    pack $parent.$name.label -side left -fill x -expand 1
+    pack $parent.$name.select -side right
+    pack $parent.$name -fill x -padx 12 -pady 6
+}
+proc lightRefresh {} {
+    global level lightState lightText
+    if {![catch {query light-status} result]} {
+        lassign $result lightState level
+        set lightText [expr {$lightState ? "Frontlight on" : "Frontlight off"}]
+    }
+}
+proc lightApply {} {
+    global level
+    if {[act light-level $level]} {lightRefresh}
+}
+proc lightSwitch {action} {
+    if {[act $action]} {lightRefresh}
+}
+proc wifi {} {
+    if {[act wifi-on]} {
+        if {[catch {exec /usr/bin/iwgtk -N &} err]} {
+            tk_messageBox -icon error -message $err
+        }
+    }
+}
+proc buttonSettings {} {
+    if {[winfo exists .bindings]} {raise .bindings; return}
+    if {[catch {query button-bindings-status} data] || [llength $data] != 12} {return}
+    toplevel .bindings
+    wm title .bindings "Physical button bindings"
+    set actions {none Left Right Up Down Page_Up Page_Down Home End Escape Return BackSpace Tab space Menu F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 keyboard refresh light-toggle}
+    label .bindings.note -text "Send ordinary X11 keys or system actions.\nDouble click delays single click only when assigned." -justify left
+    grid .bindings.note -row 0 -columnspan 4 -pady 8
+    set col 1
+    foreach title {Short Long Double} {
+        label .bindings.h$col -text $title
+        grid .bindings.h$col -row 1 -column $col
+        incr col
+    }
+    set i 0
+    set row 2
+    foreach key {Left Right Home Menu} {
+        label .bindings.key$row -text $key
+        grid .bindings.key$row -row $row -column 0 -padx 4 -pady 12
+        for {set col 1} {$col <= 3} {incr col} {
+            set ::bindAction($i) [lindex $data $i]
+            tk_optionMenu .bindings.a$i ::bindAction($i) {*}$actions
+            .bindings.a$i configure -width 10 -pady 8
+            grid .bindings.a$i -row $row -column $col -padx 2
+            incr i
+        }
+        incr row
+    }
+    button .bindings.save -text "Save bindings" -command {
+        set values {}
+        for {set i 0} {$i < 12} {incr i} {lappend values $::bindAction($i)}
+        if {[act button-bindings {*}$values]} {
+            destroy .bindings
+            tk_messageBox -message "Saved. Restart desktop to apply."
+        }
+    }
+    button .bindings.reset -text "Restore defaults" -command {
+        if {[act button-bindings-reset]} {destroy .bindings; tk_messageBox -message "Restart desktop to apply."}
+    }
+    grid .bindings.save -row $row -columnspan 4 -sticky ew -padx 8 -pady 5
+    grid .bindings.reset -row [expr {$row+1}] -columnspan 4 -sticky ew -padx 8 -pady 5
+}
+proc batterySettings {} {
+    if {[winfo exists .battery]} {raise .battery; return}
+    if {[catch {query battery-status} result]} {return}
+    lassign $result ::batteryWarn ::batteryCritical
+    toplevel .battery
+    wm title .battery "Battery policy"
+    label .battery.note -text "Warning and shutdown while discharging only.\nShutdown requires two confirmed low samples." -justify left
+    pack .battery.note -pady 8
+    choose .battery warn "Warn at (%)" batteryWarn {5 7 10 15 20 25 30}
+    choose .battery critical "Shut down at (%)" batteryCritical {2 3 4 5 7 10}
+    button .battery.save -text "Save" -command {
+        if {[act battery-settings $::batteryWarn $::batteryCritical]} {destroy .battery}
+    }
+    pack .battery.save -fill x -padx 12 -pady 8
+}
+proc shutdownPicker {} {
+    if {[catch {exec /usr/bin/pb626-shutdown-picker &} err]} {
+        tk_messageBox -icon error -message $err
+    }
+}
+proc power {action} {
+    if {[tk_messageBox -type yesno -icon question -message "Really $action the reader?"] eq "yes"} {
+        act $action
+    }
+}
+proc updateStatus {} {
+    set data ""
+    foreach p [glob -nocomplain /sys/class/power_supply/*] {
+        append data "[file tail $p]: [readfile $p/type]"
+        foreach field {capacity status online voltage_now current_now} {
+            set v [readfile $p/$field]
+            if {$v ne ""} {append data " $field=$v"}
+        }
+        append data "\n"
+    }
+    foreach p [glob -nocomplain /sys/class/thermal/thermal_zone*] {
+        append data "[readfile $p/type]: [readfile $p/temp] mC\n"
+    }
+    foreach p [glob -nocomplain /sys/class/rtc/rtc*] {
+        append data "RTC [file tail $p]: [readfile $p/date] [readfile $p/time]\n"
+    }
+    foreach p [glob -nocomplain /sys/class/backlight/*] {
+        append data "Frontlight [file tail $p]: [readfile $p/brightness]/[readfile $p/max_brightness]\n"
+    }
+    foreach p [glob -nocomplain /sys/class/leds/*] {
+        append data "LED [file tail $p]: [readfile $p/brightness]\n"
+    }
+    foreach cmd {{free -m} {df -h /} {date} {timedatectl status} {systemctl --no-pager --failed} {rfkill list}} {
+        if {![catch {exec /usr/bin/timeout -k 1s 3s {*}$cmd 2>@1} result]} {append data "$result\n"} else {append data "[lindex $cmd 0]: unavailable\n"}
+    }
+    .tabs.system.canvas.body.info configure -state normal
+    .tabs.system.canvas.body.info delete 1.0 end
+    .tabs.system.canvas.body.info insert end $data
+    .tabs.system.canvas.body.info configure -state disabled
+}
+proc desktopApply {} {
+    global buttons home menu gray depth idle fast
+    if {[act desktop-settings $buttons $home $menu $gray $depth $idle $fast]} {
+        tk_messageBox -title "Saved" -message "Settings saved. Restart the desktop or reboot to apply. Save open documents first."
+    }
+}
+proc desktopRestart {} {
+    if {[tk_messageBox -type yesno -icon question -message "Close all graphical applications and restart the desktop?"] eq "yes"} {
+        act restart-desktop
+    }
+}
+set buttons arrows
+set home keyboard
+set menu menu
+set gray balanced
+set fast du
+set depth 16
+set idle 0
+if {![catch {query desktop-status} data]} {
+    foreach line [split $data "\n"] {
+        if {![regexp {^([A-Z0-9_]+)=([a-z0-9]+)$} $line -> key value]} {continue}
+        switch -- $key {
+            PB626_BUTTONS {set buttons $value}
+            PB626_HOME_KEY {set home $value}
+            PB626_MENU_KEY {set menu $value}
+            PB626_EPD_GRAY_PROFILE {set gray $value}
+            PB626_EPD_FAST_MODE {set fast $value}
+            PB626_XORG_DEPTH {set depth $value}
+            PB626_IDLE_MINUTES {set idle $value}
+        }
+    }
+}
+set qualified [file isfile /etc/pb626/suspend-qualified]
+set level 50
+set lightState 0
+set lightText "Frontlight off"
+set governor unknown
+set governors {}
+foreach p [glob -nocomplain /sys/devices/system/cpu/cpufreq/policy*] {
+    set governor [readfile $p/scaling_governor]
+    set cpuMin [readfile $p/scaling_min_freq]
+    set cpuMax [readfile $p/scaling_max_freq]
+    set governors {}
+    foreach g [readfile $p/scaling_available_governors] {
+        if {$g in {ondemand conservative powersave performance schedutil}} {lappend governors $g}
+    }
+    break
+}
+set ledMode unavailable
+if {![catch {query led-status} value]} {set ledMode $value}
+set host [info hostname]
+set powerKey lock
+if {![catch {query power-key-status} value]} {set powerKey $value}
+
+label .heading -text "PocketBook settings" -font {{Liberation Sans} 22 bold}
+pack .heading -pady 12
+ttk::notebook .tabs
+# Fixed-size portrait layouts clip controls when the keyboard is visible
+# or the screen is rotated. Each page has an independent touch-sized
+# scrollbar; no animated/inertial redraws or periodic layout polling.
+proc tabRegion {canvas} {
+    $canvas configure -scrollregion [$canvas bbox all]
+}
+proc tabWidth {canvas item width} {
+    $canvas itemconfigure $item -width $width
+    tabRegion $canvas
+}
+foreach {tab title} {display Display keys Buttons net Network power Power system System} {
+    set page .tabs.$tab
+    frame $page -background white
+    canvas $page.canvas -background white -highlightthickness 0 -borderwidth 0 -yscrollcommand [list $page.vscroll set] -yscrollincrement 20
+    scrollbar $page.vscroll -orient vertical -width 36 -command [list $page.canvas yview]
+    frame $page.canvas.body -background white
+    set item [$page.canvas create window 0 0 -window $page.canvas.body -anchor nw]
+    bind $page.canvas.body <Configure> [list tabRegion $page.canvas]
+    bind $page.canvas <Configure> [list tabWidth $page.canvas $item %w]
+    pack $page.vscroll -side right -fill y
+    pack $page.canvas -side left -fill both -expand 1
+    .tabs add $page -text $title
+}
+pack .tabs -fill both -expand 1 -padx 8 -pady 4
+set p .tabs.display.canvas.body
+label $p.state -textvariable lightText -font {{Liberation Sans} 19 bold}
+pack $p.state -pady 8
+scale $p.brightness -from 1 -to 100 -orient horizontal -variable level -resolution 1 -length 500 \
+    -label "Brightness (%)" -width 36 -troughcolor #aaaaaa
+pack $p.brightness -fill x -padx 16 -pady 8
+button $p.apply -text "Save brightness" -command lightApply
+# Save on release, not on every pointer motion; preserve the on/off state.
+bind $p.brightness <ButtonRelease-1> {after idle lightApply}
+pack $p.apply -fill x -padx 16 -pady 4
+frame $p.switch
+button $p.switch.on -text "Turn on" -command {lightSwitch light-on}
+button $p.switch.off -text "Turn off" -command {lightSwitch light-off}
+pack $p.switch.on $p.switch.off -side left -expand 1 -fill x -padx 3
+pack $p.switch -fill x -padx 12 -pady 4
+choose $p gray "Grayscale profile" gray {balanced ui photo legacy mono}
+choose $p fast "Fast waveform" fast {du auto a2 du4}
+choose $p depth "X11 color depth" depth {16 24}
+label $p.note -text "Mono uses black and white only. Other profiles retain 16 gray levels.\nDisplay profile changes apply after restart." -justify left -wraplength 560
+pack $p.note -pady 6
+button $p.save -text "Save display / desktop settings" -command desktopApply
+pack $p.save -fill x -padx 12 -pady 5
+button $p.offimage -text "Power-off image…" -command shutdownPicker
+pack $p.offimage -fill x -padx 12 -pady 4
+button $p.restart -text "Restart desktop" -command desktopRestart
+pack $p.restart -fill x -padx 12 -pady 5
+
+set p .tabs.keys.canvas.body
+choose $p arrows "Left / Right" buttons {arrows pages}
+choose $p home "Home button" home {keyboard home}
+choose $p menu "Menu short press" menu {menu escape}
+label $p.note -text "Advanced bindings override these defaults.\nWithout touch, hardware pointer controls remain available." -justify left -wraplength 560
+pack $p.note -pady 10
+button $p.bindings -text "Advanced button bindings…" -command buttonSettings
+pack $p.bindings -fill x -padx 12 -pady 5
+button $p.save -text "Save button settings" -command desktopApply
+button $p.restart -text "Restart desktop" -command desktopRestart
+pack $p.save $p.restart -fill x -padx 12 -pady 5
+
+set p .tabs.net.canvas.body
+button $p.on -text "Wi-Fi networks (iwgtk)" -command wifi
+button $p.off -text "Turn Wi-Fi off" -command {act wifi-off}
+button $p.cli -text "Wi-Fi terminal (iwctl)" -command {if {[act wifi-on]} {term "Wi-Fi" iwctl}}
+button $p.dns -text "Network and DNS status" -command {term "Network status" sh -c {ip address; ip route; resolvectl status; read -r x}}
+foreach w {on off cli dns} {pack $p.$w -fill x -padx 12 -pady 7}
+
+set p .tabs.power.canvas.body
+if {$ledMode ne "unavailable"} {
+    choose $p led "Power indicator" ledMode {heartbeat on off}
+    button $p.ledapply -text "Save indicator state" -command {act led $ledMode}
+    pack $p.ledapply -fill x -padx 12 -pady 4
+}
+if {[llength $governors]} {
+    choose $p cpu "CPU governor" governor $governors
+    button $p.cpuapply -text "Apply CPU policy and save" -command {act governor $governor}
+    pack $p.cpuapply -fill x -padx 12 -pady 4
+    if {[string is integer -strict $cpuMin] && [string is integer -strict $cpuMax]} {
+        label $p.cpufreq -text "Allowed range: [expr {$cpuMin / 1000}]–[expr {$cpuMax / 1000}] MHz"
+        pack $p.cpufreq -pady 2
+    }
+}
+set keyChoices {lock ignore poweroff}
+if {$qualified} {lappend keyChoices s2idle}
+choose $p powerkey "Power key action" powerKey $keyChoices
+button $p.keyapply -text "Save power key action" -command {if {[act power-key $powerKey]} {tk_messageBox -message "Saved; applies to the next short press."}}
+pack $p.keyapply -fill x -padx 12 -pady 4
+if {$qualified} {
+    choose $p idle "Sleep after minutes (0 = never)" idle {0 5 10 15 30 60}
+    button $p.idleapply -text "Save idle policy" -command desktopApply
+    button $p.sleep -text "Suspend now" -command {power suspend}
+    pack $p.idleapply $p.sleep -fill x -padx 12 -pady 4
+} else {
+    set idle 0
+    label $p.sleepnote -text "Lock is available now. Real s2idle is disabled until wakeup is qualified; deep sleep needs a resume-aware SPL." -wraplength 560 -justify left
+    pack $p.sleepnote -padx 12 -pady 10
+}
+button $p.battery -text "Battery warning / shutdown…" -command batterySettings
+pack $p.battery -fill x -padx 12 -pady 4
+button $p.reboot -text "Restart reader" -command {power reboot}
+button $p.off -text "Shut down" -command {power poweroff}
+pack $p.reboot $p.off -fill x -padx 12 -pady 4
+
+set p .tabs.system.canvas.body
+frame $p.storage
+button $p.storage.mount -text "Mount SD" -command {if {[act sd-mount]} {term "External SD" mc -b /media/sdcard}}
+button $p.storage.unmount -text "Eject SD" -command {if {[act sd-unmount]} {tk_messageBox -message "SD card can be removed."}}
+button $p.storage.status -text "SD status" -command {if {![catch {query sd-status} s]} {tk_messageBox -message $s}}
+pack $p.storage.mount $p.storage.unmount $p.storage.status -side left -expand 1 -fill x -padx 2
+pack $p.storage -fill x -padx 8 -pady 4
+frame $p.host
+label $p.host.label -text "Hostname"
+entry $p.host.entry -textvariable host -width 18
+button $p.host.apply -text "Save" -command {act hostname $host}
+pack $p.host.label $p.host.entry $p.host.apply -side left -padx 4
+pack $p.host -fill x -padx 8 -pady 4
+frame $p.ntp
+button $p.ntp.on -text "Automatic time on" -command {act ntp true; updateStatus}
+button $p.ntp.off -text "Automatic time off" -command {act ntp false; updateStatus}
+pack $p.ntp.on $p.ntp.off -side left -fill x -expand 1 -padx 3
+pack $p.ntp -fill x -padx 8 -pady 4
+frame $p.actions
+button $p.actions.time -text "Time zone" -command {term "Time zone (root password)" su -c {dpkg-reconfigure tzdata}}
+button $p.actions.admin -text "Administrator" -command {term "Administrator login" su -}
+button $p.actions.refresh -text "Refresh" -command updateStatus
+pack $p.actions.time $p.actions.admin $p.actions.refresh -side left -expand 1 -fill x -padx 2
+pack $p.actions -fill x -padx 8 -pady 5
+frame $p.details
+# Keep the widget path stable for updateStatus; no polling in this panel.
+text $p.info -height 15 -wrap word -font {{Liberation Mono} 12} -background white -foreground black -yscrollcommand [list $p.scroll set]
+scrollbar $p.scroll -orient vertical -width 40 -command [list $p.info yview]
+pack $p.scroll -side right -fill y
+pack $p.info -fill both -expand 1 -padx 8 -pady 5
+button .close -text "Close settings" -command {destroy .}
+pack .close -fill x -padx 12 -pady 8
+lightRefresh
+updateStatus

@@ -1,0 +1,45 @@
+name: Rebuild original FEL host inputs
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fel-host:
+    name: Rebuild recovered FEL host inputs (independent of SPL candidates)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and fingerprint host build dependencies
+        id: tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld llvm libusb-1.0-0-dev libfdt-dev zlib1g-dev pkg-config
+          fingerprint=$(dpkg-query -W -f='${Package}=${Version}\n' clang lld llvm gcc libc6-dev libusb-1.0-0-dev libfdt-dev zlib1g-dev pkg-config | sha256sum | cut -c1-20)
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: host-cache
+        with:
+          path: fel-host-cache
+          key: pb626-fel-host-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/build-fel-host.sh', 'BT0-uncaged/fel-entry.S', 'patches/sunxi-fel-keep-mmu-off.patch') }}
+      - name: Compile on cache miss
+        if: steps.host-cache.outputs.cache-hit != 'true'
+        run: bash BT0-uncaged/build-fel-host.sh fel-host-cache
+      - name: Validate cached or compiled host tools and stamp current run
+        run: |
+          (cd fel-host-cache && sha256sum -c SHA256SUMS)
+          cp -a fel-host-cache fel-host
+          ./fel-host/sunxi-fel --list-socs | grep -Eq '1625: A13'
+          git rev-parse HEAD > fel-host/BUILD-COMMIT
+          (cd fel-host && sha256sum BUILD-COMMIT >> SHA256SUMS)
+          echo "FEL host cache hit: ${{ steps.host-cache.outputs.cache-hit }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-fel-host-tools
+          path: fel-host/
+          if-no-files-found: error
+      - name: Verify historical upstream SPL availability (no binary publication)
+        run: |
+          python3 scripts/prepare-fel-inputs.py --host fel-host --output "$RUNNER_TEMP/verified-fel"
+          rm -rf "$RUNNER_TEMP/verified-fel"

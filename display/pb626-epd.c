@@ -55,12 +55,25 @@ struct update {
 	unsigned int count;
 };
 
+/* WBF stores four 2-bit transition signals in each byte. Keep that
+ * representation in the temperature cache; expand only the active plan. */
+struct cached_update {
+	uint8_t lut[MAX_PHASES * LUT_BYTES];
+	unsigned int count;
+};
+
+static inline uint8_t packed_signal(const uint8_t *lut, unsigned int t)
+{
+	return (lut[t / 4] >> (2 * (t % 4))) & 3;
+}
+
 struct span_range {
 	unsigned short first, end;
 };
 
 struct buffer {
 	uint32_t *data;
+	size_t length;
 	struct span_range rows[GATES];
 };
 
@@ -75,11 +88,12 @@ struct renderer {
 	unsigned int patterns_count;
 	struct buffer buffers[QUEUE_SIZE];
 	struct waveform wbf;
-	struct update cache[DU4 + 1], planned;
+	struct cached_update cache[DU4 + 1];
+	struct update planned;
 	bool driven[DU4 + 1][TRANSITIONS];
 	uint64_t temperature_checked;
-	uint32_t neutral[FRAME_WORDS];
-	uint8_t previous[PIXELS], target[PIXELS];
+	uint32_t neutral_data[2][GROUPS];
+	uint8_t previous[PACKED_PIXELS];
 	uint16_t transitions[PIXELS];
 	struct span_range rows[GATES];
 	bool known, auto_fast;
@@ -133,14 +147,16 @@ static size_t table_ptr(const struct waveform *wbf, size_t offset, bool checked)
 	return addr;
 }
 
-static int temperature_mc(void)
+static bool read_temperature_mc(int *result)
 {
 	glob_t hwmon = {0};
 	int temperature = 0;
 	bool found = false;
 
-	if (glob("/sys/class/hwmon/hwmon*/name", 0, NULL, &hwmon))
-		fail("could not enumerate hwmon devices");
+	if (glob("/sys/class/hwmon/hwmon*/name", 0, NULL, &hwmon)) {
+		globfree(&hwmon);
+		return false;
+	}
 	for (size_t i = 0; i < hwmon.gl_pathc; i++) {
 		const char *name = hwmon.gl_pathv[i];
 		char id[32], path[256];
@@ -159,9 +175,22 @@ static int temperature_mc(void)
 		break;
 	}
 	globfree(&hwmon);
-	if (!found)
-		fail("could not read the TPS65185 panel temperature");
-	return temperature;
+	if (found)
+		*result = temperature;
+	return found;
+}
+
+/* Retry transient reads before driving the panel; never guess temperature. */
+static int temperature_mc(void)
+{
+	int temperature;
+	for (unsigned int attempt = 0; attempt < 5; attempt++) {
+		if (read_temperature_mc(&temperature))
+			return temperature;
+		if (attempt < 4)
+			usleep(250000);
+	}
+	fail("could not read the TPS65185 panel temperature after retries");
 }
 
 static void load_waveform(struct waveform *wbf, const char *path)
@@ -239,24 +268,22 @@ static size_t decode(const struct waveform *wbf, enum mode mode, uint8_t *lut)
 
 static void cache_mode(struct renderer *renderer, enum mode mode)
 {
-	struct update *decoded = &renderer->cache[mode];
+	struct cached_update *decoded = &renderer->cache[mode];
 	if (decoded->count)
 		return;
 
 	uint64_t start = now_us();
-	uint8_t packed[MAX_PHASES * LUT_BYTES];
-	decoded->count = decode(&renderer->wbf, mode, packed);
+	decoded->count = decode(&renderer->wbf, mode, decoded->lut);
 	memset(renderer->driven[mode], 0, sizeof(renderer->driven[mode]));
 	for (unsigned int i = 0; i < decoded->count; i++) {
-		const uint8_t *lut = packed + i * LUT_BYTES;
-		struct phase *phase = &decoded->phases[i];
+		const uint8_t *lut = decoded->lut + i * LUT_BYTES;
+		uint8_t first = packed_signal(lut, 0);
 		for (unsigned int t = 0; t < TRANSITIONS; t++) {
-			uint8_t signal = (lut[t / 4] >> (2 * (t % 4))) & 3;
+			uint8_t signal = packed_signal(lut, t);
 			if (signal == 3)
 				fail("unsupported WBF source voltage");
-			phase->lut[t] = signal;
 			renderer->driven[mode][t] |= signal != 0;
-			if (mode == INIT && signal != phase->lut[0])
+			if (mode == INIT && signal != first)
 				fail("RESET requires a uniform waveform");
 		}
 	}
@@ -277,12 +304,13 @@ static bool supports(const struct renderer *renderer, enum mode mode, const bool
 static void plan(struct renderer *renderer, enum mode mode, const bool *active)
 {
 	struct update *update = &renderer->planned;
-	const struct update *decoded = &renderer->cache[mode];
+	const struct cached_update *decoded = &renderer->cache[mode];
 	update->count = 0;
 	for (unsigned int i = 0; i < decoded->count; i++) {
 		uint8_t phase[TRANSITIONS];
+		const uint8_t *lut = decoded->lut + i * LUT_BYTES;
 		for (unsigned int t = 0; t < TRANSITIONS; t++)
-			phase[t] = !active || active[t] ? decoded->phases[i].lut[t] : 0;
+			phase[t] = !active || active[t] ? packed_signal(lut, t) : 0;
 
 		struct phase *last = update->count ? &update->phases[update->count - 1] : NULL;
 		if (last && !memcmp(last->lut, phase, sizeof(phase))) {
@@ -355,21 +383,31 @@ static size_t portrait_index(unsigned int gate, unsigned int source)
 	return source * WIDTH + (GATES - 1 - gate);
 }
 
-static bool load_state(uint8_t *previous, uint8_t *scan_order)
+/* Keep the gate-major disk format without a second full-size image. */
+static bool read_state_data(FILE *file, uint8_t *previous)
+{
+	uint8_t row[SOURCES];
+	bool valid = file != NULL;
+	for (unsigned int gate = 0; valid && gate < GATES; gate++) {
+		valid = fread(row, 1, sizeof(row), file) == sizeof(row);
+		for (unsigned int source = 0; valid && source < SOURCES; source++) {
+			valid = row[source] <= WHITE;
+			nibble_set(previous, portrait_index(gate, source), row[source]);
+		}
+	}
+	if (valid)
+		valid = fgetc(file) == EOF && !ferror(file);
+	if (!valid)
+		memset(previous, 0xff, PACKED_PIXELS);
+	return valid;
+}
+
+static bool load_state(uint8_t *previous)
 {
 	FILE *file = fopen(state_path, "rb");
-	bool valid = file && fread(scan_order, 1, PIXELS, file) == PIXELS &&
-		     fgetc(file) == EOF && !ferror(file);
+	bool valid = read_state_data(file, previous);
 	if (file)
 		fclose(file);
-	for (unsigned int gate = 0; valid && gate < GATES; gate++)
-		for (unsigned int source = 0; valid && source < SOURCES; source++) {
-			uint8_t level = scan_order[gate * SOURCES + source];
-			valid = level <= WHITE;
-			previous[portrait_index(gate, source)] = level;
-		}
-	if (!valid)
-		memset(previous, WHITE, PIXELS);
 	return valid;
 }
 
@@ -412,6 +450,16 @@ static void scan_template(uint32_t *frame)
 		out = span(out, 8, IDLE | oe);
 	}
 	span(out, 2 * CLOCKS, G_SP | S_SP);
+}
+
+/* Retain only the two data-row patterns used by render. */
+static void init_neutral_data(struct renderer *renderer)
+{
+	for (unsigned int row = 0; row < 2; row++) {
+		uint32_t data = BASE | (row ? S_OE : 0);
+		uint32_t *out = span(renderer->neutral_data[row], GATE_HIGH_CLOCKS, data | G_CLK);
+		span(out, GROUPS - GATE_HIGH_CLOCKS, data);
+	}
 }
 
 static uint32_t source_word(unsigned int data)
@@ -473,7 +521,7 @@ static void render(struct buffer *buffer, const struct renderer *renderer,
 		struct span_range row = reset ? (struct span_range){0, GROUPS} : renderer->rows[y];
 		size_t offset = HEADER_WORDS + (DATA_ROW + y) * CLOCKS + DATA_CLOCK;
 		uint32_t *out = buffer->data + offset;
-		const uint32_t *neutral = renderer->neutral + offset;
+		const uint32_t *neutral = renderer->neutral_data[y != 0];
 		if (old.end > old.first && row.end == row.first) {
 			memcpy(out + old.first, neutral + old.first, (old.end - old.first) * sizeof(*out));
 		} else if (row.end > row.first) {
@@ -533,8 +581,32 @@ static void allocate_queue(struct renderer *renderer)
 						 MAP_SHARED, renderer->fd, info.m.offset);
 		if (renderer->buffers[i].data == MAP_FAILED)
 			fail("could not map an E Ink scanout buffer");
-		memcpy(renderer->buffers[i].data, renderer->neutral, FRAME_BYTES);
+		renderer->buffers[i].length = info.length;
+		memset(renderer->buffers[i].data, 0, FRAME_BYTES);
+		scan_template(renderer->buffers[i].data);
 	}
+}
+
+/* Only called in the command loop, after the preceding update's
+ * STREAMOFF and ACK. Keep the exclusive device fd and logical history.
+ * The next apply() lazily recreates the full eight-buffer queue. */
+static void release_queue(struct renderer *renderer)
+{
+	if (!renderer->buffers_count)
+		return;
+	for (unsigned int i = 0; i < renderer->buffers_count; i++) {
+		struct buffer *buffer = &renderer->buffers[i];
+		if (munmap(buffer->data, buffer->length))
+			fail("could not unmap idle scanout buffer");
+		memset(buffer, 0, sizeof(*buffer));
+	}
+	struct v4l2_requestbuffers req = { .count = 0, .type = type,
+					  .memory = V4L2_MEMORY_MMAP };
+	if (retry_ioctl(renderer->fd, VIDIOC_REQBUFS, &req))
+		fail("could not release idle scanout queue");
+	renderer->buffers_count = 0;
+	if (renderer->profile)
+		fprintf(stderr, "epd: idle DMA queue released\n");
 }
 
 static void enqueue(struct renderer *renderer, unsigned int index, const struct phase *phase,
@@ -662,7 +734,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 	bool changed = false;
 
 	if (reset_first)
-		memset(previous, WHITE, PIXELS);
+		memset(previous, 0xff, PACKED_PIXELS);
 	if (mode != INIT) {
 		for (unsigned int gate = 0; gate < GATES; gate++) {
 			struct span_range old = renderer->rows[gate];
@@ -690,7 +762,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 						}
 						if (sample & ~(SCRUB | WHITE))
 							fail("invalid E Ink pixel");
-						unsigned int old = previous[portrait], level = sample & WHITE;
+						unsigned int old = nibble_get(previous, portrait), level = sample & WHITE;
 						if (old == level && !(mode == GC16 && (sample & SCRUB)))
 							continue;
 						unsigned int gate = GATES - 1 - x;
@@ -758,7 +830,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 			for (unsigned int source = 4 * row.first; source < 4 * row.end; source++) {
 				uint16_t transition = renderer->transitions[gate * SOURCES + source];
 				if (transition)
-					previous[portrait_index(gate, source)] = (transition - 1) >> 4;
+					nibble_set(previous, portrait_index(gate, source), (transition - 1) >> 4);
 			}
 		}
 	renderer->known = true;
@@ -769,19 +841,28 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 	}
 }
 
-static void save_state(const uint8_t *previous, uint8_t *scan_order)
+static bool write_state_data(FILE *file, const uint8_t *previous)
 {
-	/* Keep the on-disk format compatible with the one-shot driver. */
-	for (unsigned int gate = 0; gate < GATES; gate++)
+	uint8_t row[SOURCES];
+	for (unsigned int gate = 0; gate < GATES; gate++) {
 		for (unsigned int source = 0; source < SOURCES; source++)
-			scan_order[gate * SOURCES + source] = previous[portrait_index(gate, source)];
+			row[source] = nibble_get(previous, portrait_index(gate, source));
+		if (fwrite(row, 1, sizeof(row), file) != sizeof(row))
+			return false;
+	}
+	return true;
+}
+
+static void save_state(const uint8_t *previous)
+{
 	char pending[] = "/run/pb626-epd.XXXXXX";
 	int tmp = mkstemp(pending);
 	if (tmp < 0)
 		fail("could not create screen state");
 	FILE *file = fdopen(tmp, "wb");
-	bool saved = file && fwrite(scan_order, 1, PIXELS, file) == PIXELS;
-	if (!file || fclose(file) || !saved || rename(pending, state_path)) {
+	bool saved = file && write_state_data(file, previous);
+	int close_error = file ? fclose(file) : close(tmp);
+	if (!saved || close_error || rename(pending, state_path)) {
 		unlink(pending);
 		fail("could not save screen state");
 	}
@@ -841,6 +922,10 @@ int main(int argc, char **argv)
 	else if (!strcmp(style, "indexed")) {
 		renderer.style = RENDER_INDEXED;
 		renderer.group_codes = malloc(GATES * GROUPS);
+		if (!renderer.group_codes) {
+			fprintf(stderr, "pb626-epd: indexed allocation failed, using staged renderer\n");
+			renderer.style = RENDER_STAGED;
+		}
 	} else {
 		fail("PB626_EPD_RENDER must be scalar, staged or indexed");
 	}
@@ -864,8 +949,8 @@ int main(int argc, char **argv)
 	};
 	if (retry_ioctl(fd, SUN5I_EINK_S_TIMING, &timing))
 		fail("could not select the factory WBF scan rate");
-	scan_template(renderer.neutral);
-	renderer.known = load_state(renderer.previous, renderer.target);
+	init_neutral_data(&renderer);
+	renderer.known = load_state(renderer.previous);
 
 	if (serve) {
 		char *end;
@@ -880,6 +965,12 @@ int main(int argc, char **argv)
 			fail("could not map shared frame");
 		int command;
 		while ((command = fgetc(stdin)) != EOF) {
+			if (command == RELEASE_QUEUE) {
+				release_queue(&renderer);
+				if (fputc(command, stdout) == EOF || fflush(stdout))
+					fail("could not acknowledge queue release");
+				continue;
+			}
 			switch (command) {
 			case PREVIEW: mode = DU; break;
             case PREVIEW_A2: mode = A2; break;
@@ -896,15 +987,20 @@ int main(int argc, char **argv)
 		if (ferror(stdin))
 			fail("could not read update command");
 	} else {
+		uint8_t *target = NULL;
 		if (mode != INIT) {
-			read_image(argv[3], renderer.target);
+			target = malloc(PIXELS);
+			if (!target)
+				fail("could not allocate one-shot image");
+			read_image(argv[3], target);
 			if (mode == GC16)
 				for (size_t i = 0; i < PIXELS; i++)
-					renderer.target[i] |= SCRUB;
+					target[i] |= SCRUB;
 		}
-		apply(&renderer, mode, renderer.target, NULL, false, false);
+		apply(&renderer, mode, target, NULL, false, false);
+		free(target);
 	}
 	if (renderer.known)
-		save_state(renderer.previous, renderer.target);
+		save_state(renderer.previous);
 	return EXIT_SUCCESS;
 }

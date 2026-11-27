@@ -46,6 +46,26 @@ class NativeImage(unittest.TestCase):
             for invalid in ("", "plaintext", "$6$salt$abc", h+":bad"):
                 with self.assertRaises(SystemExit):
                     b.set_root_password(root,invalid)
+    def test_native_init_profiles(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            (root/"etc").mkdir()
+            (root/"usr/sbin").mkdir(parents=True)
+            (root/"usr/lib/systemd/system").mkdir(parents=True)
+            (root/"var/lib/dpkg").mkdir(parents=True)
+            (root/"sbin").symlink_to("usr/sbin")
+            (root/"etc/pb626-image-id").write_text("pb626-native-debian13-armhf-v1\n")
+            (root/"usr/sbin/init").symlink_to("../lib/systemd/systemd")
+            (root/"usr/lib/systemd/systemd").touch()
+            (root/"usr/lib/systemd/system/pb626-desktop.service").touch()
+            (root/"var/lib/dpkg/status").touch()
+            b.validate_native_init(root)
+            (root/"usr/lib/systemd/system/pb626-desktop.service").unlink()
+            with self.assertRaises(SystemExit):
+                b.validate_native_init(root)
+            (root/"etc/pb626-image-id").write_text("unknown\n")
+            with self.assertRaises(SystemExit):
+                b.validate_native_init(root)
     def test_regular(self):
         with self.assertRaises(SystemExit):
             b.regular(Path("/dev/null"))

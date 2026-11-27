@@ -28,6 +28,19 @@ native and recovery; only the board DTB controls hardware binding.
   autoload remains blacklisted, and explicit modprobe lima can test it.
   No standard sun4i DRM KMS, legacy framebuffer or fbcon; keep VT for Xorg.
 
+## Multimedia and inherited defaults
+
+The resolved kernel from artifact 15105283721 (before this change) had
+DVB_CORE built in, 115 DVB frontend modules, 38 tuner modules and one DVB
+SPI module, totaling 2,653,016 bytes of module files. EXPERT changes the
+default of MEDIA_SUPPORT_FILTER. Enable that filter explicitly and retain
+platform V4L2, the E Ink output driver and its DMA-contiguous VB2 backend.
+Disable camera, analog/digital TV, radio, SDR, media test and automatic
+ancillary driver selection. Reject any resolved DVB/tuner modules. No
+change to display timings or the DMA queue. Module storage savings are
+not equivalent to resident RAM savings; compare the newly built zImage
+and the running device before claiming a RAM reduction.
+
 ## Memory and scheduling
 
 The upstream default CMA DT pool was 96 MiB even though the kernel
@@ -53,7 +66,7 @@ does not create application memory limits.
 Use HZ=100, NO_HZ_IDLE and high-resolution timers. Verify touch,
 USB ACM and E Ink latency/refresh stability. Keep cpufreq/cpuidle,
 thermal protection and suspend support. Native zram is 128 MiB logical,
-LZ4, no backing disk, per-entry tracking, recompression or zswap. The
+LZ4, no backing disk, per-entry tracking (including access timestamps), recompression or zswap. The
 size is not preallocated; observe mm_stat and swap pressure rather than
 assuming a fixed compression ratio. Existing swappiness=100 is retained
 until measured.
@@ -83,3 +96,14 @@ Compare the paired artifacts to the last known-good kernel:
 
 The firmware build checks policy, not physical hardware. Keep the last
 verified recovery and native images until these checks pass.
+
+## Debian 13 userspace compatibility
+
+The native Debian candidate uses systemd and iwd. Keep FHANDLE, POSIX_TIMERS,
+KCMP, TMPFS_XATTR, TMPFS/EXT4 POSIX ACLs and AUTOFS_FS for standard systemd
+interfaces. The legacy UEVENT_HELPER_PATH is empty, firmware user-helper
+fallback is disabled, and the independent FEL recovery remains supported.
+Explicit keys, AF_ALG hash/skcipher, AES, ECB/CBC, HMAC/CMAC, MD5/SHA1/SHA2,
+RSA and X.509/PKCS8 support cover the iwd kernel crypto contract. This is
+not a reason to enable broad BPF or unrelated board drivers. See
+DEBIAN-MIGRATION.md for qualification.

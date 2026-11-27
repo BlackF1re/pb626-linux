@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+# Xorg and the scanout bridge own hardware; no ordinary client runs as root.
+cd /home/reader
+exec runuser -u reader -- dbus-run-session -- /usr/bin/pb626-xsession "$1" "$2"

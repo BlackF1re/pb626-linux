@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, enhance/native-reliability]
     paths:
       - '.github/workflows/ci.yml'
       - '.github/workflows/megi-fel.yml'
@@ -14,6 +14,9 @@ on:
       - 'patches/**'
       - 'scripts/**'
       - 'tests/**'
+      - 'diagnostics/**'
+      - '.github/workflows/source-bootloader.yml'
+      - '.github/workflows/request-firmware.yml'
       - '!**/*.md'
   pull_request:
     branches: [main]
@@ -28,8 +31,12 @@ on:
       - 'patches/**'
       - 'scripts/**'
       - 'tests/**'
+      - 'diagnostics/**'
+      - '.github/workflows/source-bootloader.yml'
+      - '.github/workflows/request-firmware.yml'
       - '!**/*.md'
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -62,15 +69,52 @@ jobs:
           sh -n boot/init-megi
           for f in boot/pb626-native-{desktop,console} boot/native/init.d/* boot/native/pb626-* display/pb626-{desktop,xsession}; do sh -n "$f"; done
           bash -n scripts/build-native-rootfs.sh
+          bash -n scripts/build-debian-rootfs.sh
+          bash -n scripts/build-debian-base.sh
+          bash -n scripts/compile-debian-native.sh
+          bash -n scripts/build-megi-kernel.sh
+          bash -n BT0-uncaged/build-from-source.sh
+          bash -n BT0-uncaged/build-fel-host.sh
+          python3 -m py_compile scripts/prepare-fel-inputs.py
+          python3 -m py_compile BT0-uncaged/prepare-source-resume.py BT0-uncaged/prepare-source-hook.py
+          gcc -O2 -Wall -Wextra -Werror diagnostics/pb626-diag-clock.c -o /tmp/pb626-diag-clock
+          /tmp/pb626-diag-clock resolution
+          /tmp/pb626-diag-clock stamp
+          /tmp/pb626-diag-clock memory
+          /tmp/pb626-diag-clock run sleep 0.05
+          rc=0; /tmp/pb626-diag-clock run sh -c 'exit 7' || rc=$?; test "$rc" = 7
+          sh -n diagnostics/pb626-diagnostics
+          sh diagnostics/pb626-diagnostics --self-test
+          sh diagnostics/pb626-diagnostics --help
+          if sh diagnostics/pb626-diagnostics --interval 0; then exit 1; fi
+          if sh diagnostics/pb626-diagnostics --input /dev/sda 1; then exit 1; fi
+          bash -n scripts/build-debian-recovery.sh
+          bash -n scripts/prepare-install.sh
+          bash -n scripts/build-direct-image.sh
+          sh -n scripts/restore/pb626-install-direct.sh
+          sh -n scripts/apply-live-desktop-fixes.sh
+          python3 -m py_compile scripts/installer/install-direct.py
+          python3 tests/test-direct-install.py
+          sh -n scripts/restore/pb626-net-dispatch.sh
+          python3 -m py_compile scripts/installer/dump-network.py scripts/build-rootfs-bmap.py
+          python3 tests/test-network-install.py
+          sh -n boot/recovery/init
+          sh -n scripts/installer/pb626.sh
+          gcc -O2 -Wall -Wextra -Werror boot/debian/pb626-charge.c -o /tmp/test-pb626-charge
+          /tmp/test-pb626-charge --self-test
+          sh -n boot/debian/pb626-admin
+          sh -n boot/debian/pb626-user-session
           sh tests/test-native-services.sh
+          sh tests/test-debian-settings.sh
           if ! command -v tclsh >/dev/null; then sudo apt-get update; sudo apt-get install -y --no-install-recommends tcl; fi
-          tclsh tests/check-control-center.tcl display/pb626-control-center display/pb626-open-document
+          tclsh tests/check-control-center.tcl display/pb626-control-center display/pb626-debian-settings display/pb626-open-document
           bash -n scripts/fel-boot.sh
           bash -n scripts/configure-megi-kernel.sh
           bash -n scripts/build-alpine-rootfs.sh
           bash -n scripts/build-desktop-base.sh
           bash -n scripts/build-megi-desktop.sh
           sh -n display/pb626-settings
+          bash -n display/pb626-xsession
           bash -n scripts/build-megi-variants.sh
           bash -n scripts/assemble-megi-ram.sh
           shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh scripts/pb626-network.sh
@@ -78,7 +122,7 @@ jobs:
       - name: Parse Windows FEL launchers
         run: |
           pwsh -NoProfile -Command '
-            foreach ($file in @("scripts/Start-PB626.ps1", "scripts/Start-PB626Desktop.ps1")) {
+            foreach ($file in @("scripts/Start-PB626.ps1", "scripts/Start-PB626Desktop.ps1", "scripts/installer/PB626.ps1", "scripts/restore/Backup-PB626Fast.ps1", "scripts/restore/Restore-PB626Fast.ps1")) {
               $tokens = $errors = $null
               [void][System.Management.Automation.Language.Parser]::ParseFile(
                 "$PWD/$file", [ref]$tokens, [ref]$errors)
@@ -104,9 +148,16 @@ jobs:
         run: |
           set -euo pipefail
           clang --target=armv7a-none-eabi -c BT0-uncaged/early-menu.S -o /tmp/menu.o
-          ld.lld -Ttext=0x5000 -e _start /tmp/menu.o -o /tmp/menu.elf
+          ld.lld --image-base=0x0 -Ttext=0x5000 -e _start /tmp/menu.o -o /tmp/menu.elf
           llvm-objcopy -O binary -j .text /tmp/menu.elf /tmp/menu.raw
           python3 BT0-uncaged/test_hook.py --hook-only /tmp/menu.raw
+          python3 BT0-uncaged/test_recover_base.py
+          cc -std=c99 -O2 -Wall -Wextra -Werror BT0-uncaged/test-led-morse.c -o /tmp/test-led-morse
+          /tmp/test-led-morse
+          cc -std=c99 -O2 -Wall -Wextra -Werror -I BT0-uncaged/test-stubs -I BT0-uncaged BT0-uncaged/test-led-runtime.c -o /tmp/test-led-runtime
+          /tmp/test-led-runtime
+          python3 -m py_compile BT0-uncaged/prepare-source-led.py
+          python3 tests/test-source-led.py
           python3 -m py_compile BT0-uncaged/build.py BT0-uncaged/pack-kernel.py
   renderer:
     name: Host-side E Ink renderer tests
@@ -117,13 +168,83 @@ jobs:
       - name: Install X11 test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev
-      - name: Fetch pinned kernel UAPI and test renderer
+          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth tk \
+            libfakekey-dev libxft-dev libexpat1-dev libpng-dev libxrender-dev fonts-dejavu-core x11-utils \
+            xserver-xorg-dev xutils-dev libpciaccess-dev autoconf automake libtool pkg-config
+      - name: Fetch pinned kernel source files without raw-content rate limits
         run: |
           set -euo pipefail
+          root=/tmp/pb626-pinned-kernel
+          pin=facc87117511221bb61410e3f92ad8579697f736
+          rm -rf "$root"
+          git init -q "$root"
+          git -C "$root" -c protocol.version=2 fetch --depth=1 --filter=blob:none https://github.com/Arnavion/linux.git "$pin"
+          test "$(git -C "$root" rev-parse FETCH_HEAD)" = "$pin"
+          mkdir -p "$root/.git/info"
+          {
+            for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
+              sed -n 's|^--- a/||p' "$patch"
+            done
+            printf '%s\n' include/uapi/linux/sun5i-eink.h
+          } | sort -u | sed 's|^|/|' > "$root/.git/info/sparse-checkout"
+          git -C "$root" config core.sparseCheckout true
+          git -C "$root" checkout --detach FETCH_HEAD
           mkdir -p /tmp/pb626-uapi/linux
-          curl -fsSL --retry 3 https://raw.githubusercontent.com/Arnavion/linux/facc87117511221bb61410e3f92ad8579697f736/include/uapi/linux/sun5i-eink.h -o /tmp/pb626-uapi/linux/sun5i-eink.h
+          cp "$root/include/uapi/linux/sun5i-eink.h" /tmp/pb626-uapi/linux/sun5i-eink.h
+          for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
+            git -C "$root" apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C "$root" apply "$GITHUB_WORKSPACE/$patch"
+          done
+      - name: Test renderer
+        run: |
+          set -euo pipefail
+          test -s /tmp/pb626-uapi/linux/sun5i-eink.h
           gcc -O2 -Wall -Wextra -Werror -I /tmp/pb626-uapi display/test-pb626-epd.c -o /tmp/test-pb626-epd
           /tmp/test-pb626-epd
-          gcc -O2 -Wall -Wextra -Werror display/test-pb626-x11-epd.c -o /tmp/test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lm
+          gcc -O2 -Wall -Wextra -Werror display/test-pb626-x11-epd.c -o /tmp/test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
           /tmp/test-pb626-x11-epd
+          PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-x11-epd
+          PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x24' /tmp/test-pb626-x11-epd
+          xvfb-run -a -s '-screen 0 760x1024x16' wish tests/test-debian-settings.tcl
+      - name: Smoke-test pinned Matchbox Keyboard with the PB626 flat layout
+        run: |
+          set -euo pipefail
+          src=/tmp/pb626-matchbox-keyboard
+          rev=630d89068dc0a1e9199306d405cb32f892dfa4d3
+          rm -rf "$src"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 https://git.yoctoproject.org/matchbox-keyboard "$rev"
+          git -C "$src" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$rev"
+          cp display/matchbox-keyboard-eink.patch "$src/"
+          cd "$src"
+          patch -p1 < matchbox-keyboard-eink.patch
+          autoreconf -fi
+          CFLAGS="-O2 -std=gnu17" ./configure --prefix=/usr --sysconfdir=/etc --disable-shared --enable-static
+          make -j2
+          cd "$GITHUB_WORKSPACE"
+          PB626_LAYOUT="$GITHUB_WORKSPACE/display/keyboard-us.xml" \
+            xvfb-run -a -s '-screen 0 760x1024x24' sh -eu -c '
+              export MB_KBD_CONFIG="$PB626_LAYOUT"
+              /tmp/pb626-matchbox-keyboard/src/matchbox-keyboard &
+              pid=$!
+              trap "kill $pid 2>/dev/null || true" EXIT
+              sleep 1
+              xwininfo -root -tree | grep -F '"Keyboard"'
+              kill -0 "$pid"
+            '
+      - name: Compile the optional shared DDX against host Xorg headers
+        run: |
+          set -euo pipefail
+          git init -q /tmp/pb626-ddx
+          git -C /tmp/pb626-ddx fetch -q --depth 1 https://github.com/X11Libre/xf86-video-dummy.git 68e02860d9ee6d65733457e689d180653fc9829f
+          git -C /tmp/pb626-ddx checkout -q --detach FETCH_HEAD
+          test "$(git -C /tmp/pb626-ddx rev-parse HEAD)" = 68e02860d9ee6d65733457e689d180653fc9829f
+          cp display/pb626-ddx-fb.h /tmp/pb626-ddx/src/
+          patch --fuzz=0 -d /tmp/pb626-ddx -p1 < display/xorg-dummy-pb626-shared.patch
+          cd /tmp/pb626-ddx
+          autoreconf -fi
+          ./configure --prefix=/usr
+          make -j2
+          test -s src/.libs/dummy_drv.so
+          # Compilation only: this runner need not have a real Xorg VT.
