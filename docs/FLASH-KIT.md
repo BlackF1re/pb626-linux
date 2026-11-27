@@ -21,8 +21,7 @@ FEL after a corrupt SPL has not been demonstrated independently.
 ## One-time computer setup
 
 Windows 10/11: use the built-in Windows PowerShell 5.1, install Ubuntu WSL2 and usbipd-win
-(`winget install Microsoft.PowerShell`, `winget install dorssel.usbipd-win`,
-`wsl --install -d Ubuntu`). Complete Ubuntu first-run setup. In Ubuntu:
+(`winget install dorssel.usbipd-win`, `wsl --install -d Ubuntu`). Complete Ubuntu first-run setup. In Ubuntu:
 `sudo apt install python3 e2fsprogs device-tree-compiler mtools clang lld llvm usbutils libusb-1.0-0 openssl`.
 Run the kit elevated if usbipd must bind the cold FEL device.
 
