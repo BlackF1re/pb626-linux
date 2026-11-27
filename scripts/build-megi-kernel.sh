@@ -46,7 +46,7 @@ cp linux/.config kernel-cache/pb626-megi.config
 release=$(sed -n 's/^#define UTS_RELEASE "\(.*\)"/\1/p' linux/include/generated/utsrelease.h)
 test -n "$release"
 printf '%s\n' "$release" > kernel-cache/KERNELRELEASE
-make -C linux modules_install KERNELRELEASE="$release" INSTALL_MOD_PATH="$PWD/module-root" DEPMOD=true
+make -C linux modules_install KERNELRELEASE="$release" INSTALL_MOD_PATH="$PWD/module-root" INSTALL_MOD_STRIP=1 DEPMOD=true
 depmod -b module-root "$release"
 tar -C module-root -czf kernel-cache/kernel-modules.tar.gz lib/modules
 printf '%s\n' 'Tag: orange-pi-7.2-20260903-2131' \
