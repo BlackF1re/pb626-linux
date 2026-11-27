@@ -28,6 +28,23 @@ if ($installerText -match '\$IsWindows|\$IsLinux|#Requires\s+-Version\s+7') {
 if ($installerText -notmatch '#Requires\s+-Version\s+5\.1') {
     throw 'The installer must explicitly require Windows PowerShell 5.1 or newer.'
 }
+# Execute the exact Python preflight argument through a native executable
+# using PowerShell 5.1 array splatting, rather than just parsing the script.
+$preflight = @($installerText -split '\r?\n' | Where-Object {
+    $_.StartsWith("Run-Linux @('python3','-c',")
+})
+if ($preflight.Count -ne 1) { throw 'Expected one Python preflight invocation' }
+function Run-Linux([string[]]$Arguments) {
+    if ($Arguments[0] -ne 'python3') { throw 'Unexpected preflight executable' }
+    $nativeArgs = @($Arguments | Select-Object -Skip 1)
+    & python.exe @nativeArgs
+    if ($LASTEXITCODE -ne 0) { throw 'Native Python argument forwarding failed' }
+}
+& ([scriptblock]::Create($preflight[0]))
+if ($installerText -notmatch [regex]::Escape("Run-Linux @('ip','-Version')")) {
+    throw 'Missing independent iproute2 preflight'
+}
+Remove-Item Function:\Run-Linux
 $cmdText = [IO.File]::ReadAllText($cmdFile)
 if ($cmdText -notmatch 'powershell\.exe' -or $cmdText -match 'pwsh\.exe') {
     throw 'PB626.cmd must launch the built-in Windows PowerShell, not pwsh.'

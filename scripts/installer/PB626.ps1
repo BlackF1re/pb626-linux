@@ -148,7 +148,10 @@ if ($Action -eq 'InstallFromDump') {
 }
 # No automatic retry of SPL. The previous launcher is preserved unchanged
 # in its FEL algorithm; this supplies local paths and attaches USB NCM.
-Run-Linux @('python3','-c','import sys, shutil; assert sys.version_info >= (3,7) and shutil.which("ip"), "Python 3.7+ and iproute2 required"')
+# Windows PowerShell 5.1 strips embedded double quotes when invoking native programs.
+# Keep the Python argument quote-free and check iproute2 independently.
+Run-Linux @('python3','-c','import sys; assert sys.version_info >= (3,7)')
+Run-Linux @('ip','-Version')
 if ($Action -eq 'Install') { Run-Linux @('openssl','version') }
 if (!$UseRunningRecovery) {
     Write-Host 'Power the reader fully off, unplug it, hold Menu and connect USB.'
