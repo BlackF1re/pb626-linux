@@ -247,7 +247,7 @@ jobs:
           done
           stat -c '%s bytes %n' kernel-stage/pb626-megi-zImage kernel-stage/kernel-modules.tar.gz
           echo "Installed loadable modules:"
-          tar -tzf kernel-stage/kernel-modules.tar.gz | awk '/\\.ko(\\.(gz|xz|zst))?$/ {n++} END {print n+0}'
+          tar -tzf kernel-stage/kernel-modules.tar.gz | awk '/[.]ko([.](gz|xz|zst))?$/ {n++} END {print n+0}'
       - name: Restore static RAM E Ink worker
         if: ${{ !inputs.debian_only }}
         id: ram-worker
