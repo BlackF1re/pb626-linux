@@ -17,6 +17,7 @@ truncate -s $((14260224*512)) "$work/p1.ext4"
 sudo mke2fs -q -F -t ext4 -b 4096 -E lazy_itable_init=0,lazy_journal_init=0 -d "$root" "$work/p1.ext4"
 sudo e2fsck -fn "$work/p1.ext4"
 test "$(stat -c %s "$work/p1.ext4")" = 7301234688
+python3 "$repo/scripts/build-rootfs-bmap.py" "$work/p1.ext4" "$out/pb626-rootfs.bmap.json"
 gzip -1 -n -c "$work/p1.ext4" > "$out/pb626-rootfs.ext4.gz.partial"
 gzip -t "$out/pb626-rootfs.ext4.gz.partial"
 mv "$out/pb626-rootfs.ext4.gz.partial" "$out/pb626-rootfs.ext4.gz"

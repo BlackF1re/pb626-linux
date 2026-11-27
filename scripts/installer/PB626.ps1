@@ -67,7 +67,7 @@ foreach ($line in Get-Content -LiteralPath $manifest) {
     $seen[$name]=$true
     if ((Get-FileHash -LiteralPath (Join-Path $kit $name)).Hash -ne $digest) { throw "Kit hash mismatch: $name" }
 }
-foreach ($required in @('recovery/fel-boot.sh','recovery/Start-PB626.ps1','recovery/SHA256SUMS','tools/Backup-PB626Fast.ps1','tools/Restore-PB626Fast.ps1','tools/SHA256SUMS.fast','tools/pb626-restore-fast.sh','tools/pb626-restore-scan.gz','source/scripts/prepare-install.sh','native/SHA256SUMS','native/BUILD-COMMIT','recovery/BUILD-COMMIT')) {
+foreach ($required in @('dump-network.py','recovery/fel-boot.sh','recovery/Start-PB626.ps1','recovery/SHA256SUMS','tools/Backup-PB626Fast.ps1','tools/Restore-PB626Fast.ps1','tools/SHA256SUMS.fast','tools/pb626-restore-fast.sh','tools/pb626-restore-scan.gz','source/scripts/prepare-install.sh','native/SHA256SUMS','native/BUILD-COMMIT','recovery/BUILD-COMMIT')) {
     if (!$seen.ContainsKey($required)) { throw "Missing kit file: $required" }
 }
 if ((Get-Content -Raw (Join-Path $kit 'native/BUILD-COMMIT')).Trim() -ne (Get-Content -Raw (Join-Path $kit 'recovery/BUILD-COMMIT')).Trim()) { throw 'Mixed source revisions' }
@@ -116,13 +116,9 @@ if (!$UseRunningRecovery -or $Action -in @('Install','InstallFromDump')) {
     if ((Get-FileHash -LiteralPath (Join-Path $lab 'direct-entry.bin')).Hash -ne '1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd') { throw 'Wrong entry stub' }
 }
 if ($Action -eq 'Install') {
-    foreach ($required in @('install-direct.py','native/pb626-rootfs.ext4.gz','native/pb626-bt0-menu.raw')) {
+    foreach ($required in @('install-direct.py','native/pb626-rootfs.ext4.gz','native/pb626-rootfs.bmap.json','native/pb626-bt0-menu.raw')) {
         if (!$seen.ContainsKey($required)) { throw "Missing direct-install artifact: $required. Download a new paired flash kit." }
     }
-    $python=if ($IsWindows) { 'python.exe' } else { 'python3' }
-    if (!(Get-Command $python -ErrorAction SilentlyContinue)) { throw 'Install Python 3.7+ and pyserial before using direct installation.' }
-    & $python -c 'import sys, serial; assert sys.version_info >= (3,7)'
-    if ($LASTEXITCODE -ne 0) { throw 'Direct install requires Python 3.7+ with pyserial. Windows: python -m pip install pyserial; Linux: install python3-serial.' }
     Write-Warning 'Direct install replaces p1 (all user data), raw kernel/DTB and tested BT0. No backup is created; do not unplug during writes.'
 }
 if ($Action -eq 'InstallFromDump') {
@@ -142,38 +138,49 @@ if (!$UseRunningRecovery) {
         Run-Linux @('env',"PB626_LAB_DIR=$lab","PB626_FEL_TOOL=$lab/sunxi-fel",'bash',(Join-Path $recovery 'fel-boot.sh'),$recovery,$variant,'diagnostic')
     }
 }
-$port=$null
-for ($i=0; $i -lt 45 -and !$port; $i++) {
-    $port=Find-RecoveryPort
-    if (!$port) { Start-Sleep -Seconds 1 }
+# The composite gadget must be attached to Linux as a whole, not opened
+# through Windows' serial driver. Keep ACM for an emergency shell.
+if ($IsWindows) {
+    $devices=@()
+    for ($i=0; $i -lt 45 -and $devices.Count -eq 0; $i++) {
+        $devices=@(& usbipd.exe list | Where-Object { $_ -match '^\s*\d+-\d+\s+0525:a4a7\b' })
+        if (!$devices.Count) { Start-Sleep -Seconds 1 }
+    }
+    if ($devices.Count -ne 1) { throw 'Expected one PB626 recovery USB gadget' }
+    $busid=[regex]::Match($devices[0],'^\s*(\d+-\d+)').Groups[1].Value
+    if ($devices[0] -notmatch 'Attached\s*$') {
+        if ($devices[0] -match 'Not shared\s*$') {
+            & usbipd.exe bind --busid $busid
+            if ($LASTEXITCODE -ne 0) { throw 'Run elevated PowerShell to bind the recovery gadget' }
+        }
+        & usbipd.exe attach --wsl --busid $busid
+        if ($LASTEXITCODE -ne 0) { throw 'Recovery USB attach failed' }
+    }
 }
-if (!$port) { throw 'No recovery ACM port. Do not repeat SPL without a full cold power cycle.' }
-Write-Host "Recovery transport: $port (board/CID still checked by protocol)"
-$backup=Join-Path $kit 'tools/Backup-PB626Fast.ps1'
-$restore=Join-Path $kit 'tools/Restore-PB626Fast.ps1'
+Run-Linux @('python3','-c','import sys; assert sys.version_info >= (3,7)')
+$direct=LinuxPath (Join-Path $kit 'install-direct.py')
+$dump=LinuxPath (Join-Path $kit 'dump-network.py')
+$sdargs=@()
+if ($SD) { $sdargs+= '--sd' }
 if ($Action -eq 'Install') {
-    & $python (Join-Path $kit 'install-direct.py') --kit $kit --port $port --distro $Distro
-    if ($LASTEXITCODE -ne 0) { throw 'Direct installation failed. Do not reboot a partially flashed reader.' }
+    Run-Linux @('python3',$direct,'--kit',(LinuxPath $kit),'--distro',$Distro)
 } elseif ($Action -eq 'InstallFromDump') {
     $null=New-Item -ItemType Directory -Force -Path $DataDir
     $stock=if ($StockDir) { $StockDir } else { Join-Path $DataDir 'stock' }
     $linux=Join-Path $DataDir ('linux-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
-    if ($SkipBackup) {
-        Write-Warning "No new backup will be made. Using $stock as the source of preserved factory data."
-    } elseif (Test-Path -LiteralPath $stock) {
-        $stock=Join-Path $DataDir ('backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
-        & $backup -Port $port -BackupDir $stock
-    } else {
-        & $backup -Port $port -BackupDir $stock
+    if (!$SkipBackup) {
+        if (Test-Path -LiteralPath $stock) { $stock=Join-Path $DataDir ('backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff')) }
+        Run-Linux @('python3',$dump,'backup',(LinuxPath $stock))
     }
     Run-Linux @('bash',(LinuxPath (Join-Path $kit 'source/scripts/prepare-install.sh')),(LinuxPath $stock),(LinuxPath (Join-Path $kit 'native')),(LinuxPath $lab),(LinuxPath $linux))
-    & $restore -Port $port -BackupDir $linux -Write
+    Run-Linux @('python3',$dump,'restore',(LinuxPath $linux))
 } elseif ($Action -eq 'Backup') {
     $null=New-Item -ItemType Directory -Force -Path $DataDir
-    $target=Join-Path $DataDir ('backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
-    & $backup -Port $port -BackupDir $target -SD:$SD
+    $target=Join-Path $DataDir ('backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+    Run-Linux (@('python3',$dump,'backup',(LinuxPath $target))+$sdargs)
 } else {
     $target=if ($ImageDir) { $ImageDir } else { Read-Host 'Full path to a verified image/backup directory' }
-    & $restore -Port $port -BackupDir $target -Write:($Action -in @('Restore','Flash')) -SD:$SD
+    $mode=if ($Action -eq 'Preflight') { 'preflight' } else { 'restore' }
+    Run-Linux (@('python3',$dump,$mode,(LinuxPath $target))+$sdargs)
 }
 Write-Host 'Operation complete. Only after successful verification may you disconnect the reader.'

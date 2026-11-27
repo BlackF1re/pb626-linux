@@ -1,3 +1,11 @@
+# USB Ethernet recovery (new paired kit)
+
+Normal Install, Backup, Restore and Preflight use a dedicated CDC NCM USB Ethernet link (169.254.62.1/30 device, .2 host; TCP 6262). ACM stays available for diagnostic/emergency shell access. Windows attaches the composite gadget to WSL via usbipd; use a WSL kernel with cdc_ncm and install iproute2, Python 3.7+ and openssl in WSL. Native Linux uses the same transport. No Windows Python/pyserial needed for normal installation. Existing ACM dump tools remain emergency tools only; never use them concurrently with the TCP service. The NCM driver and USB composite enumeration require physical qualification. The recovery service binds only usb0 and accepts only the dedicated peer; it is not a general remote shell. Do not bridge this interface to other networks.
+
+Direct Install requires the new paired kernel and recovery. The new kit includes a CI-generated ext4 allocation map; only chunks consisting entirely of filesystem-free zero blocks are omitted. This is not a secure erase of old free space. Mapped blocks are hash-verified and read back; full dumps are still byte-for-byte, with existing manifest filenames. A 4 MiB random TCP integrity test and verification of personalization input happen before the first write. Rootfs is written first, then personalized, then raw kernel/DTB, then exact BT0 last. No full backup is read or created by Install. A failed write is never automatically retried. Keep the book in recovery if it fails.
+
+`PB626.ps1 -Action Install -Distro XperiaDev` is unchanged on Windows. Do not use the old running recovery with the new kit; cold boot its paired RAM recovery first. The old ACM scripts in tools are reserved for emergencies. New network dump commands require exact CID and EXT_CSD layout; the legacy AllowOtherCard option is not provided by the normal launcher.
+
 # PB626 Debian flash kit (candidate)
 
 One artifact, `pb626-debian-flash-kit`, contains the same-run flashable native
@@ -46,7 +54,7 @@ recovery only, not an ordinary boot.
 
 Install now streams the Actions-built `native/pb626-rootfs.ext4.gz` directly into p1, personalizes it with the owner's waveform, VCOM, sleep artwork and a new root password, writes the paired raw kernel/DTB, then reconstructs and writes the tested BT0 last. Only those three ranges are touched. No full backup, backup manifest or local ext4 creation is required. Every written block is verified. The public CI-built `pb626-bt0-menu.raw` is applied to the exact hash-qualified local SPL; no local ARM compiler is used. The private base SPL is not redistributed. No automatic retry on a failed flash.
 
-Windows direct installation additionally needs Python 3.7+ with pyserial (`python -m pip install pyserial`); Linux needs `python3-serial`. OpenSSL in WSL/Linux hashes the chosen password. The launcher starts RAM recovery, detects the COM port, and invokes the direct installer. After the owner-specific files are read (not a full dump), type the displayed `FLASH CID` to write. A root password of at least four characters is accepted for local testing; use a strong unique password for real use. `-UseRunningRecovery` may be used with the paired RAM recovery already running.
+Python 3.7+, iproute2 and OpenSSL in WSL/Linux are required. The launcher starts RAM recovery, attaches its composite USB gadget to WSL, and invokes the TCP installer. After the owner-specific files are read (not a full dump), type the displayed `FLASH CID` to write. A root password of at least four characters is accepted for local testing; use a strong unique password for real use. `-UseRunningRecovery` may be used with the paired RAM recovery already running.
 
 Backup and Restore remain independent complete eMMC/SD dump operations. The legacy offline image builder remains available as InstallFromDump.
 

@@ -1,2 +1,2 @@
-Full pre-merge qualification: direct Actions-artifact install, exact rootfs ext4, tested BT0 patch, selective device writes, and independent full backup/restore.
-Inputs: aacd3ab804e785ea32ec137057e04efa7d321621
+Full qualification: USB NCM recovery, TCP direct install and full dumps, allocated ext4 map
+Parent: 0015bb516a0cb8af79f9e33d8583d14bf6d81f59

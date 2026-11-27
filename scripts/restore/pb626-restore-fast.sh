@@ -122,12 +122,13 @@ receive() {
     trap cleanup EXIT
     trap 'exit 1' HUP INT TERM
 
-    tty_settings=$(stty -g)
-    stty raw -echo
-    printf '\nPB626_READY\n'
+    if test "${PB626_TCP:-}" != 1; then
+        tty_settings=$(stty -g)
+        stty raw -echo
+        printf '\nPB626_READY\n'
+    fi
     timeout 90 head -c "$bytes" >"$work/payload"
-    stty "$tty_settings"
-    tty_settings=
+    if test -n "$tty_settings"; then stty "$tty_settings"; tty_settings=; fi
     test "$(wc -c <"$work/payload")" -eq "$bytes" || fail "Short USB transfer"
 }
 
@@ -225,16 +226,14 @@ case "$operation" in
                 fi
             fi
         fi
-        tty_settings=$(stty -g)
-        stty raw -echo
+        if test "${PB626_TCP:-}" != 1; then tty_settings=$(stty -g); stty raw -echo; fi
         if test "$operation" = backup-read-packed; then
             printf '\nPB626_DATA %s %s %s\n' "$bytes" "${digest%% *}" "$format"
         else
             printf '\nPB626_DATA %s %s\n' "$length" "${digest%% *}"
         fi
         test "$bytes" = 0 || cat "$payload"
-        stty "$tty_settings"
-        tty_settings=
+        if test -n "$tty_settings"; then stty "$tty_settings"; tty_settings=; fi
         printf '\nPB626_DATA_END\n'
         ;;
     backup-hash)
@@ -293,8 +292,7 @@ case "$operation" in
         unlocked=1
         if test -n "$force_ro"; then printf 0 >"$force_ro"; fi
         blockdev --setrw "$device"
-        dd if="$data" of="$device" bs="$chunk" seek="$2" conv=notrunc status=none
-        sync
+        dd if="$data" of="$device" bs="$chunk" seek="$2" conv=notrunc,fsync status=none
         lock_region || fail "Failed to relock $device"
         unlocked=0
         if test "$1" = sd; then sd_identity; fi

@@ -94,6 +94,9 @@ jobs:
           sh -n scripts/restore/pb626-install-direct.sh
           python3 -m py_compile scripts/installer/install-direct.py
           python3 tests/test-direct-install.py
+          sh -n scripts/restore/pb626-net-dispatch.sh
+          python3 -m py_compile scripts/installer/dump-network.py scripts/build-rootfs-bmap.py
+          python3 tests/test-network-install.py
           sh -n boot/recovery/init
           sh -n scripts/installer/pb626.sh
           gcc -O2 -Wall -Wextra -Werror boot/debian/pb626-charge.c -o /tmp/test-pb626-charge

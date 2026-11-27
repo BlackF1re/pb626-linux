@@ -38,7 +38,7 @@ root="$work/root"
 sudo install -d "$root"/{bin,sbin,usr/bin,usr/sbin,usr/libexec,dev,proc,sys,run,root,tmp,etc,sys/kernel/config}
 sudo install -m 755 "$busybox" "$root/bin/busybox"
 applets=$(sudo qemu-arm "$root/bin/busybox" --list)
-for applet in sh ash awk base64 basename blockdev cat chmod cp dd grep gzip head ln mkdir mktemp mount mv readlink rm seq setsid sha256sum sleep stty sync timeout touch tr wc; do
+for applet in sh ash awk base64 basename blockdev cat chmod cp dd grep gzip head ip ln mkdir mktemp mount mv readlink rm seq setsid sha256sum sleep stty sync timeout touch tr wc; do
     grep -Fxq "$applet" <<<"$applets"
     sudo ln -s busybox "$root/bin/$applet"
 done
@@ -47,6 +47,11 @@ sudo ln -s ../bin/busybox "$root/sbin/reboot"
 sudo install -m 755 boot/recovery/init "$root/init"
 sudo install -m 755 scripts/restore/{pb626-restore-fast.sh,pb626-install-direct.sh} "$root/usr/libexec/"
 sudo install -m 755 "$payload/scanner" "$root/usr/libexec/pb626-restore-scan"
+arm-linux-gnueabihf-gcc -O2 -Wall -Wextra -Werror -static -s scripts/restore/pb626-netd.c -o "$work/netd"
+sudo install -m 755 "$work/netd" "$root/usr/libexec/pb626-netd"
+sudo install -m 755 scripts/restore/pb626-net-dispatch.sh "$root/usr/libexec/"
+sudo qemu-arm "$root/bin/busybox" sh -n "$root/usr/libexec/pb626-net-dispatch.sh"
+sudo qemu-arm "$root/bin/busybox" sh -n "$root/usr/libexec/pb626-install-direct.sh"
 printf 'pb626-debian13-recovery-v1\n' | sudo tee "$root/etc/pb626-image-id" >/dev/null
 sudo mknod -m 600 "$root/dev/console" c 5 1
 sudo mknod -m 666 "$root/dev/null" c 1 3
@@ -98,7 +103,7 @@ gzip -n -9 -c "$payload/scanner" >"$out/tools/pb626-restore-scan.gz"
 cp -a BT0-uncaged "$out/source/"
 mkdir -p "$out/source/scripts"
 cp scripts/{build-native-image.py,pb626_sleep_theme.py,prepare-install.sh} "$out/source/scripts/"
-cp scripts/installer/{PB626.ps1,PB626.cmd,pb626.sh,install-direct.py} "$out/"
+cp scripts/installer/{PB626.ps1,PB626.cmd,pb626.sh,install-direct.py,dump-network.py} "$out/"
 cp LICENSE "$out/"
 cp "$payload/DEBIAN-BUSYBOX-COPYRIGHT" "$out/recovery/DEBIAN-BUSYBOX-COPYRIGHT"
 echo "Debian recovery initramfs: $(stat -c '%s' "$ram") bytes"

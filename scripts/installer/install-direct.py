@@ -8,6 +8,8 @@ import argparse
 import base64
 import getpass
 import gzip
+import json
+import socket
 import hashlib
 import importlib
 import os
@@ -122,6 +124,114 @@ class Recovery:
         return bytes(out[:size])
 
 
+class EthernetRecovery:
+    """One bounded request/response over the dedicated USB NCM link."""
+    def __init__(self, configure=True, address="169.254.62.1", port=6262):
+        self.address, self.port = address, port
+        self.interface = None
+        if configure:
+            require(os.name != "nt", "Run this installer in WSL or Linux")
+            require(os.geteuid() == 0, "Run as root to configure USB NCM")
+            subprocess.run(["modprobe","cdc_ncm"], check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            deadline = time.monotonic()+45
+            while time.monotonic() < deadline:
+                interfaces = [p.name for p in Path("/sys/class/net").iterdir()
+                              if (p/"address").read_text().strip().lower()
+                              == "02:50:42:62:60:02"]
+                require(len(interfaces) <= 1, "Multiple PB626 USB interfaces")
+                if interfaces:
+                    self.interface = interfaces[0]
+                    break
+                time.sleep(0.5)
+            require(self.interface, "PB626 USB NCM missing: check usbipd and WSL cdc_ncm driver")
+            subprocess.check_call(["ip","link","set",self.interface,"up"])
+            subprocess.check_call(["ip","addr","replace","169.254.62.2/30","dev",self.interface])
+            deadline = time.monotonic()+45
+            while True:
+                try:
+                    require(self.lines("hello", timeout=3)==["PB626-NCM-1"],
+                            "Wrong recovery protocol")
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.5)
+            print("USB NCM ready:", self.interface, flush=True)
+
+    def close(self):
+        pass
+
+    def request(self, *args, payload=None, timeout=120):
+        words = [str(x) for x in args]
+        require(all(re.fullmatch(r"[A-Za-z0-9_./-]+", x) for x in words),
+                "Invalid network request")
+        header = ("PB626/1 "+" ".join(words)+"\n").encode("ascii")
+        require(len(header) < 512, "Oversized request header")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            if self.interface:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE,
+                             self.interface.encode()+b"\0")
+                s.bind(("169.254.62.2",0))
+            s.connect((self.address,self.port))
+            s.sendall(header)
+            if payload is not None:
+                s.sendall(payload)
+            s.shutdown(socket.SHUT_WR)
+            out = bytearray()
+            while True:
+                part = s.recv(65536)
+                if not part:
+                    break
+                out.extend(part)
+                require(len(out) <= 8*1024*1024, "Oversized recovery response")
+        match = re.search(rb"\nPB626_STATUS ([0-9]+)\n\Z", out)
+        require(match is not None, "Incomplete TCP response; no automatic write retry")
+        require(match[1] == b"0", "Recovery command failed: "+
+                bytes(out[:match.start()])[-1000:].decode("ascii","replace"))
+        return bytes(out[:match.start()])
+
+    def lines(self, *args, **kwargs):
+        return self.request(*args, **kwargs).decode("ascii").splitlines()
+
+    def run(self, cmd, payload=None, timeout=120):
+        require(cmd.startswith(REMOTE+" "), "Unsupported direct command")
+        return [x.strip() for x in self.lines("direct", *cmd[len(REMOTE)+1:].split(),
+                                               payload=payload, timeout=timeout) if x.strip()]
+
+    def read_range(self, path, offset, size):
+        require(path == "/dev/mmcblk2p2" and offset % 512 == 0 and size > 0,
+                "Invalid calibration read")
+        out = bytearray()
+        while len(out) < size:
+            count = min(64,(size-len(out)+511)//512)
+            data = self.request("read-p2", (offset+len(out))//512, count)
+            require(len(data) == count*512, "Short calibration read")
+            out.extend(data)
+        return bytes(out[:size])
+
+    def test_transport(self):
+        payload = os.urandom(CHUNK)
+        start = time.monotonic()
+        require(self.lines("test",sha(payload),payload=payload)==["TRANSFER_OK"],
+                "USB Ethernet transfer test failed")
+        print("USB TCP verified: %.2f MiB/s" %
+              (4/max(time.monotonic()-start,0.001)),flush=True)
+
+
+def mapped_chunks(path, total=P1_BYTES):
+    data = json.loads(path.read_text())
+    count = (total+CHUNK-1)//CHUNK
+    require(data.get("version")==1 and data.get("image_bytes")==total
+            and data.get("chunk_bytes")==CHUNK, "Invalid rootfs map geometry")
+    values = data.get("mapped")
+    require(isinstance(values,list) and values and values[0]==0
+            and all(type(x) is int and 0<=x<count for x in values)
+            and values==sorted(set(values)), "Invalid rootfs map entries")
+    return set(values)
+
+
 def get_wbf(r):
     dev = '/dev/mmcblk2p2'
     boot = r.read_range(dev, 0, 512)
@@ -181,7 +291,7 @@ def checked_inputs(kit):
             and (kit/'recovery/BUILD-COMMIT').read_text().strip() == rev,
             'Native/recovery commits differ')
     sums = manifest(native/'SHA256SUMS')
-    for name in ('BUILD-COMMIT', 'raw-linux.img', 'pb626-rootfs.ext4.gz',
+    for name in ('BUILD-COMMIT', 'raw-linux.img', 'pb626-rootfs.ext4.gz', 'pb626-rootfs.bmap.json',
                  'pb626-bt0-menu.raw', 'pb626-native-zImage', 'pb626-elan-emmc-native.dtb'):
         require(filehash(native/name) == sums.get(name), 'Invalid artifact: '+name)
     sys.path.insert(0, str(kit/'source/scripts'))
@@ -236,59 +346,62 @@ def hash_password(distro):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--kit', type=Path, default=Path(__file__).resolve().parent)
-    ap.add_argument('--port', required=True)
+    ap.add_argument('--port', help='Legacy compatibility; ACM is not used for bulk data')
     ap.add_argument('--distro', default='Ubuntu')
     args = ap.parse_args()
-    require(re.fullmatch(r'COM[1-9][0-9]*|/dev/ttyACM[0-9]+', args.port), 'Invalid ACM port')
     kit = args.kit.resolve()
     rev, raw, spl = checked_inputs(kit)
     print('Paired flashable firmware:', rev, flush=True)
     theme_module = importlib.import_module('pb626_sleep_theme')
-    r = Recovery(args.port)
+    mapped = mapped_chunks(kit/'native/pb626-rootfs.bmap.json')
+    r = EthernetRecovery()
     try:
-        rows = r.run('test -e /run/pb626-emmc-ready && /bin/sh /usr/libexec/pb626-restore-fast.sh probe')
+        r.test_transport()
+        rows = r.lines('probe')
         ids = [x[4:] for x in rows if re.fullmatch(r'CID=[0-9a-f]{32}', x)]
         require(len(ids) == 1, 'Unqualified eMMC')
         cid = ids[0]
-        for part, start, size in ((1,1009664,14260224), (2,73728,65536), (8,275456,500736)):
-            r.run('test "$(cat /sys/class/block/mmcblk2p{}/start)" = {} && test "$(cat /sys/class/block/mmcblk2p{}/size)" = {}'.format(part,start,part,size))
-        print('Reading only factory waveform, VCOM and sleep artwork...', flush=True)
+        require(r.lines('layout')==['1 1009664 14260224','2 73728 65536','8 275456 500736'],
+                'Unexpected partition layout')
+        print('Reading factory waveform, VCOM and sleep artwork over TCP...', flush=True)
         personal = {'default.wbf': get_wbf(r)}
-        r.run('mkdir -p /run/pb626-theme && mount -t ext4 -o ro,noload /dev/mmcblk2p8 /run/pb626-theme')
-        try:
-            require('770198' in r.run('wc -c < /run/pb626-theme/themes/Line.pbt'),
-                    'Unsupported stock theme size')
-            theme = r.read_range('/run/pb626-theme/themes/Line.pbt', 0, 770198)
-            personal.update(theme_module.decode_theme(theme))
-        finally:
-            r.run('busybox umount /run/pb626-theme')
-        require('CID='+cid in r.run('/bin/sh /usr/libexec/pb626-restore-fast.sh probe'),
-                'CID changed')
+        theme = r.request('theme')
+        require(len(theme)==770198, 'Unsupported stock theme size')
+        personal.update(theme_module.decode_theme(theme))
+        require('CID='+cid in r.lines('probe'), 'CID changed')
         personal['password'] = hash_password(args.distro)
         print('Only p1, raw kernel/DTB and tested BT0 will be replaced. No full backup.', flush=True)
         require(input('Type FLASH '+cid+' to continue: ') == 'FLASH '+cid, 'Cancelled')
         # Verify recovery supports the new protocol before any write. This operation
         # only creates a private directory in RAM, not on eMMC.
         r.run('{} reset-data {}'.format(REMOTE, cid))
-        total = (P1_BYTES+CHUNK-1)//CHUNK
-        print('Streaming ready-made ext4 from Actions ({} blocks)...'.format(total), flush=True)
-        with gzip.open(str(kit/'native/pb626-rootfs.ext4.gz'), 'rb') as image:
-            for i, data in image_blocks(image, P1_BYTES):
-                send_block(r, cid, 'rootfs', i, data)
-                if i == 0 or (i+1)%16 == 0 or i+1 == total:
-                    print('rootfs: {}/{} verified'.format(i+1, total), flush=True)
-        print('Personalizing rootfs on device...', flush=True)
         for name, data in personal.items():
             for offset in range(0, len(data), 1024*1024):
                 piece = data[offset:offset+1024*1024]
                 r.run('{} file {} {} {} {} {}'.format(REMOTE,cid,name,offset,len(piece),sha(piece)), piece)
+        require('PB626_DATA_VERIFIED' in r.run('{} check-data {}'.format(REMOTE,cid)),
+                'Personalization input verification failed')
+        print('Streaming sparse ext4: {} mapped chunks of 1741'.format(len(mapped)),flush=True)
+        done = 0
+        with gzip.open(str(kit/'native/pb626-rootfs.ext4.gz'), 'rb') as image:
+            for i, data in image_blocks(image, P1_BYTES):
+                if i not in mapped:
+                    require(data == bytes(len(data)), 'Nonzero omitted rootfs chunk')
+                    continue
+                start = time.monotonic()
+                send_block(r, cid, 'rootfs', i, data)
+                done += 1
+                print('rootfs {}/{} (chunk {}, {:.2f}s) verified'.format(
+                    done,len(mapped),i,time.monotonic()-start),flush=True)
+        require(done==len(mapped), 'Incomplete sparse rootfs')
+        print('Personalizing rootfs on device...', flush=True)
         require('PB626_PERSONALIZED' in r.run('{} personalize {}'.format(REMOTE,cid), timeout=240),
                 'Personalization failed')
         print('Writing kernel/DTB and BT0 (last)...', flush=True)
         for kind, image in (('kernel',raw), ('spl',spl)):
             for i, offset in enumerate(range(0,len(image),CHUNK)):
                 send_block(r,cid,kind,i,image[offset:offset+CHUNK])
-        require('CID='+cid in r.run('/bin/sh /usr/libexec/pb626-restore-fast.sh probe'),
+        require('CID='+cid in r.lines('probe'),
                 'Final identity check failed')
         print('SUCCESS: p1, kernel and BT0 written; all other eMMC regions preserved.', flush=True)
     finally:
