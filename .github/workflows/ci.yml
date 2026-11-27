@@ -113,6 +113,7 @@ jobs:
           bash -n scripts/build-desktop-base.sh
           bash -n scripts/build-megi-desktop.sh
           sh -n display/pb626-settings
+          bash -n display/pb626-xsession
           bash -n scripts/build-megi-variants.sh
           bash -n scripts/assemble-megi-ram.sh
           shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh scripts/pb626-network.sh
@@ -155,6 +156,7 @@ jobs:
           cc -std=c99 -O2 -Wall -Wextra -Werror -I BT0-uncaged/test-stubs -I BT0-uncaged BT0-uncaged/test-led-runtime.c -o /tmp/test-led-runtime
           /tmp/test-led-runtime
           python3 -m py_compile BT0-uncaged/prepare-source-led.py
+          python3 tests/test-source-led.py
           python3 -m py_compile BT0-uncaged/build.py BT0-uncaged/pack-kernel.py
   renderer:
     name: Host-side E Ink renderer tests

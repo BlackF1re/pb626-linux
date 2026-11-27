@@ -3,7 +3,7 @@
 set -eu
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/state" "$tmp/backlight/panel" "$tmp/leds/led" "$tmp/cpufreq/policy0/ondemand"
+mkdir -p "$tmp/state" "$tmp/backlight/panel" "$tmp/leds/led" "$tmp/leds/rtl8xxxu-usb1-1" "$tmp/cpufreq/policy0/ondemand"
 printf 'ondemand powersave performance\n' >"$tmp/cpufreq/policy0/scaling_available_governors"
 printf '120000\n' >"$tmp/cpufreq/policy0/cpuinfo_min_freq"
 printf '1008000\n' >"$tmp/cpufreq/policy0/cpuinfo_max_freq"
@@ -15,6 +15,11 @@ touch "$tmp/cpufreq/policy0/ondemand/sampling_rate" "$tmp/cpufreq/policy0/ondema
 printf "1\n" >"$tmp/leds/led/max_brightness"
 printf "1\n" >"$tmp/leds/led/brightness"
 printf "none\n" >"$tmp/leds/led/trigger"
+# Simulate the second LED class device created by rtl8xxxu. It is not a
+# board indicator and must remain untouched by every PB626 LED operation.
+printf "1\n" >"$tmp/leds/rtl8xxxu-usb1-1/max_brightness"
+printf "1\n" >"$tmp/leds/rtl8xxxu-usb1-1/brightness"
+printf "none\n" >"$tmp/leds/rtl8xxxu-usb1-1/trigger"
 printf '100\n' >"$tmp/backlight/panel/max_brightness"
 printf '0\n' >"$tmp/backlight/panel/brightness"
 printf '4\n' >"$tmp/backlight/panel/bl_power"
@@ -82,6 +87,15 @@ admin restore-board
 test "$(admin led-status)" = off
 admin led on
 test "$(admin led-status)" = on
+test "$(cat "$tmp/leds/rtl8xxxu-usb1-1/brightness")" = 1
+test "$(cat "$tmp/leds/rtl8xxxu-usb1-1/trigger")" = none
+# If the PE8 node is absent, do not fall back to the Wi-Fi driver's LED.
+mv "$tmp/leds/led" "$tmp/leds/led-missing"
+test "$(admin led-status)" = unavailable
+if admin led on; then echo "Wi-Fi LED was incorrectly selected as the power LED" >&2; exit 1; fi
+mv "$tmp/leds/led-missing" "$tmp/leds/led"
+test "$(cat "$tmp/leds/rtl8xxxu-usb1-1/brightness")" = 1
+test "$(cat "$tmp/leds/rtl8xxxu-usb1-1/trigger")" = none
 admin desktop-settings pages keyboard escape photo 16 0
 admin desktop-status | grep -qx PB626_BUTTONS=pages
 admin desktop-status | grep -qx PB626_EPD_GRAY_PROFILE=photo

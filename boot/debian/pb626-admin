@@ -100,11 +100,12 @@ tune_ondemand() {
         if [ -w "$knobs/sampling_down_factor" ]; then printf '1\n' >"$knobs/sampling_down_factor" || :; fi
     done
 }
-# The validated board has one GPIO LED. Refuse ambiguous inventories.
+# The board DTS names its physical PE8 power indicator "led". Ignore
+# additional class LEDs registered by peripheral drivers (e.g. rtl8xxxu).
 led_path() {
-    set -- /sys/class/leds/*
-    [ "$#" -eq 1 ] && [ -r "$1/max_brightness" ] || return 1
-    printf '%s\n' "$1"
+    led=/sys/class/leds/led
+    [ -d "$led" ] && [ -r "$led/max_brightness" ] || return 1
+    printf '%s\n' "$led"
 }
 apply_led() {
     case "$1" in on|off|heartbeat) ;; *) return 2 ;; esac

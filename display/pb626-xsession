@@ -13,6 +13,14 @@ fi
 if [ ! -f /etc/debian_version ] && [ -r /usr/lib/libharfbuzz.so.0 ]; then
     export LD_PRELOAD="/usr/lib/libharfbuzz.so.0${LD_PRELOAD:+:$LD_PRELOAD}"
 fi
+if [ -z "${DISPLAY:-}" ]; then
+    echo 'PB626: DISPLAY is unset; launch this session through pb626-desktop/xinit.' >&2
+    exit 1
+fi
+if ! xset q >/dev/null 2>&1; then
+    echo "PB626: cannot connect to X server '$DISPLAY'; check Xorg and XAUTHORITY." >&2
+    exit 1
+fi
 xset s off
 xset -dpms 2>/dev/null || :
 # Optional standard X11 idle detector, only after board suspend qualification.
@@ -67,8 +75,9 @@ if [ -z "${PB626_EPD_BRIDGE_PID:-}" ]; then
     pb626-x11-epd "$1" "$2" &
     screen=$!
 fi
-matchbox-desktop --bg col-solid:white --font 'Sans bold 18px' \
-    --fontcol black --no-outline --no-title --icon-size 112 --icon-padding 8 &
+# Debian Trixie's Matchbox Desktop 2.x accepts --mode; the legacy
+# Matchbox 1.x appearance flags make the client exit and kill the X session.
+matchbox-desktop --mode desktop &
 desktop=$!
 trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} ${idle_pid:+"$idle_pid"} 2>/dev/null || true' EXIT
 trap 'exit 1' HUP INT TERM
