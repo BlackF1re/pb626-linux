@@ -164,22 +164,34 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth tk \
             xserver-xorg-dev xutils-dev libpciaccess-dev autoconf automake libtool pkg-config
-      - name: Validate hardware patches against exact pinned kernel sources
+      - name: Fetch pinned kernel source files without raw-content rate limits
         run: |
           set -euo pipefail
-          root=$(mktemp -d)
-          for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
-            while IFS= read -r path; do
-              mkdir -p "$root/$(dirname "$path")"
-              curl -fsSL --retry 3 "https://raw.githubusercontent.com/Arnavion/linux/facc87117511221bb61410e3f92ad8579697f736/$path" -o "$root/$path"
-            done < <(sed -n 's|^--- a/||p' "$patch")
-            (cd "$root" && git apply --check "$GITHUB_WORKSPACE/$patch" && git apply "$GITHUB_WORKSPACE/$patch")
-          done
-      - name: Fetch pinned kernel UAPI and test renderer
-        run: |
-          set -euo pipefail
+          root=/tmp/pb626-pinned-kernel
+          pin=facc87117511221bb61410e3f92ad8579697f736
+          rm -rf "$root"
+          git init -q "$root"
+          git -C "$root" -c protocol.version=2 fetch --depth=1 --filter=blob:none https://github.com/Arnavion/linux.git "$pin"
+          test "$(git -C "$root" rev-parse FETCH_HEAD)" = "$pin"
+          mkdir -p "$root/.git/info"
+          {
+            for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
+              sed -n 's|^--- a/||p' "$patch"
+            done
+            printf '%s\\n' include/uapi/linux/sun5i-eink.h
+          } | sort -u | sed 's|^|/|' > "$root/.git/info/sparse-checkout"
+          git -C "$root" config core.sparseCheckout true
+          git -C "$root" checkout --detach FETCH_HEAD
           mkdir -p /tmp/pb626-uapi/linux
-          curl -fsSL --retry 3 https://raw.githubusercontent.com/Arnavion/linux/facc87117511221bb61410e3f92ad8579697f736/include/uapi/linux/sun5i-eink.h -o /tmp/pb626-uapi/linux/sun5i-eink.h
+          cp "$root/include/uapi/linux/sun5i-eink.h" /tmp/pb626-uapi/linux/sun5i-eink.h
+          for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
+            git -C "$root" apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C "$root" apply "$GITHUB_WORKSPACE/$patch"
+          done
+      - name: Test renderer
+        run: |
+          set -euo pipefail
+          test -s /tmp/pb626-uapi/linux/sun5i-eink.h
           gcc -O2 -Wall -Wextra -Werror -I /tmp/pb626-uapi display/test-pb626-epd.c -o /tmp/test-pb626-epd
           /tmp/test-pb626-epd
           gcc -O2 -Wall -Wextra -Werror display/test-pb626-x11-epd.c -o /tmp/test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
