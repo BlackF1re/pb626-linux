@@ -638,7 +638,7 @@ static inline uint8_t quantize_reference(unsigned int value, unsigned int contra
 /* Cache the exact reference mapping in screen phase order. Each position
  * needs one byte lookup, and strong edges retain the nearest gray level.
  */
-static uint8_t quant_table[16][16][256], nearest_level[256];
+static uint8_t quant_table[16 * 16][256], nearest_level[256];
 static int quant_reference;
 
 static void setup_quantization(void)
@@ -652,7 +652,7 @@ static void setup_quantization(void)
 		if (gray_profile != GRAY_UI && gray_profile != GRAY_MONO)
 			for (int y = 0; y < period; y++)
 				for (int x = 0; x < period; x++)
-					quant_table[y][x][v] = quantize_reference(v, 0, x, y);
+					quant_table[y * period + x][v] = quantize_reference(v, 0, x, y);
 	}
 }
 
@@ -663,7 +663,7 @@ static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x,
 	if (contrast >= 48 || gray_profile == GRAY_UI || gray_profile == GRAY_MONO)
 		return nearest_level[value];
 	unsigned int mask = gray_profile == GRAY_PHOTO ? 15 : 3;
-	return quant_table[y & mask][x & mask][value];
+	return quant_table[(y & mask) * (mask + 1) + (x & mask)][value];
 }
 
 /* Exact L1 contrast: 4 unsigned byte differences, widened to 16 bits.
