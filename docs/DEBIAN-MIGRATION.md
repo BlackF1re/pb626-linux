@@ -335,3 +335,44 @@ with only a short action retain repeat. The old defaults and no-touch
 pointer fallback remain, and the power key retains its separate
 qualified suspend policy. Keyboard toggle uses the existing Matchbox
 protocol; alternative sessions can bind a normal key instead.
+
+## Native compiler qualification
+
+The ARMhf compiler audit runs in the Debian 13 target userspace under QEMU
+and checks each candidate against the existing renderer and charger tests.
+It reports stripped file sizes, GNU size columns, ELF attributes and load
+segments. It does not measure Cortex-A8 timing, physical display behavior
+or resident memory.
+
+Baseline audit (GCC 14.2.0-19, CI run 46083018733, 36 passing candidates):
+
+| Profile | E Ink worker text | X11 bridge text | Charger text |
+| --- | ---: | ---: | ---: |
+| Baseline | 24089 | 34642 | 10920 |
+| Cortex-A8 tuned | 24081 | 34698 | 10904 |
+| Cortex-A8 -O3 | 28453 | 47994 | 11836 |
+| Cortex-A8 -Os | 16016 | 28949 | 9996 |
+| Cortex-A8 -Os with section GC | 15720 | 28711 | 9668 |
+| Debian hardening | 24852 | 36017 | 11904 |
+
+Values are GNU size's text column in bytes, not measured PSS. Debian's
+compiler already defaults to ARMv7-A hard-float and Thumb-2. Cortex-A8
+tuning and LTO do not demonstrate a general advantage here. Keep the worker
+at -O3 and the bridge at -O2 with NEON until on-device timing is available.
+The charger is predominantly event-driven and can prioritize code size.
+The native build uses Debian's CPPFLAGS/CFLAGS/LDFLAGS, with the selected
+optimization level overriding the distribution default; tests use matching
+release flags. The exact combined compact charger profile is a required
+CI candidate, not a hardware qualification.
+
+Stripped file sizes in the baseline audit were around 67 KiB each even
+when the text column changed considerably. The linker alignment candidates
+are reported separately; a smaller ELF maximum page size is not the
+production default. Check actual PT_LOAD alignment, RELRO, file size and
+loader behavior before changing it.
+
+For physical comparison, run identical full and partial updates and input
+workloads at equal temperature, CPU governor, visual depth and waveform.
+Record CPU time, preparation latency, PSS, and the first-update latency
+after idle. Do not use elapsed QEMU compilation or test time as evidence of
+Cortex-A8 performance.
