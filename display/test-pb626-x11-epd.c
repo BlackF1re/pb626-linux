@@ -82,6 +82,94 @@ static void test_gray_rows(void)
 			}
 }
 
+/* Candidate only: keep the production conversion unchanged until timings
+ * on the reader establish whether a 64 KiB table is worth its footprint. */
+static uint8_t rgb565_candidate[65536];
+
+static void candidate_gray_row(const uint8_t *src, uint8_t *dst, int count)
+{
+	for (int x = 0; x < count; x++)
+		dst[x] = rgb565_candidate[src[2 * x] | ((unsigned int)src[2 * x + 1] << 8)];
+}
+
+static void init_candidate_gray(void)
+{
+	for (unsigned int p = 0; p < 65536; p++)
+		rgb565_candidate[p] = rgb565_gray(p);
+}
+
+static void test_rgb565_candidate(void)
+{
+	static uint8_t input[2 * 65536 + 1], reference[65536], candidate[65536];
+	uint8_t *src = input + 1; /* exercise unaligned input */
+	for (unsigned int p = 0; p < 65536; p++) {
+		src[2 * p] = p;
+		src[2 * p + 1] = p >> 8;
+	}
+	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++)
+		for (int tone = 0; tone < 2; tone++)
+			for (int gamma = 0; gamma < 2; gamma++) {
+				setup_gray(profile, tone, gamma ? 1.2 : 1.0);
+				init_candidate_gray();
+				rgb565_gray_row(src, reference, 65536);
+				candidate_gray_row(src, candidate, 65536);
+				assert(!memcmp(reference, candidate, sizeof(reference)));
+			}
+	puts("RGB565 candidate: all colors, profiles, tones and gammas passed");
+}
+
+static uint64_t cpu_ns(void)
+{
+	struct timespec t;
+	assert(!clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t));
+	return (uint64_t)t.tv_sec * 1000000000 + t.tv_nsec;
+}
+
+/* Run the ARM test executable with PB626_BENCH_RGB565=1 on the reader.
+ * No X connection, panel, privileged operation or runtime service needed.
+ * Report process CPU time; timings from an emulator are not comparable. */
+static void bench_rgb565_candidate(void)
+{
+	enum { ROW = 760, ROWS = 128, REPEATS = 64 };
+	static uint8_t input[2 * ROW * ROWS], output[ROW];
+	static volatile unsigned int sink;
+	setup_gray(GRAY_BALANCED, 0, 1.0);
+	init_candidate_gray();
+	puts("pattern,width,implementation,ns_per_pixel");
+	for (int pattern = 0; pattern < 3; pattern++) {
+		uint32_t rng = 1;
+		for (unsigned int i = 0; i < ROW * ROWS; i++) {
+			rng = rng * UINT32_C(1664525) + UINT32_C(1013904223);
+			unsigned int v = (i / 7) & 31;
+			unsigned int p = pattern == 0 ? ((i / 19) & 1 ? 65535 : 0) :
+				pattern == 1 ? (v << 11) | ((v * 2) << 5) | v : rng >> 16;
+			input[2 * i] = p;
+			input[2 * i + 1] = p >> 8;
+		}
+		for (int width = 32; width <= ROW; width = width == 32 ? ROW : ROW + 1)
+			for (int lookup = 0; lookup < 2; lookup++) {
+				uint64_t start = cpu_ns();
+				unsigned int checksum = 0;
+				for (int pass = 0; pass < REPEATS; pass++)
+					for (int row = 0; row < ROWS; row++) {
+						const uint8_t *src = input + 2 * row * ROW;
+						if (lookup)
+							candidate_gray_row(src, output, width);
+						else
+							rgb565_gray_row(src, output, width);
+						checksum += output[(row + pass) % width];
+					}
+				uint64_t elapsed = cpu_ns() - start;
+				sink = checksum;
+				(void)sink;
+				printf("%s,%d,%s,%.2f\n",
+				       pattern == 0 ? "binary" : pattern == 1 ? "gray" : "color",
+				       width, lookup ? "lut" : "production",
+				       (double)elapsed / (REPEATS * ROWS * width));
+			}
+	}
+}
+
 static void test_contrast_row(void)
 {
 	uint8_t row[65], above[65], below[65];
@@ -417,6 +505,10 @@ static void test_optional_halo_filters(void)
 
 int main(void)
 {
+	if (getenv("PB626_BENCH_RGB565")) {
+		bench_rgb565_candidate();
+		return 0;
+	}
 	if (getenv("PB626_TEST_X11")) {
 		test_x11_capture();
 		return 0;
@@ -424,6 +516,7 @@ int main(void)
 	test_power_press();
 	test_worker_deadlines();
 	test_packed_rgb565();
+	test_rgb565_candidate();
 	test_gray_rows();
 	test_ddx_layout();
 	test_gray();
