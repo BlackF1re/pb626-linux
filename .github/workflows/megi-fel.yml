@@ -579,9 +579,23 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+  windows-powershell51:
+    name: Windows PowerShell 5.1 installer smoke test
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse and exercise installer in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) {
+            throw "Expected Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)"
+          }
+          .\tests\test-powershell51.ps1
+
   flash-kit:
     name: Assemble same-run flash kit (no compilation)
-    needs: [debian-native, recovery, diagnostics, fel-host, bootloader, host-checks, restore-checks]
+    needs: [debian-native, recovery, diagnostics, fel-host, bootloader, host-checks, restore-checks, windows-powershell51]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -635,7 +649,7 @@ jobs:
 
   qualification:
     name: All selected builds and tests passed
-    needs: [host-checks, restore-checks, alpine-base, kernel, bundle, desktop, debian-base, bootloader, fel-host, diagnostics, debian-native, recovery, flash-kit]
+    needs: [host-checks, restore-checks, windows-powershell51, alpine-base, kernel, bundle, desktop, debian-base, bootloader, fel-host, diagnostics, debian-native, recovery, flash-kit]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
