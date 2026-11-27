@@ -75,9 +75,14 @@ if [ -z "${PB626_EPD_BRIDGE_PID:-}" ]; then
     pb626-x11-epd "$1" "$2" &
     screen=$!
 fi
-# Debian Trixie's Matchbox Desktop 2.x accepts --mode; the legacy
-# Matchbox 1.x appearance flags make the client exit and kill the X session.
-matchbox-desktop --mode desktop &
+if [ -f /etc/debian_version ]; then
+    # Debian Trixie ships Matchbox Desktop 2.x; legacy 1.x flags are rejected.
+    matchbox-desktop --mode desktop &
+else
+    # Alpine builds the pinned Matchbox Desktop 1.x, which retains these flags.
+    matchbox-desktop --bg col-solid:white --font 'Sans bold 18px' \
+        --fontcol black --no-outline --no-title --icon-size 112 --icon-padding 8 &
+fi
 desktop=$!
 trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} ${idle_pid:+"$idle_pid"} 2>/dev/null || true' EXIT
 trap 'exit 1' HUP INT TERM
