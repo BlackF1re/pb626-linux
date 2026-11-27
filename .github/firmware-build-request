@@ -1,2 +1,3 @@
-Full qualification: NCM composite descriptor and emergency fallback; validate ARM fsync and sparse map
-Parent: 7f7bf10b7eed6d76f5ed92248ceac245866cfb09
+Full qualification request for current source revision 997c8073dedd85f1953497f6a85c65b581c478fb
+Trigger: full firmware qualification (pre-merge)
+Scope: full build graph; publish paired Debian flash kit and full build report.
