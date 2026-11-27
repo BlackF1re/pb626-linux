@@ -1,2 +1,2 @@
-Full pre-merge qualification: ready-to-stream CI ext4, public verified BT0 hook, selective direct install, and independent full backup/restore.
-Inputs: 23328922cb4afa49124d6d2a39f222d64403bece
+Full pre-merge qualification: direct Actions-artifact install, exact rootfs ext4, tested BT0 patch, selective device writes, and independent full backup/restore.
+Inputs: faf8ce699d2c4de23f0da528e2c1a9bf41af0b18

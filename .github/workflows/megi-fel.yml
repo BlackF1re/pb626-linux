@@ -287,6 +287,12 @@ jobs:
         timeout-minutes: 9
         run: |
           set -euo pipefail
+          # The hosted runner may contain a Microsoft package feed that returns
+          # 403 in this environment. It is not needed for these Ubuntu packages.
+          mapfile -t blocked_sources < <(grep -RIl -- 'packages.microsoft.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null || true)
+          if (("${#blocked_sources[@]}" > 0)); then
+            sudo rm -f "${blocked_sources[@]}"
+          fi
           for attempt in 1 2; do
             echo "APT setup attempt $attempt/2"
             if sudo timeout 180s apt-get -o Acquire::Retries=2 \
