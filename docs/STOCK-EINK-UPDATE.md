@@ -1,100 +1,104 @@
-# Заводские режимы обновления E Ink и их выбор
+# Stock E Ink update modes and selection
 
-**Объект:** PocketBook 626 Plus (U626), заводская прошивка 5.20.1157.  
-**Основа:** статический анализ предоставленного дампа stock-системы: boot/default.wbf, rootfs/lib/modules/epdc.ko, ebrmain/cramfs.img и приложений/библиотек из него.
+**Device:** PocketBook 626 Plus (U626), stock firmware 5.20.1157.  
+**Evidence base:** static analysis of the supplied stock-system dump, including \`boot/default.wbf\`, \`rootfs/lib/modules/epdc.ko\`, \`ebrmain/cramfs.img\`, and the applications and libraries extracted from it.
 
-Этот документ описывает именно заводскую систему. Режимы и алгоритмы нативного Linux-порта описаны отдельно в [EINK.md](EINK.md).
+This document describes the factory system only. The native Linux port's renderer and update policy are documented separately in [EINK.md](EINK.md).
 
-## 1. Где находятся waveform-данные
+## 1. Waveform data
 
-Заводской драйвер E Ink — rootfs/lib/modules/epdc.ko (Linux 3.0.8). Он загружается из rootfs/etc/init.d/rcS командой insmod /lib/modules/epdc.ko.
+The factory E Ink driver is \`rootfs/lib/modules/epdc.ko\` (Linux 3.0.8). It is loaded by \`rootfs/etc/init.d/rcS\` using:
 
-В строках драйвера присутствует путь по умолчанию /boot/default.wbf, а также интерфейсы состояния и переопределения waveform (waveform_name, waveform_info, waveform_status, waveform_override). При штатной загрузке параметр waveform явно не передаётся: используется значение по умолчанию драйвера.
+\`\`\`sh
+insmod /lib/modules/epdc.ko
+\`\`\`
 
-В дампе:
+The driver contains the default path \`/boot/default.wbf\` and strings for waveform status and override interfaces (\`waveform_name\`, \`waveform_info\`, \`waveform_status\`, and \`waveform_override\`). The stock boot script does not explicitly pass a waveform parameter, so the driver uses its default.
 
-- boot/default.wbf и boot/waveform.wbf побайтно идентичны;
-- SHA-256 обоих файлов: bc3e0338e3b537dfb69470727cae0bbba3e10aa62f82cc1a47fd7737447cc05f;
-- WBF содержит заводскую таблицу для панели ED060XD4: 14 температурных интервалов и шесть режимов — INIT, DU, GC16, GL16, A2 и DU4.
+The supplied dump contains the following:
 
-Подробные характеристики переходов и число физических сканов по температуре приведены в [EINK.md](EINK.md#factory-waveform-14-temperatures--6-modes).
+- \`boot/default.wbf\` and \`boot/waveform.wbf\` are byte-for-byte identical.
+- SHA-256 of both files: \`bc3e0338e3b537dfb69470727cae0bbba3e10aa62f82cc1a47fd7737447cc05f\`.
+- The WBF contains the factory waveform table for the ED060XD4 panel: 14 temperature intervals and six modes — INIT, DU, GC16, GL16, A2, and DU4.
 
-### Не путать с файлами rootfs/system/*.bin
+See [EINK.md](EINK.md#factory-waveform-14-temperatures--6-modes) for the decoded transition capabilities and scan counts at different temperatures.
 
-В rootfs также присутствуют:
+### Do not confuse the WBF with \`rootfs/system/*.bin\`
 
-| Файл | Размер |
+The root filesystem also contains these files:
+
+| File | Size |
 |---|---:|
-| a2.bin | 262 476 байт |
-| du.bin | 32 988 байт |
-| gc16.bin | 262 364 байта |
-| local.bin | 262 364 байта |
-| short_gc16.bin | 131 292 байта |
-| short_du.bin | 16 604 байта |
+| \`a2.bin\` | 262,476 bytes |
+| \`du.bin\` | 32,988 bytes |
+| \`gc16.bin\` | 262,364 bytes |
+| \`local.bin\` | 262,364 bytes |
+| \`short_gc16.bin\` | 131,292 bytes |
+| \`short_du.bin\` | 16,604 bytes |
 
-По статически исследованным обращениям не удалось установить, что штатный EPDC загружает эти файлы для обычной отрисовки. Сам драйвер указывает на WBF-файл в /boot. Поэтому нельзя автоматически считать, что, например, gc16.bin — это waveform, который вызывается каждым PartialUpdate.
+The statically inspected references did not establish that the stock EPDC loads these files for normal screen updates. The driver points to a WBF file under \`/boot\`. Therefore, the filenames alone do not establish a direct mapping such as “\`gc16.bin\` is the waveform used by every \`PartialUpdate\` call”.
 
-## 2. Оболочка PocketBook
+## 2. PocketBook launcher
 
-monitor.app — основной процесс, запускаемый при загрузке; пользовательский рабочий стол реализован отдельным bookshelf.app. В bookshelf.app обнаружен pocketbook::desktop::UpdateController, который преобразует внутренний тип запроса обновления в вызов InkView.
+\`monitor.app\` is the main process started during boot; the user-facing launcher is implemented separately in \`bookshelf.app\`. The latter contains \`pocketbook::desktop::UpdateController\`, which maps an internal update request type to an InkView API call.
 
-| Тип запроса оболочки | Вызов InkView | Режим WBF |
+| Launcher request type | InkView call | WBF mode |
 |---:|---|---|
-| 1 | PartialUpdateBW | DU |
-| 2 | PartialUpdate | GC16 |
-| 3 | FullUpdate | GC16 |
-| 4 | DynamicUpdateA2 | A2 (с предусмотренным fallback) |
-| 5 | PartialUpdateBlack | GC16 |
+| 1 | \`PartialUpdateBW\` | DU |
+| 2 | \`PartialUpdate\` | GC16 |
+| 3 | \`FullUpdate\` | GC16 |
+| 4 | \`DynamicUpdateA2\` | A2 (with a fallback path) |
+| 5 | \`PartialUpdateBlack\` | GC16 |
 
-В исследованных call sites рабочего стола обнаружены запросы типов 2 и 3:
+The launcher call sites inspected in the binary contain requests of types **2 and 3**:
 
-- обычная перерисовка элементов рабочего стола, ярлыков и панели использует частичный GC16;
-- прокрутка элементов рабочего стола также запрашивает частичный GC16;
-- отдельные переходы между состояниями/представлениями запрашивают полный GC16.
+- Normal redraws of launcher elements, application icons, and the panel request partial GC16 updates.
+- Scrolling launcher items also requests partial GC16 updates.
+- Some transitions between states or views request a full GC16 update.
 
-Следовательно, основной режим повседневной отрисовки штатной оболочки — **GC16**, в том числе для частичных обновлений. DU и A2 присутствуют в диспетчере оболочки, но в исследованных call sites самого рабочего стола их регулярное использование не обнаружено.
+The main update mode used by the stock launcher during ordinary operation is therefore **GC16**, including for partial updates. DU and A2 are present in the launcher's update dispatcher, but their regular use was not found in the inspected launcher call sites.
 
-## 3. Другие приложения
+## 3. Other applications
 
-Статический анализ приложений выявил следующие обращения к InkView API:
+Static inspection of application binaries found the following references to InkView update APIs:
 
-| Приложение | Обнаруженные запросы | Соответствующие режимы |
+| Application | Update calls found | Corresponding modes |
 |---|---|---|
-| settings.app | PartialUpdateBW, PartialUpdate | DU, GC16 |
-| eink-reader.app | DynamicUpdateBW | DU |
-| picviewer.app | DynamicUpdateA2, ExitUpdateA2, PartialUpdate, FullUpdate | A2, GC16 |
-| scribble.app | PartialUpdateBW, PartialUpdate | DU, GC16 |
+| \`settings.app\` | \`PartialUpdateBW\`, \`PartialUpdate\` | DU, GC16 |
+| \`eink-reader.app\` | \`DynamicUpdateBW\` | DU |
+| \`picviewer.app\` | \`DynamicUpdateA2\`, \`ExitUpdateA2\`, \`PartialUpdate\`, \`FullUpdate\` | A2, GC16 |
+| \`scribble.app\` | \`PartialUpdateBW\`, \`PartialUpdate\` | DU, GC16 |
 
-Это статические наблюдения по бинарным файлам, а не трассировка работающего устройства: наличие вызова подтверждает, что приложение умеет запрашивать соответствующий путь, но не устанавливает частоту его использования и все условия выбора.
+These are observations from static binary analysis, not a runtime trace. The presence of a call shows that an application can request that update path; it does not establish how often it does so or all the conditions under which it is selected.
 
-В ресурсе загрузочной анимации hourglass.bin обнаружены команды с waveform=1 и waveform=4, соответствующие DU и A2. Это отдельная настройка анимации, а не общий профиль рабочего стола.
+The boot animation resource \`hourglass.bin\` contains commands with \`waveform=1\` and \`waveform=4\`, corresponding to DU and A2. This is a separate animation-specific setting, not the launcher's general update policy.
 
-## 4. Qt-приложения
+## 4. Qt applications
 
-Qt использует собственный платформенный backend PocketBook — libqpocketbook2.so. В нём класс EinkScreen (doRedraw() и doManualRedraw()) маршрутизирует типы обновления в InkView API.
+Qt uses PocketBook's own platform backend, \`libqpocketbook2.so\`. Its \`EinkScreen\` class routes update types from \`doRedraw()\` and \`doManualRedraw()\` to InkView APIs.
 
-Backend предусматривает следующие пути:
+The backend provides the following paths:
 
-| Запрос backend | Вызов InkView | Режим |
+| Backend request | InkView call | Mode |
 |---|---|---|
-| Full update | FullUpdate | GC16 |
-| Partial update | PartialUpdate | GC16 |
-| BW partial / dynamic BW | PartialUpdateBW / DynamicUpdateBW | DU |
-| HQ partial / soft HQ | HQ-варианты InkView | GL16 с предусмотренным путём GC16 |
-| DU4 partial | PartialUpdateDU4 | DU4 |
-| Dynamic A2 | DynamicUpdateA2 | A2 |
+| Full update | \`FullUpdate\` | GC16 |
+| Partial update | \`PartialUpdate\` | GC16 |
+| BW partial / dynamic BW | \`PartialUpdateBW\` / \`DynamicUpdateBW\` | DU |
+| HQ partial / soft HQ | HQ-related InkView variants | GL16, with a GC16 path |
+| DU4 partial | \`PartialUpdateDU4\` | DU4 |
+| Dynamic A2 | \`DynamicUpdateA2\` | A2 |
 
-В backend также присутствуют ExitUpdateA2 и ожидание завершения обновления. Это позволяет Qt-приложениям переключаться между быстрым A2 и обычными режимами, а не использовать один waveform постоянно.
+The backend also contains \`ExitUpdateA2\` and update-completion wait paths. This allows Qt applications to leave A2 and return to other update modes instead of remaining in one waveform mode permanently.
 
-Таблица описывает доступные ветви диспетчеризации backend. Она не означает, что каждый режим используется каждым Qt-приложением или что все ветви достигаются в штатном пользовательском сценарии.
+This table describes branches available in the backend's dispatcher. It does not mean that every Qt application uses every mode, or that every branch is reached during normal use.
 
-## 5. Как интерпретировать результаты
+## 5. Interpretation and limitations
 
-1. **Тип обновления API и waveform — разные уровни.** PartialUpdate и FullUpdate описывают запрос InkView; в оболочке оба маршрутизируются на GC16. Числа внутренних типов UpdateController и Qt backend не являются индексами режимов WBF.
-2. **HQ — не название отдельного WBF-режима.** В драйвере также есть HQ/Shadow-фильтрация переходов. Её не следует смешивать с названием GL16; детали фильтров описаны в [EINK.md](EINK.md#optional-white-halo-filters-experimental).
-3. **Допустимость перехода зависит от WBF и температуры.** Сам факт вызова DU, A2 или DU4 не означает, что этим режимом можно выполнить произвольный переход оттенка. Например, A2 предназначен только для переходов 0↔15; таблица переходов приведена в [EINK.md](EINK.md#factory-waveform-14-temperatures--6-modes).
-4. **Это статическое исследование.** Для полной картины динамического выбора нужны runtime-трассировка вызовов и наблюдение параметров EPDC на устройстве.
+1. **The update API and the waveform mode are different layers.** \`PartialUpdate\` and \`FullUpdate\` describe InkView requests; in the launcher, both map to GC16. The internal request-type numbers used by \`UpdateController\` and the Qt backend are not WBF mode indices.
+2. **HQ is not the name of a separate WBF mode.** The driver also contains HQ/Shadow transition filtering. This should not be conflated with the GL16 waveform mode. See [EINK.md](EINK.md#optional-white-halo-filters-experimental) for the filter analysis.
+3. **A mode can only perform transitions supported by the WBF at the current temperature.** Finding a DU, A2, or DU4 call does not mean that the mode can perform arbitrary grayscale transitions. For example, A2 is limited to 0↔15 transitions. See the [transition table in EINK.md](EINK.md#factory-waveform-14-temperatures--6-modes).
+4. **This is a static analysis.** A complete account of runtime selection would require tracing calls on the device and observing the EPDC parameters while applications are running.
 
-### Краткий вывод
+### Summary
 
-Штатный рабочий стол PocketBook 626 Plus преимущественно перерисовывается через **частичный GC16**; отдельные переходы вызывают **полный GC16**. Другие приложения используют DU и GC16, а просмотрщик изображений также умеет переключаться в A2. Qt backend предоставляет более широкий набор путей — DU, GL16, DU4, GC16 и A2. Физические waveform-данные при этом берутся из заводского WBF, а не из очевидного соответствия имён файлов system/*.bin.
+The stock PocketBook 626 Plus launcher primarily redraws through **partial GC16**; some view or state transitions request **full GC16**. Other inspected applications use DU and GC16, while the image viewer also has an A2 path. The Qt backend exposes a wider set of paths, including DU, GL16, DU4, GC16, and A2. The factory waveform data is supplied through the WBF file; the available evidence does not support a direct one-to-one mapping from the names of the \`system/*.bin\` files to individual InkView update calls.
