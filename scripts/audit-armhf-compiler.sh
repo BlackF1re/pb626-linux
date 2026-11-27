@@ -8,6 +8,9 @@ uapi=$(realpath "${1:?kernel UAPI directory}")
 out=$(realpath -m "${2:?report/output directory}")
 mkdir -p "$out"
 cd "$repo"
+selected=${3:-all}
+case "$selected" in all|pb626-epd|pb626-x11-epd|pb626-charge) ;; *) echo "Unknown program: $selected" >&2; exit 2 ;; esac
+printf 'Starting compiler audit: %s\n' "$selected"
 test "$(dpkg --print-architecture)" = armhf
 test -s "$uapi/linux/sun5i-eink.h"
 cc -v >"$out/compiler.txt" 2>&1
@@ -44,6 +47,7 @@ run_one() {
     mkdir -p "$dir"
     printf '%q ' cc "$@" >"$dir/flags.txt"
     printf '\n' >>"$dir/flags.txt"
+    printf '[%s] %s: compiling and testing\n' "$program" "$profile"
     if ! {
         cc "${warnings[@]}" "${includes[@]}" "$@" "$source" -o "$dir/program" "${libs[@]}" &&
         cc "${warnings[@]}" "${includes[@]}" "$@" "$test_source" -o "$dir/test" "${libs[@]}" &&
@@ -52,15 +56,19 @@ run_one() {
         strip "$dir/program"
     } >"$dir/build.log" 2>&1; then
         printf '%s\t%s\tfailed\t-\t-\t-\t-\n' "$profile" "$program" >>"$out/results.tsv"
-        if [ "$profile" = baseline ]; then cat "$dir/build.log" >&2; return 1; fi
+        printf '[%s] %s: FAILED\n' "$program" "$profile" >&2
+        tail -n 30 "$dir/build.log" >&2
+        if [ "$profile" = baseline ]; then return 1; fi
         return 0
     fi
     size -A "$dir/program" >"$dir/sections.txt"
     local sizes
     sizes=$(size "$dir/program" | awk 'NR==2 {printf "%s\t%s\t%s", $1,$2,$3}')
     printf '%s\t%s\tpass\t%s\t%s\n' "$profile" "$program" "$(stat -c %s "$dir/program")" "$sizes" >>"$out/results.tsv"
+    printf '[%s] %s: PASS (%s bytes)\n' "$program" "$profile" "$(stat -c %s "$dir/program")"
 }
 for program in pb626-epd pb626-x11-epd pb626-charge; do
+    if [ "$selected" != all ] && [ "$selected" != "$program" ]; then continue; fi
     base=(-O2)
     case "$program" in
         pb626-epd) base=(-O3) ;;

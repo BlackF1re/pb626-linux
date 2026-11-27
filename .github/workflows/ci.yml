@@ -251,9 +251,13 @@ jobs:
           # Compilation only: this runner need not have a real Xorg VT.
 
   compiler-audit:
-    name: Debian armhf compiler profile comparison
+    name: Debian armhf compiler profile comparison (${{ matrix.program }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        program: [pb626-epd, pb626-x11-epd, pb626-charge]
     steps:
       - uses: actions/checkout@v4
       - name: Obtain the pinned E Ink UAPI
@@ -276,18 +280,20 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/pb626-compiler-audit"
           docker run --rm --platform linux/arm/v7 \
+            -e AUDIT_PROGRAM="${{ matrix.program }}" \
             -v "$GITHUB_WORKSPACE:/repo:ro" \
             -v /tmp/pb626-uapi:/uapi:ro \
             -v "$RUNNER_TEMP/pb626-compiler-audit:/audit" \
             debian:trixie-slim bash -euc '
               apt-get update
               apt-get install -y --no-install-recommends build-essential dpkg-dev libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev
-              bash /repo/scripts/audit-armhf-compiler.sh /uapi /audit
+              echo "Dependencies installed; starting $AUDIT_PROGRAM compiler audit"
+              bash /repo/scripts/audit-armhf-compiler.sh /uapi /audit "$AUDIT_PROGRAM"
             '
       - name: Upload compiler comparison
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pb626-armhf-compiler-audit
+          name: pb626-armhf-compiler-audit-${{ matrix.program }}
           path: ${{ runner.temp }}/pb626-compiler-audit
           if-no-files-found: ignore
