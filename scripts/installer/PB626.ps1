@@ -16,9 +16,9 @@ param(
 $ErrorActionPreference='Stop'
 $kit=$PSScriptRoot
 $platform=[Environment]::OSVersion.Platform
-$script:PB626IsWindows=($platform -eq [PlatformID]::Win32NT)
+$script:PB626IsWindows=($platform -eq [System.PlatformID]::Win32NT)
 $script:PB626IsLinux=$false
-if ($platform -eq [PlatformID]::Unix) {
+if ($platform -eq [System.PlatformID]::Unix) {
     try { $script:PB626IsLinux=((& uname -s 2>$null) -eq 'Linux') } catch { $script:PB626IsLinux=$false }
 }
 if (!$script:PB626IsWindows -and !$script:PB626IsLinux) { throw 'Only Windows and Linux are supported.' }
