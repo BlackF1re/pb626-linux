@@ -77,4 +77,37 @@ in_build /bin/bash -euc '
   strip /tmp/pb626-build/keyboard-install/usr/bin/matchbox-keyboard \
         /tmp/pb626-build/panel-install/usr/bin/matchbox-panel \
         /tmp/pb626-build/panel-install/usr/bin/mb-applet-battery
+
+  # Compare size-oriented builds of the pinned clients without replacing
+  # the installed release artifacts. A failed candidate is not selected.
+  compare_client() (
+    component=$1
+    shift
+    cd "/tmp/pb626-build/$component"
+    case "$component" in
+      matchbox-keyboard) release=keyboard-install ;;
+      matchbox-panel) release=panel-install ;;
+    esac
+    candidate="/tmp/pb626-build/audit-$component"
+    echo "Matchbox size audit: $component"
+    if make clean && make -j2 CFLAGS="-Os -std=gnu17 -ffunction-sections -fdata-sections" LDFLAGS="-Wl,--gc-sections" &&
+       make install DESTDIR="$candidate"; then
+      for binary in "$@"; do
+        base="/tmp/pb626-build/$release/usr/bin/$binary"
+        alt="$candidate/usr/bin/$binary"
+        if [ -s "$alt" ] && strip "$alt"; then
+          echo "Baseline and candidate for $binary:"
+          size "$base" "$alt"
+          stat -c "%s %n" "$base" "$alt"
+          readelf -h -A "$alt"
+        else
+          echo "Candidate artifact missing: $binary"
+        fi
+      done
+    else
+      echo "Compact candidate failed for $component; retaining release"
+    fi
+  )
+  compare_client matchbox-keyboard matchbox-keyboard
+  compare_client matchbox-panel matchbox-panel mb-applet-battery
 '
