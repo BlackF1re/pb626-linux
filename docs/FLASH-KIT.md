@@ -1,6 +1,6 @@
 # PB626 Debian flash kit (candidate)
 
-One artifact, `pb626-debian-flash-kit`, contains the same-run native
+One artifact, `pb626-debian-flash-kit`, contains the same-run flashable native
 Debian system, minimal RAM recovery, host backup/restore tools, offline
 assembler and entry points. It does not contain any private factory
 data, password, or the unrecovered private SPL inputs.
@@ -44,18 +44,11 @@ with the existing recovery protocol. Never execute SPL twice in one
 power cycle. `-UseRunningRecovery` is for a previously confirmed RAM
 recovery only, not an ordinary boot.
 
-Install creates or explicitly reuses a verified stock backup, extracts
-the owner's waveform/VCOM, reconstructs the tested BT0 byte-for-byte,
-builds the private Debian image and performs the existing read-only
-preflight. It asks for the new root password and the destructive RESTORE
-CID confirmation. It writes only changed 4 MiB blocks (compressed on
-the wire when worthwhile), placing user block 0 last, then verifies all
-three eMMC regions. The old backup and new image are retained; do not
-share them. Backup now sends zero blocks as metadata only and optionally compresses
-other blocks, falling back to raw for incompressible data. Every decoded
-4 MiB block and all three complete images are still hashed. The raw
-protocol remains available with Backup-PB626Fast.ps1 -Raw. Full backup
-and readback still take time; no physical throughput measurement is claimed. No automatic retry on a failed flash.
+Install now streams the Actions-built `native/pb626-rootfs.ext4.gz` directly into p1, personalizes it with the owner's waveform, VCOM, sleep artwork and a new root password, writes the paired raw kernel/DTB, then reconstructs and writes the tested BT0 last. Only those three ranges are touched. No full backup, backup manifest or local ext4 creation is required. Every written block is verified. The public CI-built `pb626-bt0-menu.raw` is applied to the exact hash-qualified local SPL; no local ARM compiler is used. The private base SPL is not redistributed. No automatic retry on a failed flash.
+
+Windows direct installation additionally needs Python 3.7+ with pyserial (`python -m pip install pyserial`); Linux needs `python3-serial`. OpenSSL in WSL/Linux hashes the chosen password. The launcher starts RAM recovery, detects the COM port, and invokes the direct installer. After the owner-specific files are read (not a full dump), type the displayed `FLASH CID` to write. A root password of at least four characters is accepted for local testing; use a strong unique password for real use. `-UseRunningRecovery` may be used with the paired RAM recovery already running.
+
+Backup and Restore remain independent complete eMMC/SD dump operations. The legacy offline image builder remains available as InstallFromDump.
 
 Recovery runs entirely in RAM using Debian 13 armhf busybox-static and
 a static helper, not a full desktop or APT installation. The shared
@@ -74,16 +67,7 @@ distribution without private inputs.
 
 ## Updating without a fresh backup
 
-Menu item 5 (or `-Action Install -SkipBackup -StockDir PATH`) creates
-a new Debian image from a verified existing same-device dump without
-reading another backup from the device. The original is not overwritten;
-each build gets a unique linux-* output directory. The existing dump
-supplies the factory partitions, calibration and identity. This is a
-destructive reinstall of p1, not an in-place package upgrade. It can
-restore preserved partitions to the state of that dump. No new backup
-is needed if you already have one. Menu item 6 (or `-Action Flash
--ImageDir PATH`) flashes an already assembled image with no new backup.
-Neither option bypasses manifest, board, CID or write confirmation.
+Normal `-Action Install` no longer needs a dump. Menu item 5 (or `-Action InstallFromDump -SkipBackup -StockDir PATH`) retains the legacy offline assembly from a verified existing full dump. The historical `-Action Install -SkipBackup -StockDir PATH` syntax is accepted as an alias for that legacy path. Menu item 6 (or `-Action Flash -ImageDir PATH`) is a legacy alias for restoring an already assembled full dump; `-Action Restore -ImageDir PATH` is preferred. Neither legacy option bypasses manifest, board, CID or write confirmation.
 
 ## microSD
 
@@ -113,13 +97,7 @@ The resulting `pb626-debian-flash-kit` is the intended paired package.
 
 ## Full flash semantics and diagnostic ACM
 
-Install and Flash are full raw-image operations, not a package upgrade:
-user area LBA 16–63 contains BT0, LBA 80 onward contains raw kernel/DTB,
-p1 contains rootfs. Both hardware boot areas and all other user-area
-blocks are scanned and restored to their expected contents. Install
-preserves factory-specific regions from the input dump. Restore writes
-all changed blocks of a full backup. EXT_CSD is recorded and checked,
-not blindly programmed; RPMB is not a raw restorable block region.
+Install is a selective raw-image installation, not a package upgrade: user area LBA 16–63 contains BT0, LBA 80 onward contains raw kernel/DTB, p1 contains rootfs. It does not modify the MBR/EBR, BT1, other factory partitions or hardware boot areas. Restore (including the legacy Flash alias) writes all changed blocks of a full dump, including user, boot0 and boot1. EXT_CSD is recorded and checked, not blindly programmed; RPMB is not a raw restorable block region.
 Recovery starts ConfigFS ACM automatically before storage initialization.
 An invalid or unavailable eMMC no longer suppresses its diagnostic shell;
 the storage protocol waits for/requires successful independent preflight.
@@ -136,7 +114,7 @@ manifests. It deliberately does not substitute an experimental SPL
 for the hash-qualified local BT0.
 
 - pb626-kernel-stage: zImage, modules, Kconfig, DTBs, UAPI and manifest.
-- pb626-native-debian13-armhf: rootfs, paired native raw kernel images,
+- pb626-native-debian13-armhf: rootfs archive, ready-to-stream exact-size compressed ext4, tested public BT0 patch, paired native raw kernel images,
   pb626-runtime_armhf.deb and package list. No redundant rootfs-only or
   runtime-only uploads.
 - pb626-debian-recovery: Debian BusyBox initramfs, paired recovery DTBs,

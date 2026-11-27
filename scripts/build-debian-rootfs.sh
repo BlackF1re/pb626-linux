@@ -260,6 +260,7 @@ sudo rm "$root/tmp/pb626-check-tk.tcl"
 mkdir -p "$out"
 in_root dpkg-query -W -f='${Package}\t${Version}\n' | LC_ALL=C sort > "$out/DEBIAN-PACKAGES.txt"
 sudo tar --numeric-owner -C "$root" -czf "$out/pb626-native-rootfs.tar.gz" .
+bash "$repo/scripts/build-direct-image.sh" "$root" "$out"
 sudo install -m 644 "$work/pb626-runtime.deb" "$out/pb626-runtime_armhf.deb"
 cp "$kernel/pb626-megi-zImage" "$out/pb626-native-zImage"
 cp "$kernel/"{pb626-elan-emmc-native.dtb,KERNELRELEASE,KERNEL-SOURCE.txt,pb626-megi.config} "$out/"

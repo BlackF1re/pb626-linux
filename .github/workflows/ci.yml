@@ -90,6 +90,10 @@ jobs:
           if sh diagnostics/pb626-diagnostics --input /dev/sda 1; then exit 1; fi
           bash -n scripts/build-debian-recovery.sh
           bash -n scripts/prepare-install.sh
+          bash -n scripts/build-direct-image.sh
+          sh -n scripts/restore/pb626-install-direct.sh
+          python3 -m py_compile scripts/installer/install-direct.py
+          python3 tests/test-direct-install.py
           sh -n boot/recovery/init
           sh -n scripts/installer/pb626.sh
           gcc -O2 -Wall -Wextra -Werror boot/debian/pb626-charge.c -o /tmp/test-pb626-charge
@@ -139,7 +143,7 @@ jobs:
         run: |
           set -euo pipefail
           clang --target=armv7a-none-eabi -c BT0-uncaged/early-menu.S -o /tmp/menu.o
-          ld.lld -Ttext=0x5000 -e _start /tmp/menu.o -o /tmp/menu.elf
+          ld.lld --image-base=0x0 -Ttext=0x5000 -e _start /tmp/menu.o -o /tmp/menu.elf
           llvm-objcopy -O binary -j .text /tmp/menu.elf /tmp/menu.raw
           python3 BT0-uncaged/test_hook.py --hook-only /tmp/menu.raw
           python3 BT0-uncaged/test_recover_base.py

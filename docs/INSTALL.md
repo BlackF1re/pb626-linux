@@ -1,6 +1,6 @@
 # Install, back up and restore PocketBook 626 Linux
 
-The new paired Debian flash kit automates this manual procedure; see [FLASH-KIT.md](FLASH-KIT.md). This document remains the manual fallback.
+For normal Debian installation, use the paired Actions artifact `pb626-debian-flash-kit` and `PB626.ps1 -Action Install`. It streams a CI-built ext4 image, kernel and tested BT0 without reading a full dump or building a filesystem locally; see [FLASH-KIT.md](FLASH-KIT.md). The steps below are the legacy offline full-dump procedure and recovery fallback.
 
 This guide uses Windows 10/11 and Ubuntu in WSL2. You do not need to compile Linux or the desktop.
 

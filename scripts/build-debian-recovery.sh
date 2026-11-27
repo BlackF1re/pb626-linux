@@ -45,7 +45,7 @@ done
 sudo ln -s ../bin/busybox "$root/sbin/poweroff"
 sudo ln -s ../bin/busybox "$root/sbin/reboot"
 sudo install -m 755 boot/recovery/init "$root/init"
-sudo install -m 755 scripts/restore/pb626-restore-fast.sh "$root/usr/libexec/"
+sudo install -m 755 scripts/restore/{pb626-restore-fast.sh,pb626-install-direct.sh} "$root/usr/libexec/"
 sudo install -m 755 "$payload/scanner" "$root/usr/libexec/pb626-restore-scan"
 printf 'pb626-debian13-recovery-v1\n' | sudo tee "$root/etc/pb626-image-id" >/dev/null
 sudo mknod -m 600 "$root/dev/console" c 5 1
@@ -98,7 +98,7 @@ gzip -n -9 -c "$payload/scanner" >"$out/tools/pb626-restore-scan.gz"
 cp -a BT0-uncaged "$out/source/"
 mkdir -p "$out/source/scripts"
 cp scripts/{build-native-image.py,pb626_sleep_theme.py,prepare-install.sh} "$out/source/scripts/"
-cp scripts/installer/{PB626.ps1,PB626.cmd,pb626.sh} "$out/"
+cp scripts/installer/{PB626.ps1,PB626.cmd,pb626.sh,install-direct.py} "$out/"
 cp LICENSE "$out/"
 cp "$payload/DEBIAN-BUSYBOX-COPYRIGHT" "$out/recovery/DEBIAN-BUSYBOX-COPYRIGHT"
 echo "Debian recovery initramfs: $(stat -c '%s' "$ram") bytes"

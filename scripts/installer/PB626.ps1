@@ -1,7 +1,7 @@
 #Requires -Version 7.4
 [CmdletBinding()]
 param(
-    [ValidateSet('Install','Backup','Restore','Preflight','Flash','Prepare')][string]$Action,
+    [ValidateSet('Install','InstallFromDump','Backup','Restore','Preflight','Flash','Prepare')][string]$Action,
     [string]$DataDir,
     [string]$Distro='Ubuntu',
     [switch]$UseRunningRecovery,
@@ -20,19 +20,19 @@ if (!$IsWindows -and !$IsLinux) { throw 'Only Windows and Linux are supported.' 
 if (!$IsWindows -and ((& id -u) -ne '0')) { throw 'Run sudo pwsh -File PB626.ps1 on Linux.' }
 if (!$Action) {
     Write-Host 'PocketBook 626 Plus (late ELAN/eMMC)'
-    Write-Host '1 - Install Debian (backs up factory first)'
+    Write-Host '1 - Install Debian directly from the paired Actions artifact (no backup)'
     Write-Host '2 - Backup only'
     Write-Host '3 - Restore a verified dump'
     Write-Host '4 - Read-only preflight of a verified dump'
-    Write-Host '5 - Install new Debian build (reuse existing verified dump; no new backup)'
-    Write-Host '6 - Flash complete assembled eMMC image (BT0, kernel, rootfs, boot0/boot1; no backup)'
+    Write-Host '5 - Legacy offline installation from an existing full dump'
+    Write-Host '6 - Restore a complete assembled eMMC image (legacy Flash alias)'
     Write-Host '7 - Backup microSD (experimental MMC0 profile)'
     Write-Host '8 - Restore microSD (experimental MMC0 profile)'
     Write-Host '9 - Preflight microSD restore'
     Write-Host '10 - Prepare missing FEL input files (no device access)'
     $Action=switch (Read-Host 'Choose 1-10') {
         '1' {'Install'} '2' {'Backup'} '3' {'Restore'} '4' {'Preflight'}
-        '5' {$SkipBackup=$true; 'Install'}
+        '5' {$SkipBackup=$true; 'InstallFromDump'}
         '6' {'Flash'}
         '7' {$SD=$true; 'Backup'}
         '8' {$SD=$true; 'Restore'}
@@ -45,8 +45,9 @@ if ($SD) {
     if ($Action -notin @('Backup','Restore','Preflight')) { throw 'SD supports Backup, Restore, Preflight; native firmware installs only to eMMC' }
     $EnableRecoverySD=$true
 }
-if ($SkipBackup -and $Action -ne 'Install') { throw '-SkipBackup applies only to Install' }
-if ($Action -eq 'Install' -and $SkipBackup) {
+if ($Action -eq 'Install' -and ($SkipBackup -or $StockDir)) { $Action='InstallFromDump' }
+if ($SkipBackup -and $Action -ne 'InstallFromDump') { throw '-SkipBackup applies only to the legacy InstallFromDump path' }
+if ($Action -eq 'InstallFromDump' -and $SkipBackup) {
     if (!$StockDir) { $StockDir=Join-Path $DataDir 'stock' }
     if (!(Test-Path -LiteralPath (Join-Path $StockDir 'SHA256SUMS') -PathType Leaf)) {
         $StockDir=Read-Host 'Path to an existing verified factory/native dump'
@@ -107,7 +108,7 @@ if ($PrepareFelInputs -or $Action -eq 'Prepare') {
     Run-Linux $prepare
     if ($Action -eq 'Prepare') { Write-Host 'FEL inputs prepared. No reader accessed.'; return }
 }
-if (!$UseRunningRecovery -or $Action -eq 'Install') {
+if (!$UseRunningRecovery -or $Action -in @('Install','InstallFromDump')) {
     foreach ($name in @('pb626-spl.bin','direct-entry.bin','sunxi-fel')) {
         if (!(Test-Path -LiteralPath (Join-Path $lab $name) -PathType Leaf)) { throw "Missing verified private FEL input: $name" }
     }
@@ -115,6 +116,16 @@ if (!$UseRunningRecovery -or $Action -eq 'Install') {
     if ((Get-FileHash -LiteralPath (Join-Path $lab 'direct-entry.bin')).Hash -ne '1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd') { throw 'Wrong entry stub' }
 }
 if ($Action -eq 'Install') {
+    foreach ($required in @('install-direct.py','native/pb626-rootfs.ext4.gz','native/pb626-bt0-menu.raw')) {
+        if (!$seen.ContainsKey($required)) { throw "Missing direct-install artifact: $required. Download a new paired flash kit." }
+    }
+    $python=if ($IsWindows) { 'python.exe' } else { 'python3' }
+    if (!(Get-Command $python -ErrorAction SilentlyContinue)) { throw 'Install Python 3.7+ and pyserial before using direct installation.' }
+    & $python -c 'import sys, serial; assert sys.version_info >= (3,7)'
+    if ($LASTEXITCODE -ne 0) { throw 'Direct install requires Python 3.7+ with pyserial. Windows: python -m pip install pyserial; Linux: install python3-serial.' }
+    Write-Warning 'Direct install replaces p1 (all user data), raw kernel/DTB and tested BT0. No backup is created; do not unplug during writes.'
+}
+if ($Action -eq 'InstallFromDump') {
     Write-Warning 'Installation replaces BT0, raw kernel/DTB and the entire rootfs partition. All eMMC regions are verified and changed blocks restored. Keep a verified stock backup and do not unplug USB during writes.'
     if ((Read-Host 'Type INSTALL to continue') -cne 'INSTALL') { throw 'Cancelled' }
 }
@@ -141,6 +152,9 @@ Write-Host "Recovery transport: $port (board/CID still checked by protocol)"
 $backup=Join-Path $kit 'tools/Backup-PB626Fast.ps1'
 $restore=Join-Path $kit 'tools/Restore-PB626Fast.ps1'
 if ($Action -eq 'Install') {
+    & $python (Join-Path $kit 'install-direct.py') --kit $kit --port $port --distro $Distro
+    if ($LASTEXITCODE -ne 0) { throw 'Direct installation failed. Do not reboot a partially flashed reader.' }
+} elseif ($Action -eq 'InstallFromDump') {
     $null=New-Item -ItemType Directory -Force -Path $DataDir
     $stock=if ($StockDir) { $StockDir } else { Join-Path $DataDir 'stock' }
     $linux=Join-Path $DataDir ('linux-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))

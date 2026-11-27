@@ -30,7 +30,7 @@ def recover_base(source):
     checksum(b); verify(b); check(sha(b)==BASE,'Recovered base SHA256 mismatch')
     return b
 
-def build(source):
+def build(source, hook_file=None):
     original=source.read_bytes(); check(sha(original)==BASE, 'Unexpected base SPL'); verify(original)
     b=bytearray(original)
     # MMC2 source, forced MMC2 boot-device function, 4096 sectors/request, 25 MHz.
@@ -39,17 +39,21 @@ def build(source):
         check(b[off:off+len(old)]==old, 'Patch preimage mismatch')
         b[off:off+len(new)]=new
     checksum(b); verify(b); check(sha(b)==SAFE, 'MMC2-safe mismatch')
-    with tempfile.TemporaryDirectory() as tmp:
-        t=Path(tmp)
-        subprocess.run(['clang','--target=armv7a-none-eabi','-c',str(HERE/'early-menu.S'),'-o',str(t/'menu.o')],check=True)
-        subprocess.run(['ld.lld','-Ttext=0x5000','-e','_start',str(t/'menu.o'),'-o',str(t/'menu.elf')],check=True)
-        subprocess.run(['llvm-objcopy','-O','binary','-j','.text',str(t/'menu.elf'),str(t/'menu.raw')],check=True)
-        hook=(t/'menu.raw').read_bytes()
+    if hook_file is not None:
+        hook=Path(hook_file).read_bytes()
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            t=Path(tmp)
+            subprocess.run(['clang','--target=armv7a-none-eabi','-c',str(HERE/'early-menu.S'),'-o',str(t/'menu.o')],check=True)
+            subprocess.run(['ld.lld','--image-base=0x0','-Ttext=0x5000','-e','_start',str(t/'menu.o'),'-o',str(t/'menu.elf')],check=True)
+            subprocess.run(['llvm-objcopy','-O','binary','-j','.text',str(t/'menu.elf'),str(t/'menu.raw')],check=True)
+            hook=(t/'menu.raw').read_bytes()
+    check(sha(hook)=='67c152443fc89a48b65b535c3e8bdb21752b8fe3a96ab106bf948dacab2a96da','Unqualified Menu hook')
     check(len(hook)==0x458 and not any(b[0x5000:0x5458]), 'Unexpected hook or nonempty padding')
     check(word(b,0xa4)==0xea000331, 'Unexpected original entry branch')
     put(b,0xa4,0xea000000|((0x5000-0xa4-8)//4)); b[0x5000:0x5458]=hook
     checksum(b); verify(b); check(sha(b)==FINAL, 'Output differs from hardware-validated SPL')
     return b
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument('base',type=Path); p.add_argument('output',type=Path); p.add_argument('--recover-base',action='store_true'); a=p.parse_args()
-    result=recover_base(a.base) if a.recover_base else build(a.base); a.output.parent.mkdir(parents=True,exist_ok=True); a.output.write_bytes(result); print(sha(result),a.output)
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument('base',type=Path); p.add_argument('output',type=Path); p.add_argument('--recover-base',action='store_true'); p.add_argument('--hook',type=Path,help='CI-built verified early Menu hook; no local compiler'); a=p.parse_args()
+    result=recover_base(a.base) if a.recover_base else build(a.base,a.hook); a.output.parent.mkdir(parents=True,exist_ok=True); a.output.write_bytes(result); print(sha(result),a.output)

@@ -459,13 +459,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: debian-dist
-          key: pb626-native-content-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('debian-base/SHA256SUMS', 'kernel-stage/pb626-megi-zImage', 'kernel-stage/pb626-elan-emmc-native.dtb', 'kernel-stage/kernel-modules.tar.gz', 'kernel-stage/pb626-megi.config', 'kernel-stage/KERNELRELEASE', 'kernel-stage/KERNEL-SOURCE.txt', 'kernel-stage/uapi/linux/sun5i-eink.h', 'scripts/build-debian-rootfs.sh', 'scripts/compile-debian-native.sh', 'scripts/configure-megi-kernel.sh', 'scripts/profile-memory.sh', 'scripts/inspect-live.sh', 'scripts/probe-device.sh', 'boot/debian/**', 'boot/native/**', 'boot/pb626-native-desktop', 'display/**', 'diagnostics/pb626-diagnostics', 'diagnostics/pb626-diag-clock.c', 'BT0-uncaged/pack-kernel.py', 'BT0-uncaged/kernel-entry.S', 'tests/check-control-center.tcl', 'LICENSE') }}
+          key: pb626-native-content-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('debian-base/SHA256SUMS', 'kernel-stage/pb626-megi-zImage', 'kernel-stage/pb626-elan-emmc-native.dtb', 'kernel-stage/kernel-modules.tar.gz', 'kernel-stage/pb626-megi.config', 'kernel-stage/KERNELRELEASE', 'kernel-stage/KERNEL-SOURCE.txt', 'kernel-stage/uapi/linux/sun5i-eink.h', 'scripts/build-debian-rootfs.sh', 'scripts/build-direct-image.sh', 'BT0-uncaged/early-menu.S', 'BT0-uncaged/test_hook.py', 'scripts/compile-debian-native.sh', 'scripts/configure-megi-kernel.sh', 'scripts/profile-memory.sh', 'scripts/inspect-live.sh', 'scripts/probe-device.sh', 'boot/debian/**', 'boot/native/**', 'boot/pb626-native-desktop', 'display/**', 'diagnostics/pb626-diagnostics', 'diagnostics/pb626-diag-clock.c', 'BT0-uncaged/pack-kernel.py', 'BT0-uncaged/kernel-entry.S', 'tests/check-control-center.tcl', 'LICENSE') }}
       - name: Install bootstrap and ARM execution tools
         if: steps.native-content.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mmdebstrap debian-archive-keyring \
-            qemu-user-static binfmt-support arch-test device-tree-compiler kmod ncurses-bin git clang lld
+            qemu-user-static binfmt-support arch-test device-tree-compiler kmod ncurses-bin git clang lld llvm e2fsprogs
           command -v clang ld.lld
           sudo update-binfmts --enable qemu-arm
           test -r /proc/sys/fs/binfmt_misc/qemu-arm
@@ -483,6 +483,8 @@ jobs:
         run: |
           set -euo pipefail
           (cd debian-dist && sha256sum -c SHA256SUMS)
+          test -s debian-dist/pb626-rootfs.ext4.gz
+          test -s debian-dist/pb626-bt0-menu.raw
           test -s debian-dist/CONTENT-BUILD-COMMIT
           git rev-parse HEAD > debian-dist/BUILD-COMMIT
           (cd debian-dist && sha256sum pb626-* KERNELRELEASE KERNEL-SOURCE.txt BUILD-COMMIT CONTENT-BUILD-COMMIT raw-linux.img DEBIAN-PACKAGES.txt > SHA256SUMS)
