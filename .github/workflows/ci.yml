@@ -92,6 +92,7 @@ jobs:
           bash -n scripts/prepare-install.sh
           bash -n scripts/build-direct-image.sh
           sh -n scripts/restore/pb626-install-direct.sh
+          sh -n scripts/apply-live-desktop-fixes.sh
           python3 -m py_compile scripts/installer/install-direct.py
           python3 tests/test-direct-install.py
           sh -n scripts/restore/pb626-net-dispatch.sh
@@ -168,6 +169,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth tk \
+            libfakekey-dev libxft-dev libexpat1-dev libpng-dev libxrender-dev fonts-dejavu-core x11-utils \
             xserver-xorg-dev xutils-dev libpciaccess-dev autoconf automake libtool pkg-config
       - name: Fetch pinned kernel source files without raw-content rate limits
         run: |
@@ -204,6 +206,33 @@ jobs:
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x24' /tmp/test-pb626-x11-epd
           xvfb-run -a -s '-screen 0 760x1024x16' wish tests/test-debian-settings.tcl
+      - name: Smoke-test pinned Matchbox Keyboard with the PB626 flat layout
+        run: |
+          set -euo pipefail
+          src=/tmp/pb626-matchbox-keyboard
+          rev=630d89068dc0a1e9199306d405cb32f892dfa4d3
+          rm -rf "$src"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 https://git.yoctoproject.org/matchbox-keyboard "$rev"
+          git -C "$src" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$rev"
+          cp display/matchbox-keyboard-eink.patch "$src/"
+          cd "$src"
+          patch -p1 < matchbox-keyboard-eink.patch
+          autoreconf -fi
+          CFLAGS="-O2 -std=gnu17" ./configure --prefix=/usr --sysconfdir=/etc --disable-shared --enable-static
+          make -j2
+          cd "$GITHUB_WORKSPACE"
+          PB626_LAYOUT="$GITHUB_WORKSPACE/display/keyboard-us.xml" \
+            xvfb-run -a -s '-screen 0 760x1024x24' sh -eu -c '
+              export MB_KBD_CONFIG="$PB626_LAYOUT"
+              /tmp/pb626-matchbox-keyboard/src/matchbox-keyboard &
+              pid=$!
+              trap "kill $pid 2>/dev/null || true" EXIT
+              sleep 1
+              xwininfo -root -tree | grep -F '"Keyboard"'
+              kill -0 "$pid"
+            '
       - name: Compile the optional shared DDX against host Xorg headers
         run: |
           set -euo pipefail

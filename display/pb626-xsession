@@ -8,6 +8,9 @@ fi
 # GTK4 software rendering on the unaccelerated Xorg session.
 if [ -f /etc/debian_version ]; then
     export GSK_RENDERER=cairo
+    # The private Matchbox Keyboard 0.1.1 cannot parse Debian's newer
+    # include-based keyboard.xml. Use the PB626-owned flat XML layout.
+    export MB_KBD_CONFIG=/usr/share/pb626/matchbox-keyboard/keyboard-us.xml
 fi
 # Make HarfBuzz symbols available to FreeType's auto-hinter on musl.
 if [ ! -f /etc/debian_version ] && [ -r /usr/lib/libharfbuzz.so.0 ]; then
@@ -39,8 +42,9 @@ if ! xrdb -nocpp -merge /etc/X11/pb626.Xresources; then
     echo 'PB626: xrdb failed; using session resource file' >&2
     export XENVIRONMENT=/etc/X11/pb626.Xresources
 fi
-# Restart accessory clients independently; losing the WM or desktop ends
-# the session. Bound consecutive short-lived restarts.
+# Restart accessory clients independently. Only the WM and E Ink bridge are
+# session-critical; panel, keyboard and desktop-launcher failures must not
+# terminate xinit and take down every other client. Bound short-lived retries.
 supervise_client() (
     child=
     trap 'if [ -n "$child" ]; then kill "$child" 2>/dev/null || :; fi; exit 0' HUP INT TERM
@@ -68,7 +72,11 @@ if command -v matchbox-panel >/dev/null; then
         --default-apps 'mb-applet-menu-launcher,mb-applet-launcher --desktop /etc/pb626/keyboard.desktop,mb-applet-battery,mb-applet-clock' &
     panel=$!
 fi
-supervise_client matchbox-keyboard --daemon us &
+if [ -f /etc/debian_version ]; then
+    supervise_client matchbox-keyboard --daemon &
+else
+    supervise_client matchbox-keyboard --daemon us &
+fi
 keyboard=$!
 screen=
 if [ -z "${PB626_EPD_BRIDGE_PID:-}" ]; then
@@ -77,10 +85,10 @@ if [ -z "${PB626_EPD_BRIDGE_PID:-}" ]; then
 fi
 if [ -f /etc/debian_version ]; then
     # Debian Trixie ships Matchbox Desktop 2.x; legacy 1.x flags are rejected.
-    matchbox-desktop --mode desktop &
+    supervise_client matchbox-desktop --mode desktop &
 else
     # Alpine builds the pinned Matchbox Desktop 1.x, which retains these flags.
-    matchbox-desktop --bg col-solid:white --font 'Sans bold 18px' \
+    supervise_client matchbox-desktop --bg col-solid:white --font 'Sans bold 18px' \
         --fontcol black --no-outline --no-title --icon-size 112 --icon-padding 8 &
 fi
 desktop=$!
@@ -93,4 +101,4 @@ if [ -n "${PB626_EPD_BRIDGE_PID:-}" ]; then
         screen=$!
     fi
 fi
-wait -n "$wm" "$desktop" "$keyboard" ${screen:+"$screen"} ${panel:+"$panel"}
+wait -n "$wm" ${screen:+"$screen"}

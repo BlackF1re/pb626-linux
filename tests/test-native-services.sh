@@ -58,8 +58,18 @@ grep -Fxq 'ctl set-default pb626-boot.target' scripts/build-debian-rootfs.sh
 # the client and consequently terminate the xinit-managed session.
 grep -Fq 'DISPLAY is unset' display/pb626-xsession
 grep -Fq 'cannot connect to X server' display/pb626-xsession
-grep -Fxq '    matchbox-desktop --mode desktop &' display/pb626-xsession
-grep -Fq '    matchbox-desktop --bg col-solid:white' display/pb626-xsession
+grep -Fxq '    supervise_client matchbox-desktop --mode desktop &' display/pb626-xsession
+grep -Fq '    supervise_client matchbox-desktop --bg col-solid:white' display/pb626-xsession
+# A broken accessory must not terminate the X session; only WM/renderer are waited on.
+grep -Fxq 'export MB_KBD_CONFIG=/usr/share/pb626/matchbox-keyboard/keyboard-us.xml' display/pb626-xsession
+grep -Fxq '    supervise_client matchbox-keyboard --daemon &' display/pb626-xsession
+grep -Fxq 'wait -n "$wm" ${screen:+"$screen"}' display/pb626-xsession
+wait_line=$(grep '^wait -n ' display/pb626-xsession)
+case "$wait_line" in
+    *keyboard*|*panel*|*desktop*) echo "Accessory is still session-critical: $wait_line" >&2; exit 1 ;;
+esac
+grep -Fq 'display/keyboard-us.xml' scripts/build-debian-rootfs.sh
+python3 tests/test-matchbox-keyboard-layout.py
 # The physical PE8 power LED is the DTS node named "led"; ignore USB LEDs.
 grep -Fq 'led=/sys/class/leds/led' boot/debian/pb626-admin
 grep -Fq 'power_led=/sys/class/leds/led' boot/init-megi

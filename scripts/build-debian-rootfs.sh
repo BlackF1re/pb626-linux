@@ -101,6 +101,7 @@ sudo chmod 755 "$pkg/usr/bin/pb626-xsession"
 sudo install -D -m 644 display/xorg-debian.conf "$pkg/etc/pb626/xorg.conf"
 sudo install -D -m 644 display/matchbox/keyboard.desktop "$pkg/etc/pb626/keyboard.desktop"
 sudo install -D -m 644 display/matchbox/Xresources "$pkg/etc/X11/pb626.Xresources"
+sudo install -D -m 644 display/keyboard-us.xml "$pkg/usr/share/pb626/matchbox-keyboard/keyboard-us.xml"
 sudo install -D -m 644 display/eink-fonts.conf "$pkg/etc/fonts/conf.d/99-pb626-eink.conf"
 sudo install -D -m 644 display/no-color.sh "$pkg/etc/profile.d/pb626-no-color.sh"
 sudo install -d "$pkg/usr/share/themes/PB626/matchbox" "$pkg/usr/share/applications"
@@ -210,6 +211,7 @@ in_root /bin/bash -euc '
   test "$(runuser -u reader -- id -u)" = 1000
   awk -F: '\''($1=="root" || $1=="reader") && $2 ~ /^[!*]/ {n++} END {exit n!=2}'\'' /etc/shadow
   test "$(/usr/bin/pb626-epd --protocol)" = pb626-epd-shm-4
+  test -s /usr/share/pb626/matchbox-keyboard/keyboard-us.xml
   bash -n /usr/bin/pb626-xsession
   sh -n /usr/sbin/pb626-admin
   sh -n /usr/sbin/pb626-diagnostics
