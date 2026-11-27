@@ -61,7 +61,7 @@ grep -Fq 'cannot connect to X server' display/pb626-xsession
 grep -Fxq '    supervise_client matchbox-desktop --mode desktop &' display/pb626-xsession
 grep -Fq '    supervise_client matchbox-desktop --bg col-solid:white' display/pb626-xsession
 # A broken accessory must not terminate the X session; only WM/renderer are waited on.
-grep -Fxq 'export MB_KBD_CONFIG=/usr/share/pb626/matchbox-keyboard/keyboard-us.xml' display/pb626-xsession
+grep -Fxq '    export MB_KBD_CONFIG=/usr/share/pb626/matchbox-keyboard/keyboard-us.xml' display/pb626-xsession
 grep -Fxq '    supervise_client matchbox-keyboard --daemon &' display/pb626-xsession
 grep -Fxq 'wait -n "$wm" ${screen:+"$screen"}' display/pb626-xsession
 wait_line=$(grep '^wait -n ' display/pb626-xsession)
