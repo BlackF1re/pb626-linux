@@ -58,7 +58,7 @@ run_one() {
         printf '%s\t%s\tfailed\t-\t-\t-\t-\n' "$profile" "$program" >>"$out/results.tsv"
         printf '[%s] %s: FAILED\n' "$program" "$profile" >&2
         tail -n 30 "$dir/build.log" >&2
-        if [ "$profile" = baseline ]; then return 1; fi
+        if [ "$profile" = baseline ] || [ "$profile" = release ]; then return 1; fi
         return 0
     fi
     size -A "$dir/program" >"$dir/sections.txt"
@@ -86,6 +86,21 @@ for program in pb626-epd pb626-x11-epd pb626-charge; do
     run_one "$program" cortex-a8-os-lto "${cpu[@]}" -Os -flto
     run_one "$program" cortex-a8-gc "${cpu[@]}" -Os -ffunction-sections -fdata-sections -Wl,--gc-sections
     run_one "$program" debian-hardening "${cppflags[@]}" "${cflags[@]}" "${base[@]}" "${ldflags[@]}"
+    release=("${cppflags[@]}" "${cflags[@]}" "${ldflags[@]}" "${base[@]}")
+    if [ "$program" = pb626-charge ]; then
+        release+=(-Os -ffunction-sections -fdata-sections -Wl,--gc-sections)
+    fi
+    run_one "$program" release "${release[@]}"
+    # The PB626 kernel uses 4 KiB pages. Compare linker segment alignment
+    # independently; do not select a smaller maximum page size by default.
+    run_one "$program" release-page4k "${release[@]}" -Wl,-z,max-page-size=4096
+    run_one "$program" release-page4k-common "${release[@]}" -Wl,-z,max-page-size=4096,-z,common-page-size=4096
+    for profile in baseline release release-page4k release-page4k-common; do
+        if [ -s "$out/$profile/$program/elf.txt" ]; then
+            printf '\n[%s] %s ELF load segments:\n' "$program" "$profile"
+            grep -E 'LOAD|GNU_RELRO|GNU_STACK|INTERP' "$out/$profile/$program/elf.txt" || :
+        fi
+    done
 done
 cat "$out/compiler.txt"
 cat "$out/results.tsv"

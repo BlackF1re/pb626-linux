@@ -41,7 +41,8 @@ in_build /bin/bash -euc '
   native_cc -mfpu=neon -O2 test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
   ./test-pb626-epd
   ./test-pb626-x11-epd
-  native_cc -O2 pb626-charge.c -o pb626-charge
+  # Charger-only UI spends most of its lifetime waiting for events.
+  native_cc -Os -ffunction-sections -fdata-sections -Wl,--gc-sections pb626-charge.c -o pb626-charge
   ./pb626-charge --self-test
   strip pb626-charge
   test "$(./pb626-epd --protocol)" = pb626-epd-shm-4
