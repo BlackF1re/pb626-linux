@@ -14,14 +14,14 @@ with tempfile.TemporaryDirectory() as td:
 void crc(void)
 {
 		if (dcrc != spl_image->dcrc) {
-			puts("SPL: Image data CRC check failed!\\n");
+			puts("SPL: Image data CRC check failed!\n");
 			ret = -EINVAL;
 		}
 }
 void load(void)
 {
 	if (boot_from_devices(spl_boot_list)) {
-		puts(SPL_TPL_PROMPT "failed to boot from all boot devices\\n");
+		puts(SPL_TPL_PROMPT "failed to boot from all boot devices\n");
 		hang();
 	}
 }
@@ -56,13 +56,13 @@ static int spl_mmc_find_device(struct mmc **mmcp, u32 boot_device)
 		return mmc_dev;
 	err = mmc_init_device(mmc_dev);
 	if (err) {
-		printf("spl: could not initialize mmc. error: %d\\n", err);
+		printf("spl: could not initialize mmc. error: %d\n", err);
 		return err;
 	}
 	*mmcp = find_mmc_device(mmc_dev);
 	err = *mmcp ? 0 : -ENODEV;
 	if (err) {
-		printf("spl: could not find mmc device %d. error: %d\\n",
+		printf("spl: could not find mmc device %d. error: %d\n",
 		       mmc_dev, err);
 		return err;
 	}
@@ -76,7 +76,7 @@ void mctl_await_completion(u32 *reg, u32 mask, u32 val)
 	unsigned long tmo = timer_get_us() + 1000000;
 	while ((readl(reg) & mask) != val) {
 		if (timer_get_us() > tmo)
-			panic("Timeout initialising DRAM\\n");
+			panic("Timeout initialising DRAM\n");
 	}
 }
 ''',
@@ -85,7 +85,7 @@ void sunxi_board_init(void)
 {
 	printf("DRAM:");
 	gd->ram_size = sunxi_dram_init();
-	printf(" %d MiB\\n", (int)(gd->ram_size >> 20));
+	printf(" %d MiB\n", (int)(gd->ram_size >> 20));
 	if (!gd->ram_size)
 		hang();
 }
