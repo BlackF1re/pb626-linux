@@ -19,7 +19,7 @@ test -x /usr/libexec/pb626/bin/matchbox-keyboard || {
 }
 test -s "$xsession_src"
 test -s "$layout_src"
-sh -n "$xsession_src"
+bash -n "$xsession_src"
 python3 "$repo/tests/test-matchbox-keyboard-layout.py"
 
 backup_dir="/var/backups/pb626-desktop-fixes-$(date +%Y%m%d-%H%M%S)"
@@ -39,12 +39,16 @@ install -D -m 755 "$tmp" /usr/bin/pb626-xsession
 install -D -m 644 "$layout_src" /usr/share/pb626/matchbox-keyboard/keyboard-us.xml
 
 systemctl reset-failed pb626-desktop.service || :
-systemctl restart pb626-desktop.service
-sleep 3
+if ! systemctl restart pb626-desktop.service; then
+    systemctl --no-pager --full status pb626-desktop.service || :
+    journalctl -u pb626-desktop.service -n 80 --no-pager || :
+    echo "Desktop restart failed; backups are in $backup_dir" >&2
+    exit 1
+fi
 if ! systemctl is-active --quiet pb626-desktop.service; then
     systemctl --no-pager --full status pb626-desktop.service || :
     journalctl -u pb626-desktop.service -n 80 --no-pager || :
-    echo "Desktop did not become active; backups are in $backup_dir" >&2
+    echo "Desktop did not remain active; backups are in $backup_dir" >&2
     exit 1
 fi
 echo "PB626 live desktop fixes installed. Backup: $backup_dir"
