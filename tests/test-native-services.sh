@@ -71,6 +71,14 @@ grep -Fq 'while :; do' display/pb626-xsession
 ! grep -Fq 'restart budget exhausted' display/pb626-xsession
 grep -Fq 'display/keyboard-us.xml' scripts/build-debian-rootfs.sh
 python3 tests/test-matchbox-keyboard-layout.py
+# The launcher uses a non-layout-affecting monochrome focus outline.
+grep -Fq 'display/gtk.css' scripts/build-debian-rootfs.sh
+grep -Fq '/home/reader/.config/gtk-3.0/gtk.css' scripts/build-debian-rootfs.sh
+grep -Fq 'display/gtk.css' scripts/apply-live-desktop-fixes.sh
+grep -Fxq '    box-shadow: inset 0 0 0 2px #000000;' display/gtk.css
+grep -Fxq '    -gtk-icon-effect: none;' display/gtk.css
+grep -Fxq '    opacity: 1;' display/gtk.css
+! grep -Fq '    border: 2px solid' display/gtk.css
 # The physical PE8 power LED is the DTS node named "led"; ignore USB LEDs.
 grep -Fq 'led=/sys/class/leds/led' boot/debian/pb626-admin
 grep -Fq 'power_led=/sys/class/leds/led' boot/init-megi

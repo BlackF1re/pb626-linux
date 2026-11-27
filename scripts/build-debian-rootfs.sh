@@ -169,6 +169,9 @@ in_root useradd -m -u 1000 -U -G netdev -s /bin/bash reader
 in_root passwd -l reader
 in_root passwd -l root
 sudo install -d -m 755 -o 1000 -g 1000 "$root/home/reader/"{Books,Documents,Downloads}
+sudo install -d -m 755 -o 1000 -g 1000 "$root/home/reader/.config/gtk-3.0"
+sudo install -m 644 display/gtk.css "$root/home/reader/.config/gtk-3.0/gtk.css"
+sudo chown 1000:1000 "$root/home/reader/.config/gtk-3.0/gtk.css"
 sudo install -d -m 700 "$root/var/lib/pb626"
 sudo install -d "$root/var/log/journal"
 
@@ -208,6 +211,8 @@ in_root /bin/bash -euc '
   test "$(readlink -f /sbin/init)" = /usr/lib/systemd/systemd
   test "$(id -u reader)" = 1000
   id -nG reader | grep -qw netdev
+  test -s /home/reader/.config/gtk-3.0/gtk.css
+  test "$(stat -c "%u:%g" /home/reader/.config/gtk-3.0/gtk.css)" = 1000:1000
   test "$(runuser -u reader -- id -u)" = 1000
   awk -F: '\''($1=="root" || $1=="reader") && $2 ~ /^[!*]/ {n++} END {exit n!=2}'\'' /etc/shadow
   test "$(/usr/bin/pb626-epd --protocol)" = pb626-epd-shm-4
