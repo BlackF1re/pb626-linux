@@ -65,7 +65,9 @@ grep -Fxq '    export MB_KBD_CONFIG=/usr/share/pb626/matchbox-keyboard/keyboard-
 grep -Fxq '    supervise_client matchbox-keyboard --daemon &' display/pb626-xsession
 grep -Fxq 'supervise_client matchbox-window-manager -theme PB626 -use_titlebar yes &' display/pb626-xsession
 grep -Fxq 'if [ -n "$screen" ]; then' display/pb626-xsession
-grep -Fxq '    while xset q >/dev/null 2>&1; do' display/pb626-xsession
+grep -Fxq '    xprop -root -spy _NET_SUPPORTING_WM_CHECK >/dev/null 2>&1 &' display/pb626-xsession
+grep -Fxq '    wait "$watcher" || :' display/pb626-xsession
+! grep -Fq 'while xset q' display/pb626-xsession
 ! grep -q '^wait -n ' display/pb626-xsession
 grep -Fq 'while :; do' display/pb626-xsession
 ! grep -Fq 'restart budget exhausted' display/pb626-xsession
