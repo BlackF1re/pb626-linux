@@ -178,7 +178,7 @@ jobs:
             for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
               sed -n 's|^--- a/||p' "$patch"
             done
-            printf '%s\\n' include/uapi/linux/sun5i-eink.h
+            printf '%s\n' include/uapi/linux/sun5i-eink.h
           } | sort -u | sed 's|^|/|' > "$root/.git/info/sparse-checkout"
           git -C "$root" config core.sparseCheckout true
           git -C "$root" checkout --detach FETCH_HEAD
