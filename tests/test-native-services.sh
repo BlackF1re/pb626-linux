@@ -58,8 +58,8 @@ grep -Fxq 'ctl set-default pb626-boot.target' scripts/build-debian-rootfs.sh
 # the client and consequently terminate the xinit-managed session.
 grep -Fq 'DISPLAY is unset' display/pb626-xsession
 grep -Fq 'cannot connect to X server' display/pb626-xsession
-grep -Fxq 'matchbox-desktop --mode desktop &' display/pb626-xsession
-! grep -Fq 'matchbox-desktop --bg' display/pb626-xsession
+grep -Fxq '    matchbox-desktop --mode desktop &' display/pb626-xsession
+grep -Fq '    matchbox-desktop --bg col-solid:white' display/pb626-xsession
 # The physical PE8 power LED is the DTS node named "led"; ignore USB LEDs.
 grep -Fq 'led=/sys/class/leds/led' boot/debian/pb626-admin
 grep -Fq 'power_led=/sys/class/leds/led' boot/init-megi
