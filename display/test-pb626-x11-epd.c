@@ -287,6 +287,31 @@ static void test_power_press(void)
 	close(fds[0]);
 }
 
+static void test_sleep_power_edges(void)
+{
+	int fds[2];
+	assert(!pipe(fds));
+	assert(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
+	struct power_input pressed = {0};
+	struct input_event e = {.type = EV_KEY, .code = KEY_POWER, .value = 1, .input_event_sec = 10};
+	assert(write(fds[1], &e, sizeof(e)) == sizeof(e));
+	discard_power_edges(fds[0], &pressed);
+	assert(!pressed.pressed);
+	e.value = 0;
+	e.input_event_usec = 100000;
+	assert(write(fds[1], &e, sizeof(e)) == sizeof(e));
+	assert(power_press(fds[0], &pressed) == 0);
+	e.value = 1;
+	e.input_event_sec = 11;
+	assert(write(fds[1], &e, sizeof(e)) == sizeof(e));
+	e.value = 0;
+	e.input_event_usec = 200000;
+	assert(write(fds[1], &e, sizeof(e)) == sizeof(e));
+	assert(power_press(fds[0], &pressed) == 1);
+	close(fds[0]);
+	close(fds[1]);
+}
+
 static void test_capture_coordinates(void)
 {
 	for (int r = PB_ROT_0; r <= PB_ROT_270; r++) {
@@ -693,6 +718,7 @@ int main(void)
 		return 0;
 	}
 	test_power_press();
+	test_sleep_power_edges();
 	test_worker_deadlines();
 	test_packed_rgb565();
 	test_rgb565_candidate();

@@ -149,6 +149,7 @@ static void release_lock(Display *d)
 /* A complete short press/release toggles. Repeats and orphan releases
  * cannot initiate a sleep operation. */
 struct power_input { uint64_t pressed; int dropped; };
+enum sleep_phase { SLEEP_AWAKE, SLEEP_PREPARED, SLEEP_RESUMING };
 
 static int power_press(int fd, struct power_input *state)
 {
@@ -180,6 +181,16 @@ static int power_press(int fd, struct power_input *state)
 		}
 	}
 	return count;
+}
+
+/* Drop gestures queued during preparation/resume, including an orphan
+ * release from a key held across the physical frame ACK. Preserve the
+ * SYN_DROPPED state until the next SYN_REPORT. */
+static void discard_power_edges(int fd, struct power_input *state)
+{
+	if (fd >= 0)
+		(void)power_press(fd, state);
+	state->pressed = 0;
 }
 
 enum { BUTTON_KEYS = 4, BUTTON_GESTURES = 3, DOUBLE_US = 350000 };
@@ -1926,7 +1937,8 @@ int main(int argc, char **argv)
 		}
 	}
 	struct power_input power_pressed = {0};
-	int lock_pending = 0, system_sleep = 0;
+	int lock_pending = 0;
+	enum sleep_phase system_sleep = SLEEP_AWAKE;
 	int sleep_fd = -1, geometry_changed = 0;
 	nfds_t sleep_index = 0;
 	if (getenv("PB626_SYSTEM_SLEEP")) {
@@ -2032,14 +2044,12 @@ int main(int argc, char **argv)
 			if (client >= 0) {
 				if (sleep_fd >= 0) {
 					sleep_reply(&client, 0);
-				} else if (request == 'P' && has_frame &&
+				} else if (request == 'P' && system_sleep != SLEEP_RESUMING && has_frame &&
 					   (screen_locked || !grab_lock(display, root))) {
-					system_sleep = 1;
+					system_sleep = SLEEP_PREPARED;
 					/* Consume button edges preceding the system transaction.
 					 * A release after wake without a new press cannot toggle. */
-					if (power_index && sources[power_index].fd >= 0)
-						(void)power_press(sources[power_index].fd, &power_pressed);
-					power_pressed.pressed = 0;
+					discard_power_edges(power_index ? sources[power_index].fd : -1, &power_pressed);
 					if (!screen_locked) {
 						screen_locked = 1;
 						lock_pending = 1;
@@ -2059,13 +2069,11 @@ int main(int argc, char **argv)
 					}
 				} else if (request == 'R') {
 					if (system_sleep) {
-						system_sleep = 0;
+						system_sleep = SLEEP_RESUMING;
 						screen_locked = 0;
 						release_lock(display);
 						XResetScreenSaver(display);
-						if (power_index && sources[power_index].fd >= 0)
-							(void)power_press(sources[power_index].fd, &power_pressed);
-						power_pressed.pressed = 0;
+						discard_power_edges(power_index ? sources[power_index].fd : -1, &power_pressed);
 						focus_changed = 1;
 						lock_pending = dirty = 1;
 						geometry_changed = 1;
@@ -2318,6 +2326,10 @@ int main(int argc, char **argv)
 		if (lock_pending && captured && command == RESET && !screen_locked) {
 			lock_pending = 0;
 			int indicator_error = power_action("lock-indicator", "awake");
+			if (system_sleep == SLEEP_RESUMING) {
+				discard_power_edges(power_index ? sources[power_index].fd : -1, &power_pressed);
+				system_sleep = SLEEP_AWAKE;
+			}
 			sleep_reply(&sleep_fd, indicator_error ? 0 : 'R');
 		}
 		if (profile && (captured || changes))
