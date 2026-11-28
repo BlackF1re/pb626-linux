@@ -446,3 +446,19 @@ compact alternatives inherit Debian's CPPFLAGS, CFLAGS and LDFLAGS; they
 retain their existing release optimization levels. Requalify the ARM X11
 smoke and full firmware after changing these flags. No target speedup is
 claimed without physical measurements.
+
+### Build-time scope of compiler experiments
+
+The release firmware still requires host renderer/installer tests, target
+ARM compilation and self-tests, patched Matchbox ARM X11 smoke, the real
+kernel/DTBs, recovery and same-run flash-kit verification. Experimental
+compiler matrices never feed these artifacts. Normal CI and qualification
+pushes therefore skip the repeated comparison builds. Use Actions > CI >
+Run workflow with compiler_audit enabled for the ARMhf matrix, and Full
+firmware qualification > Run workflow with kernel_audit enabled for the
+isolated kernel matrix. To compare Matchbox size alternatives, run
+scripts/compile-debian-native.sh with PB626_AUDIT_MATCHBOX=1 in a fresh
+disposable build chroot. A regular cached firmware build need not rerun
+these comparisons. In run 46124456613 the four kernel experiments used
+about 29 runner-minutes and the three compiler jobs about 21 runner-minutes;
+parallel wall time savings depend on the production critical path and cache.

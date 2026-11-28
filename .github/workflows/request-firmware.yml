@@ -7,6 +7,11 @@ on:
     paths:
       - '.github/firmware-build-request'
   workflow_dispatch:
+    inputs:
+      kernel_audit:
+        description: Rebuild isolated experimental kernel compiler profiles
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,7 +25,7 @@ jobs:
 
   # Experimental builds never feed the production firmware or its caches.
   kernel-size-audit:
-    if: github.ref == 'refs/heads/optimization/debian-runtime'
+    if: ${{ inputs.kernel_audit }}
     name: Kernel compiler experiment (${{ matrix.profile }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90

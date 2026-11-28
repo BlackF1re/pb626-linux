@@ -36,7 +36,17 @@ on:
       - '.github/workflows/request-firmware.yml'
       - '!**/*.md'
   workflow_dispatch:
+    inputs:
+      compiler_audit:
+        description: Compare non-production ARMhf compiler profiles
+        type: boolean
+        default: false
   workflow_call:
+    inputs:
+      compiler_audit:
+        description: Compare non-production ARMhf compiler profiles
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -259,7 +269,10 @@ jobs:
           test -s src/.libs/dummy_drv.so
           # Compilation only: this runner need not have a real Xorg VT.
 
+  # Release ARM binaries are compiled and tested in the native build.
+  # Experimental profiles are useful only when explicitly comparing them.
   compiler-audit:
+    if: ${{ inputs.compiler_audit }}
     name: Debian armhf compiler profile comparison (${{ matrix.program }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30

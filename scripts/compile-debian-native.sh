@@ -25,7 +25,7 @@ fetch_source() {
 fetch_source matchbox-keyboard 630d89068dc0a1e9199306d405cb32f892dfa4d3
 fetch_source matchbox-panel 886605280c1032f76e382f68f9a1d2e57012f4db
 
-in_build /bin/bash -euc '
+in_build /usr/bin/env PB626_AUDIT_MATCHBOX="${PB626_AUDIT_MATCHBOX:-0}" /bin/bash -euc '
   cd /tmp/pb626-build
   # Use the target distribution ABI and hardening defaults, retaining the
   # measured baseline optimization levels. Test the same flags as release.
@@ -107,6 +107,12 @@ in_build /bin/bash -euc '
   cd /tmp/pb626-build
   xvfb-run -a -s "-screen 0 760x1024x16 -nolisten tcp" sh ./test-matchbox-clients.sh \
     "$PWD/keyboard-install/usr/bin" "$PWD/panel-install/usr/bin" "$PWD/keyboard-us.xml"
+
+  # The production client smoke test above is mandatory. Size experiments
+  # do not feed the release cache or firmware; run them only on request.
+  if [ "$PB626_AUDIT_MATCHBOX" != 1 ]; then
+    exit 0
+  fi
 
   # Compare size-oriented builds of the pinned clients without replacing
   # the installed release artifacts. A failed candidate is not selected.
