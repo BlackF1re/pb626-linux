@@ -1,4 +1,4 @@
-Full qualification: Windows physical-test fixes and simplified console
-Source head: 5699bc9ffbd51ff9847fc719e58cb841a0be842f
-Scope: standard/deep Windows kits, binary DTB validation, optional backup, single write confirmation, four-character passwords, transport diagnostics and USB driver conflict guidance.
-No merge. Experimental installed BT0 and suspend remain hardware qualification-gated.
+Qualification: streamlined Windows firmware DAG
+Source head: 47d18ca90c40cfefffb48e0fe9f5e6a726d31bdf
+Scope: standard and deep Windows kits, same-run tests, cache-aware Debian rootfs, parallel deep packaging and strict final gate. Optional Alpine and standalone Linux artifacts remain available by manual input.
+No merge. Hardware qualification remains separate.
