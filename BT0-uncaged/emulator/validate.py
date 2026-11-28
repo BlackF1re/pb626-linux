@@ -158,8 +158,13 @@ def scenarios():
 
 def menu_cases(image, save, report):
     result = {}
-    for name, samples, events, fel, expected in scenarios():
-        board = Board(image, samples, events, fel)
+    # An armed deep resume must not change the first-stage Menu decision.
+    for name, samples, events, fel, expected, rtc in (
+        (name + suffix, samples, events, fel, expected, rtc)
+        for name, samples, events, fel, expected in scenarios()
+        for suffix, rtc in (("", 0), ("-resume-armed", 0x53555350))
+    ):
+        board = Board(image, samples, events, fel, rtc=rtc)
         initial = [board.uc.reg_read(r) for r in KEEP]
         cpsr = board.uc.reg_read(UC_ARM_REG_CPSR) & 0xff
         stop = board.run(0, {save & ~1: "native", 0x20: "rom-low",
@@ -177,7 +182,9 @@ def menu_cases(image, save, report):
             require(stop == "fel-thunk", name+": FEL return")
         if expected == 1:
             require(board.uc.reg_read(UC_ARM_REG_LR) == (0xa2c0 if fel else 0xffff1234), name+": LR")
-        require(not any(a in (PE_CFG,PE_DATA,PIO_GATE) for a,_ in board.writes), name+": early GPIO interference")
+        require(not any(a in (PE_CFG,PE_DATA,PIO_GATE,RTC_MAGIC) for a,_ in board.writes),
+                name+": early GPIO or RTC interference")
+        require(board.regs[RTC_MAGIC] == rtc, name+": RTC marker changed before FEL decision")
         result[name] = {"target": stop, "reason": words[1], "samples": list(words[3:3+words[2]])}
     return result
 
@@ -248,6 +255,14 @@ def candidate(directory, deep, baseline):
         require(result["menu"] == baseline["menu"], "Menu/FEL behavior differs from reference")
     board = Board(image)
     result["boot_device"] = board.call(sym["spl_boot_device"])
+    # U-Boot's non-OMAP ARM enum: MMC2=2, BOARD=12. The .FEL
+    # signature must bypass forced native MMC2 in the source candidates.
+    # The historical native reference is not the separate FEL upload SPL.
+    require(result["boot_device"] == 2, "wrong native boot device")
+    for rtc in (0, 0x53555350):
+        require(Board(image, fel=True, rtc=rtc).call(sym["spl_boot_device"]) == 12,
+                "FEL upload selected a native storage loader")
+    result["fel_upload_dispatch"] = "BOOT_DEVICE_BOARD (with and without SUSP marker)"
     cfg = prefix/"native.config"
     raw = config_number(cfg,"CONFIG_SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR")
     offset = config_number(cfg,"CONFIG_SYS_MMCSD_RAW_MODE_U_BOOT_DATA_PART_OFFSET")

@@ -18,8 +18,11 @@ The same Unicorn Cortex-A8 engine executes machine code from each
 eGON image, starting at address zero for the Menu hook. SRAM, LRADC,
 GPIO PE8, clock gate, RTC magic and timer register are explicit models.
 The normal path and deep candidate cold path must match the reference
-Menu/FEL decisions and preserved registers. The raw-sector function is
-executed, with the configured user-area offset accounted for separately.
+Menu/FEL decisions and preserved registers, also with the RTC SUSP
+marker armed. Candidate .FEL upload dispatch must select
+BOOT_DEVICE_BOARD, not the forced native MMC2 path. The raw-sector
+function is executed, with the configured user-area offset accounted for
+separately.
 The startup LED functions execute actual ARM instructions with exact
 virtual timer counts, including wraparound and FEL/retained-state skip.
 

@@ -54,3 +54,20 @@ backup (not stock):
 
 Both intermediate and final SHA-256 checks must match. This does not recover
 U-Boot source or establish deep resume. No device writes are performed.
+
+## Startup LED and source candidates
+
+The SHA-qualified binary reconstruction above predates SPL LED animation
+and deep resume. Normal flash kits deliberately still use that exact
+binary. The source-built native and deep candidates contain PE8 startup
+and Morse diagnostics; they are NOT drop-in replacements established on
+hardware. LED startup occurs after the first Menu/FEL decision and
+only on the native cold path. Two pulses (at least 100 ms on and off per
+pulse) are followed by steady on for Linux GPIO-LED takeover. Sparse timer
+polling cannot skip a phase; if needed the normal kernel handoff finishes
+missing edges in at most four 100 ms waits. FEL and retained-resume paths
+do not wait for startup animation. The LED error loop is cyclic on ordinary
+fatal errors; deep recovery errors may be interrupted by the rescue
+watchdog. Codes reserved or without a reachable call site are not evidence
+of implemented failure classification. See emulator/README.md for the
+actual instruction model and its limits.
