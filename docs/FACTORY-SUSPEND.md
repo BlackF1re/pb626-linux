@@ -114,11 +114,23 @@ remains untouched.
    changed APB1 clock/gate on preparation failure or abort. The CPU PM
    notifier result is checked. These are candidate fixes, not a
    demonstrated hardware rollback; a failed PMIC rollback is logged.
-4. The full qualification workflow separately compiles the deep C/ARM
-   objects with SUN5I_PM enabled. No linked deep kernel or flash image
-   is emitted by this check. Production config continues to forbid
-   SUN5I_PM; normal build and installer remain unchanged. The source
-   SPL build and emulator are distinct from actual retained RAM testing.
+4. The lab watchdog patch bounds DRAM command/pad polling, refuses an
+   already active watchdog, and retains the rescue watchdog through
+   kernel register restoration. If the PMIC acknowledges but power does
+   not disappear, or DRAM cannot be safely restored, the SRAM path
+   invalidates the RTC resume marker and waits for reset without
+   returning through DRAM. This is a candidate recovery policy, not a
+   measured watchdog or rail-cut guarantee.
+5. Full qualification separately links a deep-enabled kernel, modules
+   and native DTB under a distinct local version, caches only verified
+   build inputs/outputs, and executes the actual compiled SRAM object
+   under a limited MMIO fault model on every run. No installer or
+   flash image consumes this lab artifact. The model checks I2C
+   failures, abort register/port restoration, controller stalls and
+   the invalidation path; it does not model electrical power loss,
+   DRAM retention or the hardware watchdog. Production config continues
+   to forbid SUN5I_PM. The existing source SPL is independently built
+   and is not yet a qualified pair with the laboratory kernel.
 
 ## Remaining qualification
 
@@ -127,10 +139,9 @@ with a matching deep kernel, actual DCR/ZQ, saved memory signatures,
 PMIC rail measurements, watchdog recovery and power-key wake. Check
 clock/reset sequencing against the actual board and prove that all
 peripherals recover after power removal, including MMC, USB, Wi-Fi,
-ELAN, E Ink and RTC. The current deep source still contains unbounded
-DRAM-controller polling and depends on actual rail cut; recovery from
-a stuck controller and validation of the precise resume address remain
-open. Do not enable deep on production until these are addressed and
+ELAN, E Ink and RTC. The lab source bounds DRAM-controller polling and has a proposed
+watchdog escape, but the actual reset/rail-cut sequence and validation
+of the precise resume address remain open. Do not enable deep on production until these are addressed and
 independent recovery is available.
 
 For s2idle, use the existing qualification checklist. The kernel
