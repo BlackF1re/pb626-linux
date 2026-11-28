@@ -1,0 +1,88 @@
+diff --git a/arch/arm/mach-sunxi/pm-sun5i.c b/arch/arm/mach-sunxi/pm-sun5i.c
+--- a/arch/arm/mach-sunxi/pm-sun5i.c
++++ b/arch/arm/mach-sunxi/pm-sun5i.c
+@@ -115,5 +115,7 @@
+ 	u32 training_save[SUN5I_TRAINING_WORDS];
+ 
+-	u32 axp_sleep_val;
++	u32 axp_sleep_val;
++	u8 axp_voff_saved;
++	bool axp_voff_valid;
+ 	int (*standby)(void __iomem *dramc, void __iomem *twi, u32 axp_val);
+ };
+@@ -218,5 +220,7 @@
+ 	int ret;
+ 
+-	/* APB1 to OSC24M and TWI0 clocked, to get a known 400kHz setup */
++	pm.axp_voff_valid = false;
++
++	/* APB1 to OSC24M and TWI0 clocked, to get a known 400kHz setup */
+ 	writel(0, pm.ccu + 0x58);
+ 	writel(readl(pm.ccu + 0x6c) | BIT(0), pm.ccu + 0x6c);
+@@ -232,5 +236,7 @@
+ 	if (ret)
+ 		return ret;
+-	val |= AXP209_VOFF_SLEEP_ARM;
++	pm.axp_voff_saved = val;
++	pm.axp_voff_valid = true;
++	val |= AXP209_VOFF_SLEEP_ARM;
+ 	ret = sun5i_twi_xfer(AXP209_VOFF_CTRL, &val, true);
+ 	if (ret)
+@@ -245,5 +251,23 @@
+ }
+ 
+-static void save_regs(void __iomem *base, u32 *buf, int words)
++/* On abort, undo only the clock changes made by preparation. Do not
++ * replay the full CCU register file while the original SoC is running.
++ */
++static void sun5i_axp_abort(void)
++{
++	int ret;
++
++	if (pm.axp_voff_valid) {
++		ret = sun5i_twi_xfer(AXP209_VOFF_CTRL, &pm.axp_voff_saved, true);
++		if (ret)
++			pr_err("sun5i-pm: failed to restore PMIC wake flag (%d)\n", ret);
++	}
++	writel(pm.ccu_save[0x58 / 4], pm.ccu + 0x58);
++	writel(pm.ccu_save[0x6c / 4], pm.ccu + 0x6c);
++	pm.axp_voff_valid = false;
++	writel(0, pm.timer + SUN5I_STANDBY_GP_MAGIC);
++}
++
++static void save_regs(void __iomem *base, u32 *buf, int words)
+ {
+ 	int i;
+@@ -379,6 +403,7 @@
+ 	ret = sun5i_axp_prepare();
+ 	if (ret) {
+-		pr_err("sun5i-pm: PMIC not reachable (%d)\n", ret);
+-		return ret;
++		pr_err("sun5i-pm: PMIC not reachable (%d)\n", ret);
++		sun5i_axp_abort();
++		return ret;
+ 	}
+ 
+@@ -386,6 +411,10 @@
+ 			   sun5i_standby_blob_sz);
+ 
+-	cpu_pm_enter();
+-	ret = cpu_suspend(0, sun5i_pm_finish);
++	ret = cpu_pm_enter();
++	if (ret) {
++		sun5i_axp_abort();
++		return ret;
++	}
++	ret = cpu_suspend(0, sun5i_pm_finish);
+ 	cpu_pm_exit();
+ 
+@@ -406,6 +435,7 @@
+ 		       sizeof(pm.training_save));
+ 	} else {
+-		pr_err("sun5i-pm: power-down failed, suspend aborted\n");
+-		ret = -EIO;
++		pr_err("sun5i-pm: power-down failed, suspend aborted\n");
++		sun5i_axp_abort();
++		ret = -EIO;
+ 	}
+ 
