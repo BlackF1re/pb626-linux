@@ -8,7 +8,7 @@ work=$(realpath "${3:?scratch directory}")
 cd "$repo"
 in_build() { sudo chroot "$build" "$@"; }
 sudo install -d "$build/tmp/pb626-build"
-sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
+sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h,pb626-x11-epd.c,pb626-taskbar.c,test-pb626-taskbar.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
 sudo cp -a "$kernel/uapi" "$build/tmp/pb626-build/uapi"
 sudo install -m 644 boot/debian/pb626-charge.c display/keyboard-us.xml display/test-matchbox-clients.sh "$build/tmp/pb626-build/"
 sudo install -m 644 display/{matchbox-keyboard-eink.patch,matchbox-panel-power-supply.patch,xorg-dummy-pb626-shared.patch} "$build/tmp/pb626-build/"
@@ -59,13 +59,17 @@ in_build /usr/bin/env PB626_AUDIT_MATCHBOX="${PB626_AUDIT_MATCHBOX:-0}" /bin/bas
   native_cc -mfpu=neon -O2 test-pb626-x11-epd.c -o test-pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
   ./test-pb626-epd
   ./test-pb626-x11-epd
+  native_cc -Os pb626-taskbar.c -o pb626-taskbar -lX11
+  native_cc -O2 test-pb626-taskbar.c -o test-pb626-taskbar -lX11 -lXtst
+  xvfb-run -a -s "-screen 0 760x1024x16 -nolisten tcp" ./test-pb626-taskbar ./pb626-taskbar
+  strip pb626-taskbar
   # Charger-only UI spends most of its lifetime waiting for events.
   native_cc -Os -ffunction-sections -fdata-sections -Wl,--gc-sections pb626-charge.c -o pb626-charge
   ./pb626-charge --self-test
   strip pb626-charge
   test "$(./pb626-epd --protocol)" = pb626-epd-shm-4
   strip pb626-epd pb626-x11-epd
-  for binary in pb626-epd pb626-x11-epd pb626-charge; do
+  for binary in pb626-epd pb626-x11-epd pb626-charge pb626-taskbar; do
     check_native_elf "$binary"
   done
   # Build against the actual target Xorg module ABI. The vendor package is

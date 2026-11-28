@@ -522,7 +522,7 @@ jobs:
         id: native-binaries
         with:
           path: debian-compiled-cache
-          key: pb626-debian-compiled-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('debian-base/SHA256SUMS', 'kernel-stage/uapi/linux/sun5i-eink.h', 'scripts/compile-debian-native.sh', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/pb626-x11-epd.c', 'display/pb626-sleep.h', 'display/pb626-ddx-fb.h', 'display/test-pb626-epd.c', 'display/test-pb626-x11-epd.c', 'display/test-matchbox-clients.sh', 'display/keyboard-us.xml', 'display/matchbox-keyboard-eink.patch', 'display/matchbox-panel-power-supply.patch', 'display/xorg-dummy-pb626-shared.patch', 'boot/debian/pb626-charge.c') }}
+          key: pb626-debian-compiled-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('debian-base/SHA256SUMS', 'kernel-stage/uapi/linux/sun5i-eink.h', 'scripts/compile-debian-native.sh', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/pb626-x11-epd.c', 'display/pb626-sleep.h', 'display/pb626-ddx-fb.h', 'display/test-pb626-epd.c', 'display/test-pb626-x11-epd.c', 'display/test-matchbox-clients.sh', 'display/pb626-taskbar.c', 'display/test-pb626-taskbar.c', 'display/keyboard-us.xml', 'display/matchbox-keyboard-eink.patch', 'display/matchbox-panel-power-supply.patch', 'display/xorg-dummy-pb626-shared.patch', 'boot/debian/pb626-charge.c') }}
       - name: Build and verify Debian rootfs and paired firmware
         if: steps.native-content.outputs.cache-hit != 'true'
         run: bash scripts/build-debian-rootfs.sh kernel-stage debian-dist debian-base debian-compiled-cache

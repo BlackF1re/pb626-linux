@@ -225,6 +225,9 @@ jobs:
           done
           gcc -O2 -Wall -Wextra -Werror -DPB626_PACKED_TRANSITIONS -I /tmp/pb626-uapi display/test-pb626-epd.c -o /tmp/test-pb626-packed
           /tmp/test-pb626-packed
+          gcc -O2 -Wall -Wextra -Werror display/pb626-taskbar.c -o /tmp/pb626-taskbar -lX11
+          gcc -O2 -Wall -Wextra -Werror display/test-pb626-taskbar.c -o /tmp/test-pb626-taskbar -lX11 -lXtst
+          xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-taskbar /tmp/pb626-taskbar
           xvfb-run -a -s '-screen 0 760x1024x16' wish tests/test-debian-settings.tcl
       - name: Smoke-test pinned Matchbox Keyboard with the PB626 flat layout
         run: |

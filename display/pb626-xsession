@@ -100,6 +100,11 @@ if command -v matchbox-panel >/dev/null; then
         --default-apps 'mb-applet-menu-launcher,mb-applet-launcher --desktop /etc/pb626/keyboard.desktop,mb-applet-battery,mb-applet-clock' &
     panel=$!
 fi
+taskbar=
+if [ -f /etc/debian_version ] && [ "${PB626_TASKBAR:-0}" = 1 ] && command -v pb626-taskbar >/dev/null; then
+    supervise_client pb626-taskbar &
+    taskbar=$!
+fi
 if [ -f /etc/debian_version ]; then
     supervise_client matchbox-keyboard --daemon &
 else
@@ -121,7 +126,7 @@ else
 fi
 desktop=$!
 watcher=
-trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} ${idle_pid:+"$idle_pid"} ${watcher:+"$watcher"} 2>/dev/null || true' EXIT
+trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${taskbar:+"$taskbar"} ${screen:+"$screen"} ${idle_pid:+"$idle_pid"} ${watcher:+"$watcher"} 2>/dev/null || true' EXIT
 trap 'exit 1' HUP INT TERM
 if [ -n "${PB626_EPD_BRIDGE_PID:-}" ]; then
     : > "${PB626_EPD_SESSION_STARTED:?}"

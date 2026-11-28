@@ -58,7 +58,7 @@ else
     bash scripts/compile-debian-native.sh "$build" "$kernel" "$work"
     mkdir -p "$compiled_cache"
     sudo tar --numeric-owner -C "$build/tmp/pb626-build" -czf "$compiled_cache/compiled.tar.gz" \
-        pb626-epd pb626-x11-epd pb626-charge \
+        pb626-epd pb626-x11-epd pb626-charge pb626-taskbar \
         xserver-xorg-video-dummy-0.4.0/src/.libs/dummy_drv.so \
         xserver-xorg-video-dummy-0.4.0/debian/copyright \
         xserver-xorg-video-dummy-0.4.0/COPYING \
@@ -68,7 +68,7 @@ else
     (cd "$compiled_cache" && sha256sum compiled.tar.gz >SHA256SUMS)
 fi
 built="$build/tmp/pb626-build"
-sudo install -m 755 "$built"/{pb626-epd,pb626-x11-epd} "$pkg/usr/bin/"
+sudo install -m 755 "$built"/{pb626-epd,pb626-x11-epd,pb626-taskbar} "$pkg/usr/bin/"
 sudo install -D -m 755 "$built/pb626-charge" "$pkg/usr/libexec/pb626-charge"
 sudo install -D -m 644 "$built/xserver-xorg-video-dummy-0.4.0/src/.libs/dummy_drv.so" "$pkg/usr/lib/pb626/xorg/drivers/dummy_drv.so"
 sudo install -D -m 644 "$built/xserver-xorg-video-dummy-0.4.0/debian/copyright" "$pkg/usr/share/doc/pb626-runtime/xorg-dummy-copyright"
@@ -227,7 +227,7 @@ in_root /bin/bash -euc '
   sh -n /usr/sbin/pb626-admin
   sh -n /usr/sbin/pb626-diagnostics
   /usr/sbin/pb626-diag-clock resolution
-  for exe in /usr/bin/pb626-epd /usr/bin/pb626-x11-epd /usr/libexec/pb626/bin/* /usr/lib/pb626/xorg/drivers/dummy_drv.so; do
+  for exe in /usr/bin/pb626-epd /usr/bin/pb626-x11-epd /usr/bin/pb626-taskbar /usr/libexec/pb626/bin/* /usr/lib/pb626/xorg/drivers/dummy_drv.so; do
     ldd "$exe" > /tmp/pb626-ldd
     cat /tmp/pb626-ldd
     if grep -q "not found" /tmp/pb626-ldd; then

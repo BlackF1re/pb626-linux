@@ -348,6 +348,13 @@ desktop-buttons)
     desktop_patch 'PB626_BUTTONS PB626_HOME_KEY PB626_MENU_KEY' \
         "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" "PB626_MENU_KEY=$4"
     ;;
+desktop-taskbar)
+    [ "$#" -eq 3 ] || exit 2
+    case "$2" in 0|1) ;; *) exit 2 ;; esac
+    case "$3" in 32|40|48|56|64|72) ;; *) exit 2 ;; esac
+    lock_state
+    desktop_patch 'PB626_TASKBAR PB626_TASKBAR_SIZE' "PB626_TASKBAR=$2" "PB626_TASKBAR_SIZE=$3"
+    ;;
 desktop-appearance)
     [ "$#" -eq 3 ] || exit 2
     case "$2" in 32|40|48|56|64|72) ;; *) exit 2 ;; esac

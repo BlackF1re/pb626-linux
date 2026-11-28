@@ -255,7 +255,7 @@ proc updateStatus {} {
     .tabs.system.canvas.body.info configure -state disabled -height [expr {max(12, $lines)}]
 }
 proc desktopApply {section} {
-    global buttons home menu gray depth idle fast tone gamma preview mixed holdMs uiDpi panelSize titlebarSize feedback restartNeeded
+    global buttons home menu gray depth idle fast tone gamma preview mixed holdMs uiDpi panelSize titlebarSize taskbarEnabled taskbarSize feedback restartNeeded
     switch -- $section {
         display {
             if {$preview && $mixed} {
@@ -269,6 +269,7 @@ proc desktopApply {section} {
         hold {set ok [act desktop-hold $holdMs]}
         dpi {set ok [act desktop-dpi $uiDpi]}
         appearance {set ok [act desktop-appearance $panelSize $titlebarSize]}
+        taskbar {set ok [act desktop-taskbar $taskbarEnabled $taskbarSize]}
         default {error "Unknown settings section"}
     }
     if {$ok} {
@@ -369,6 +370,8 @@ set holdMs 1000
 set uiDpi auto
 set panelSize 48
 set titlebarSize 40
+set taskbarEnabled 0
+set taskbarSize 48
 set home keyboard
 set menu menu
 set gray balanced
@@ -386,6 +389,8 @@ if {![catch {query desktop-status} data]} {
         if {![regexp {^([A-Z0-9_]+)=([a-z0-9.-]+)$} $line -> key value]} {continue}
         switch -- $key {
             PB626_BUTTONS {set buttons $value}
+            PB626_TASKBAR {if {$value in {0 1}} {set taskbarEnabled $value}}
+            PB626_TASKBAR_SIZE {if {$value in {32 40 48 56 64 72}} {set taskbarSize $value}}
             PB626_PANEL_SIZE {if {$value in {32 40 48 56 64 72}} {set panelSize $value}}
             PB626_TITLEBAR_SIZE {if {$value in {32 40 48 56 64}} {set titlebarSize $value}}
             PB626_UI_DPI {if {$value in {auto 96 120 144 168 192 216}} {set uiDpi $value}}
@@ -487,6 +492,12 @@ choose $p panelsize "Bottom panel height (px)" panelSize {32 40 48 56 64 72}
 choose $p titlesize "Window title bar height (px)" titlebarSize {32 40 48 56 64}
 button $p.panelsave -text "Save panel and title bar sizes" -command {desktopApply appearance}
 pack $p.panelsave -fill x -padx 12 -pady 5
+section $p tasks "Running applications (experimental)" "Top tabs show running windows. Tap to switch; hold a tab to request normal window closure. More pages appear if needed."
+checkbutton $p.taskenable -text "Show running application tabs" -variable taskbarEnabled -anchor w
+pack $p.taskenable -fill x -padx 12 -pady 4
+choose $p tasksize "Top task panel height (px)" taskbarSize {32 40 48 56 64 72}
+button $p.tasksave -text "Save running application panel" -command {desktopApply taskbar}
+pack $p.tasksave -fill x -padx 12 -pady 5
 section $p light "Frontlight" "Brightness and power are saved independently."
 label $p.state -textvariable lightText -font {{Liberation Sans} 15 bold} -anchor w
 pack $p.state -fill x -padx 16 -pady 3

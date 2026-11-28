@@ -118,6 +118,11 @@ if admin desktop-display photo 24 auto srgb 9.0 0 0; then exit 1; fi
 admin desktop-settings pages keyboard escape mono 16 0 auto
 admin desktop-status | grep -qx PB626_EPD_MIXED=1
 admin desktop-idle 0
+admin desktop-taskbar 1 56
+admin desktop-status | grep -qx PB626_TASKBAR=1
+admin desktop-status | grep -qx PB626_TASKBAR_SIZE=56
+if admin desktop-taskbar 2 56; then exit 1; fi
+if admin desktop-taskbar 1 99; then exit 1; fi
 admin desktop-appearance 56 48
 admin desktop-status | grep -qx PB626_PANEL_SIZE=56
 admin desktop-status | grep -qx PB626_TITLEBAR_SIZE=48
@@ -128,6 +133,8 @@ admin desktop-status | grep -qx PB626_UI_DPI=144
 if admin desktop-dpi 0; then exit 1; fi
 if admin desktop-dpi '144; bad'; then exit 1; fi
 admin desktop-hold 750
+admin desktop-status | grep -qx PB626_TASKBAR=1
+admin desktop-status | grep -qx PB626_TASKBAR_SIZE=56
 admin desktop-status | grep -qx PB626_PANEL_SIZE=56
 admin desktop-status | grep -qx PB626_TITLEBAR_SIZE=48
 admin desktop-status | grep -qx PB626_BUTTON_HOLD_MS=750
