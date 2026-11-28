@@ -658,9 +658,78 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows-host:
+    uses: ./.github/workflows/windows-host.yml
+
+  windows-kit:
+    name: Assemble native Windows flash bundle
+    needs: [debian-native, recovery, fel-host, bootloader, windows-host, host-checks, restore-checks, windows-powershell51]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-native-debian13-armhf
+          path: native-stage
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-debian-recovery
+          path: recovery-stage
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-windows-host-tools
+          path: windows-host
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-fel-host-tools
+          path: fel-host
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-source-boot-candidates-NOT-FOR-FLASH
+          path: source-boot-candidates
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-spl-emulation-report
+          path: qualification
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cpio device-tree-compiler
+          bash scripts/windows/assemble-kit.sh windows-kit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-windows-flash-kit
+          path: windows-kit/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-kit-check:
+    name: Verify complete Windows bundle using Windows PowerShell 5.1
+    needs: [windows-kit]
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-windows-flash-kit
+          path: windows-kit
+      - name: Offline package and native command checks
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Wrong PowerShell version' }
+          $tokens=$null; $errors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\windows-kit\PB626.ps1).Path,[ref]$tokens,[ref]$errors)
+          if ($errors.Count) { throw ($errors -join '; ') }
+          & .\windows-kit\PB626.ps1 -Action Validate
+          & .\windows-kit\host\python\python.exe .\tests\test-windows-flasher.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows transport model failed' }
+
   qualification:
     name: All selected builds and tests passed
-    needs: [host-checks, restore-checks, windows-powershell51, alpine-base, kernel, bundle, desktop, debian-base, bootloader, fel-host, diagnostics, debian-native, recovery, flash-kit]
+    needs: [host-checks, restore-checks, windows-powershell51, alpine-base, kernel, bundle, desktop, debian-base, bootloader, fel-host, diagnostics, debian-native, recovery, flash-kit, windows-host, windows-kit, windows-kit-check]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

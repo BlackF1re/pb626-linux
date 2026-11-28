@@ -115,6 +115,9 @@ jobs:
           sh -n scripts/restore/pb626-net-dispatch.sh
           python3 -m py_compile scripts/installer/dump-network.py scripts/build-rootfs-bmap.py
           python3 tests/test-network-install.py
+          python3 -m py_compile scripts/windows/windows-fel.py
+          bash -n scripts/windows/build-host.sh scripts/windows/assemble-kit.sh
+          python3 tests/test-windows-flasher.py
           sh -n boot/recovery/init
           sh -n scripts/installer/pb626.sh
           gcc -O2 -Wall -Wextra -Werror boot/debian/pb626-charge.c -o /tmp/test-pb626-charge
