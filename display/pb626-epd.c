@@ -365,11 +365,27 @@ static void plan(struct renderer *renderer, enum mode mode, const bool *active)
 	struct update *update = &renderer->planned;
 	const struct cached_update *decoded = &renderer->cache[mode];
 	update->count = 0;
+	/* Sparse text/cursor updates often use only a few of 256 transitions.
+	 * Collect them once, then expand only those entries in each scan. */
+	uint8_t active_codes[TRANSITIONS];
+	unsigned int active_count = 0;
+	if (active)
+		for (unsigned int t = 0; t < TRANSITIONS; t++)
+			if (active[t])
+				active_codes[active_count++] = t;
 	for (unsigned int i = 0; i < decoded->count; i++) {
 		uint8_t phase[TRANSITIONS];
 		const uint8_t *lut = decoded->lut + i * LUT_BYTES;
-		for (unsigned int t = 0; t < TRANSITIONS; t++)
-			phase[t] = !active || active[t] ? packed_signal(lut, t) : 0;
+		if (active && active_count <= TRANSITIONS / 4) {
+			memset(phase, 0, sizeof(phase));
+			for (unsigned int j = 0; j < active_count; j++) {
+				unsigned int t = active_codes[j];
+				phase[t] = packed_signal(lut, t);
+			}
+		} else {
+			for (unsigned int t = 0; t < TRANSITIONS; t++)
+				phase[t] = !active || active[t] ? packed_signal(lut, t) : 0;
+		}
 
 		struct phase *last = update->count ? &update->phases[update->count - 1] : NULL;
 		if (last && !memcmp(last->lut, phase, sizeof(phase))) {

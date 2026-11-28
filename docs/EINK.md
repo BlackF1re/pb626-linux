@@ -283,3 +283,14 @@ frame reset their ghosting budget only after ACK. Never advance the
 cleanup deadline, enlarge the halo, or combine with a pending capture;
 large cleanup retains its five-second delay. The optical appearance of
 GC16 still needs physical comparison; the factory sequence is unchanged.
+
+### Sparse waveform planning
+
+Collect the active transition indices once per update. For up to 64 of
+256 possible transitions, expand only those entries from each packed
+waveform phase into the existing zeroed LUT. Dense images and INIT retain
+the full expansion path. Phase count, repeat merging, active mask and
+all voltage signals remain byte-identical; no neutral scans are dropped.
+Host regression covers dense, threshold-sized and single-transition
+masks, including index 255. This reduces CPU work in sparse updates
+without adding resident storage; measure actual preparation latency.

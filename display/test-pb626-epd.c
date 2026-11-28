@@ -160,7 +160,9 @@ static void test_packed_cache(void)
 			assert(packed_signal(cache->lut + i * LUT_BYTES, t) == (t + i) % 3);
 		}
 	}
-	for (unsigned int filtered = 0; filtered < 2; filtered++) {
+	for (unsigned int filtered = 0; filtered < 4; filtered++) {
+		for (unsigned int t = 0; t < TRANSITIONS; t++)
+			active[t] = filtered == 1 ? t % 2 : filtered == 2 ? t % 4 == 0 : t == 255;
 		plan(&renderer, GC16, filtered ? active : NULL);
 		assert(renderer.planned.count == 2);
 		for (unsigned int i = 0; i < cache->count; i++)
