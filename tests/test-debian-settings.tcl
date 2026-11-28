@@ -5,7 +5,7 @@ proc exec {args} {
     if {[lindex $args 0] eq "/usr/bin/doas"} {
         switch [lindex $args 2] {
             desktop-status {return "PB626_BUTTONS=pages\nPB626_EPD_GRAY_PROFILE=photo\nPB626_EPD_TONE=cie-lstar\nPB626_EPD_GAMMA=1.2"}
-            desktop-display - desktop-buttons - desktop-idle {
+            desktop-display - desktop-buttons - desktop-idle - desktop-hold {
                 set ::lastSave [lrange $args 2 end-1]
                 return ""
             }
@@ -35,6 +35,9 @@ if {[.tabs.display.canvas.body.brightness cget -resolution] != 1} {exit 1}
 if {$::tone ne "cie-lstar" || $::gamma ne "1.2"} {error "Tone/gamma not restored"}
 desktopApply keys
 if {[lindex $::lastSave 0] ne "desktop-buttons"} {error "Button save overwrites other tabs"}
+set ::holdMs 750
+desktopApply hold
+if {$::lastSave ne {desktop-hold 750}} {error "Hold duration not saved"}
 desktopApply display
 if {[lindex $::lastSave 0] ne "desktop-display" || !$::restartNeeded} {error "Display save failed"}
 if {[.tabs.display.canvas.body.gray.label cget -anchor] ne "w"} {error "Setting label must align left"}

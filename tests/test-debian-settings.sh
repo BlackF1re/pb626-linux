@@ -118,7 +118,12 @@ if admin desktop-display photo 24 auto srgb 9.0 0 0; then exit 1; fi
 admin desktop-settings pages keyboard escape mono 16 0 auto
 admin desktop-status | grep -qx PB626_EPD_MIXED=1
 admin desktop-idle 0
+admin desktop-hold 750
+admin desktop-status | grep -qx PB626_BUTTON_HOLD_MS=750
 admin desktop-status | grep -qx PB626_EPD_MIXED=1
+for value in 0 299 3000 0500 bad; do
+    if admin desktop-hold "$value"; then exit 1; fi
+done
 for args in 'frontlight -1' 'frontlight 101' 'frontlight 01' \
     'frontlight 1+2' 'light-on extra' 'light-level 0' 'governor bad' 'power-key bad' 'led bad' 'hostname -bad' 'ntp bad' \
     'desktop-settings pages keyboard menu mono 16 0 bad' 'desktop-settings bad keyboard menu ui 16 0' \

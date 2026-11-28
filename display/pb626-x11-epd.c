@@ -186,8 +186,8 @@ enum { BUTTON_KEYS = 4, BUTTON_GESTURES = 3, DOUBLE_US = 350000 };
 enum gesture { SHORT_PRESS, LONG_PRESS, DOUBLE_PRESS };
 struct button_binding {
 	char action[BUTTON_GESTURES][24];
-	uint64_t pressed, deadline;
-	int down, second, pending;
+	uint64_t pressed, deadline, hold_due;
+	int down, second, pending, long_fired;
 };
 
 struct controls {
@@ -195,7 +195,7 @@ struct controls {
 	struct button_binding bindings[BUTTON_KEYS];
 	int fallback, vertical, pointer_visible, clean_requested, keyboard_changed;
 	int page_keys, home_key, menu_escape;
-	uint64_t menu_pressed;
+	uint64_t menu_pressed, menu_due, hold_us;
 };
 
 static void keyboard_command(Display *display, Window root, Atom command, long operation)
@@ -280,6 +280,14 @@ static int load_button_bindings(struct controls *controls)
 	return valid;
 }
 
+static uint64_t button_hold_us(const char *value)
+{
+	static const char *const allowed[] = { "300", "500", "750", "1000", "1500", "2000" };
+	for (size_t i = 0; value && i < sizeof(allowed) / sizeof(allowed[0]); i++)
+		if (!strcmp(value, allowed[i])) return (uint64_t)atoi(value) * 1000;
+	return MENU_HOLD_US;
+}
+
 static int binding_index(unsigned int key)
 {
 	switch (key) {
@@ -326,7 +334,7 @@ static int binding_event(Display *d, Window root, Atom keyboard,
 	uint64_t stamp = (uint64_t)e->input_event_sec * 1000000 + e->input_event_usec;
 	int changed = 0, has_long = strcmp(b->action[LONG_PRESS], "none") != 0;
 	int has_double = strcmp(b->action[DOUBLE_PRESS], "none") != 0;
-	if (e->value == 1 && b->pending && now >= b->deadline) {
+	if (e->value == 1 && !b->down && b->pending && now >= b->deadline) {
 		changed |= dispatch_binding(d, root, keyboard, controls, b->action[SHORT_PRESS]);
 		b->pending = 0;
 	}
@@ -341,10 +349,16 @@ static int binding_event(Display *d, Window root, Atom keyboard,
 			b->down = 1;
 			b->pressed = stamp;
 			b->second = b->pending;
+			b->long_fired = 0;
+			b->hold_due = has_long ? now + controls->hold_us : 0;
 		}
 	} else if (e->value == 0 && b->down) {
 		b->down = 0;
-		if (has_long && stamp >= b->pressed && stamp - b->pressed >= MENU_HOLD_US) {
+		b->hold_due = 0;
+		if (b->long_fired) {
+			/* The action already ran while the key was held. */
+			b->long_fired = 0;
+		} else if (has_long && stamp >= b->pressed && stamp - b->pressed >= controls->hold_us) {
 			if (b->second)
 				changed |= dispatch_binding(d, root, keyboard, controls, b->action[SHORT_PRESS]);
 			b->pending = 0;
@@ -370,7 +384,15 @@ static int flush_bindings(Display *d, Window root, Atom keyboard,
 	for (int i = 0; i < BUTTON_KEYS; i++) {
 		struct button_binding *b = &controls->bindings[i];
 		if (screen_locked) {
-			b->down = b->pending = b->second = 0;
+			b->down = b->pending = b->second = b->long_fired = 0;
+			b->hold_due = 0;
+		} else if (b->down && b->hold_due && now >= b->hold_due) {
+			if (b->second)
+				changed |= dispatch_binding(d, root, keyboard, controls, b->action[SHORT_PRESS]);
+			b->pending = b->second = 0;
+			b->hold_due = 0;
+			b->long_fired = 1;
+			changed |= dispatch_binding(d, root, keyboard, controls, b->action[LONG_PRESS]);
 		} else if (b->pending && !b->down && now >= b->deadline) {
 			b->pending = 0;
 			changed |= dispatch_binding(d, root, keyboard, controls, b->action[SHORT_PRESS]);
@@ -384,9 +406,34 @@ static uint64_t binding_deadline(const struct controls *controls)
 	if (screen_locked) return deadline;
 	for (int i = 0; i < BUTTON_KEYS; i++) {
 		const struct button_binding *b = &controls->bindings[i];
+		if (b->down && b->hold_due && b->hold_due < deadline) deadline = b->hold_due;
 		if (b->pending && !b->down && b->deadline < deadline) deadline = b->deadline;
 	}
 	return deadline;
+}
+
+/* Legacy Menu (including hardware pointer fallback) uses the same
+ * monotonic timer, without changing its short-press semantics. */
+static int flush_menu(struct controls *controls, uint64_t now)
+{
+	if (screen_locked) {
+		controls->menu_pressed = controls->menu_due = 0;
+	} else if (controls->menu_due && now >= controls->menu_due) {
+		controls->menu_pressed = controls->menu_due = 0;
+		controls->clean_requested = 1;
+		return 1;
+	}
+	return 0;
+}
+
+static void cancel_button_gestures(struct controls *controls)
+{
+	controls->menu_pressed = controls->menu_due = 0;
+	for (int i = 0; i < BUTTON_KEYS; i++) {
+		struct button_binding *b = &controls->bindings[i];
+		b->down = b->pending = b->second = b->long_fired = 0;
+		b->hold_due = 0;
+	}
 }
 
 static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
@@ -409,10 +456,11 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 		if (event.code == KEY_MENU) {
 			uint64_t now = (uint64_t)event.input_event_sec * 1000000 +
 				       event.input_event_usec;
-			if (event.value == 1) {
+			if (event.value == 1 && !controls->menu_due) {
 				controls->menu_pressed = now;
-			} else if (event.value == 0 && controls->menu_pressed) {
-				if (now >= controls->menu_pressed + MENU_HOLD_US) {
+				controls->menu_due = now_us() + controls->hold_us;
+			} else if (event.value == 0 && controls->menu_due) {
+				if (now >= controls->menu_pressed && now - controls->menu_pressed >= controls->hold_us) {
 					controls->clean_requested = 1;
 					changed = 1;
 				} else if (controls->fallback && controls->pointer_visible) {
@@ -425,7 +473,7 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 						XTestFakeKeyEvent(display, menu, False, CurrentTime);
 					}
 				}
-				controls->menu_pressed = 0;
+				controls->menu_pressed = controls->menu_due = 0;
 			}
 			continue;
 		}
@@ -1821,6 +1869,7 @@ int main(int argc, char **argv)
 		.page_keys = keys && !strcmp(keys, "pages"),
 		.home_key = home && !strcmp(home, "home"),
 		.menu_escape = menu && !strcmp(menu, "escape"),
+		.hold_us = button_hold_us(getenv("PB626_BUTTON_HOLD_MS")),
 	};
 	controls.custom_buttons = load_button_bindings(&controls);
 	struct pollfd sources[8] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
@@ -1961,7 +2010,7 @@ int main(int argc, char **argv)
 					if (!screen_locked) {
 						screen_locked = 1;
 						lock_pending = 1;
-						controls.menu_pressed = 0;
+						cancel_button_gestures(&controls);
 					}
 					if (lock_pending)
 						sleep_fd = client;
@@ -2017,7 +2066,7 @@ int main(int argc, char **argv)
 						fprintf(stderr, "pb626: system suspend request refused\n");
 				} else if (policy == POWER_LOCK && !grab_lock(display, root)) {
 					screen_locked = 1;
-					controls.menu_pressed = 0;
+					cancel_button_gestures(&controls);
 					lock_pending = dirty = 1;
 				}
 				if (lock_pending)
@@ -2030,6 +2079,8 @@ int main(int argc, char **argv)
 				pointer_changed |= handle_buttons(display, root, keyboard, sources[i].fd, &controls);
 		if (controls.custom_buttons && !controls.fallback)
 			pointer_changed |= flush_bindings(display, root, keyboard, &controls, now_us());
+		else
+			pointer_changed |= flush_menu(&controls, now_us());
 		if (screen_locked && lock_pending && has_frame) {
 			/* Filter the last acknowledged physical frame, not X11.
 			 * One GC16 update; RESET would run INIT. */
@@ -2276,6 +2327,8 @@ wait_input:
 		if (controls.custom_buttons && !controls.fallback) {
 			uint64_t keys_due = binding_deadline(&controls);
 			if (keys_due < deadline) deadline = keys_due;
+		} else if (!screen_locked && controls.menu_due && controls.menu_due < deadline) {
+			deadline = controls.menu_due;
 		}
 		XFlush(display);
 		if (XPending(display))
@@ -2292,6 +2345,8 @@ wait_input:
 			goto failed;
 		for (nfds_t i = 1; i < source_count; i++) {
 			if (sources[i].revents & disconnected) {
+				if (i != power_index && i != sleep_index)
+					cancel_button_gestures(&controls);
 				close(sources[i].fd);
 				sources[i].fd = -1;
 			}

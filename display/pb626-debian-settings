@@ -255,7 +255,7 @@ proc updateStatus {} {
     .tabs.system.canvas.body.info configure -state disabled -height [expr {max(12, $lines)}]
 }
 proc desktopApply {section} {
-    global buttons home menu gray depth idle fast tone gamma preview mixed feedback restartNeeded
+    global buttons home menu gray depth idle fast tone gamma preview mixed holdMs feedback restartNeeded
     switch -- $section {
         display {
             if {$preview && $mixed} {
@@ -266,6 +266,7 @@ proc desktopApply {section} {
         }
         keys {set ok [act desktop-buttons $buttons $home $menu]}
         idle {set ok [act desktop-idle $idle]}
+        hold {set ok [act desktop-hold $holdMs]}
         default {error "Unknown settings section"}
     }
     if {$ok} {
@@ -362,6 +363,7 @@ proc desktopRestart {} {
     }
 }
 set buttons arrows
+set holdMs 1000
 set home keyboard
 set menu menu
 set gray balanced
@@ -379,6 +381,7 @@ if {![catch {query desktop-status} data]} {
         if {![regexp {^([A-Z0-9_]+)=([a-z0-9.-]+)$} $line -> key value]} {continue}
         switch -- $key {
             PB626_BUTTONS {set buttons $value}
+            PB626_BUTTON_HOLD_MS {if {$value in {300 500 750 1000 1500 2000}} {set holdMs $value}}
             PB626_HOME_KEY {set home $value}
             PB626_MENU_KEY {set menu $value}
             PB626_EPD_GRAY_PROFILE {set gray $value}
@@ -514,6 +517,9 @@ choose $p home "Home button" home {keyboard home}
 choose $p menu "Menu short press" menu {menu escape}
 label $p.note -text "Advanced bindings override these defaults.\nWithout touch, hardware pointer controls remain available." -anchor w -justify left -wraplength 560
 pack $p.note -fill x -padx 16 -pady 10
+choose $p hold "Long press duration (ms)" holdMs {300 500 750 1000 1500 2000}
+button $p.holdsave -text "Save hold duration" -command {desktopApply hold}
+pack $p.holdsave -fill x -padx 12 -pady 5
 button $p.bindings -text "Advanced button bindings…" -command buttonSettings
 pack $p.bindings -fill x -padx 12 -pady 5
 button $p.save -text "Save button settings" -command {desktopApply keys}

@@ -348,6 +348,12 @@ desktop-buttons)
     desktop_patch 'PB626_BUTTONS PB626_HOME_KEY PB626_MENU_KEY' \
         "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" "PB626_MENU_KEY=$4"
     ;;
+desktop-hold)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in 300|500|750|1000|1500|2000) ;; *) exit 2 ;; esac
+    lock_state
+    desktop_patch 'PB626_BUTTON_HOLD_MS' "PB626_BUTTON_HOLD_MS=$2"
+    ;;
 desktop-idle)
     [ "$#" -eq 2 ] && valid_desktop arrows keyboard menu balanced 16 "$2" || exit 2
     lock_state
