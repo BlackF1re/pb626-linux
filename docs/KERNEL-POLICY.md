@@ -107,3 +107,25 @@ Explicit keys, AF_ALG hash/skcipher, AES, ECB/CBC, HMAC/CMAC, MD5/SHA1/SHA2,
 RSA and X.509/PKCS8 support cover the iwd kernel crypto contract. This is
 not a reason to enable broad BPF or unrelated board drivers. See
 DEBIAN-MIGRATION.md for qualification.
+
+## Cortex-A8 compiler qualification
+
+The pinned kernel implements ARMv8 AES and PMULL acceleration behind CPU
+feature checks. The A13 Cortex-A8 cannot register those providers.
+Disable CRYPTO_AES_ARM_CE and CRYPTO_GHASH_ARM_CE explicitly; retain
+generic AES and the ARM bit-sliced NEON provider. This does not remove
+an algorithm available on this hardware.
+
+The resolved configuration in full qualification run 46084101571 confirmed
+that SMP and KALLSYMS_ALL were already disabled; Thumb-2, dead-code/data
+elimination and Cortex-A8-specific tuning require separate experiments.
+The explicit branch qualification workflow builds the production baseline
+and each candidate in independent trees, reports vmlinux and compressed
+kernel sizes, and verifies the kernel policy after resolving Kconfig.
+Candidate builds never populate production caches or enter the flash kit.
+Dead-code/data elimination is explicitly experimental in upstream Kconfig;
+do not enable it or Thumb-2 until the actual boot/recovery contract and
+driver behavior are tested. Keep taskstats, Wi-Fi debugfs, wakelock ABI,
+module version checks and other diagnostic/compatibility facilities;
+removing an available interface solely to reduce code size does not meet
+the functional compatibility requirement.

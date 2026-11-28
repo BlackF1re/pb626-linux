@@ -378,3 +378,51 @@ workloads at equal temperature, CPU governor, visual depth and waveform.
 Record CPU time, preparation latency, PSS, and the first-update latency
 after idle. Do not use elapsed QEMU compilation or test time as evidence of
 Cortex-A8 performance.
+
+### Remaining physical qualification
+
+The patched Matchbox clients use the same 4 KiB linker alignment while
+retaining their -O2 production compiler setting. The ARM build chroot
+includes Xvfb only for smoke tests; it is not added to the shipped rootfs.
+The compact -Os/section-GC alternatives are built and smoke-tested
+separately. Their text reductions in run 46084101571 were 3151 bytes
+(keyboard), 1905 bytes (panel), and 260 bytes (battery applet), before
+changing alignment. Their input latency and PSS are not yet measured.
+
+The compiler audit artifacts contain the actual ARM test executables for
+both the release and candidate builds. Run only the following CPU-only
+benchmarks on the reader as an ordinary user, with the same CPU governor,
+temperature and load. Do not use the X11 capture regression against the
+live desktop; that regression paints its test pattern on a virtual root.
+
+- Set PB626_BENCH_TRANSITIONS=1 when executing the test binary from
+  release/pb626-epd and packed-transitions/pb626-epd. Compare the reported
+  renderer size and ns/frame for identical patterns and render styles.
+  The optional nine-bit representation removes 679168 bytes of transition
+  storage (663.25 KiB), without changing the shared frame protocol.
+  Retain the 16-bit release representation until scan preparation latency
+  is measured and actual panel updates are qualified.
+- Set PB626_BENCH_RGB565=1 when executing the X11 bridge release test.
+  Compare the current conversion and the candidate 64 KiB LUT on binary,
+  gray and color data. Only select the LUT if the measured gain is
+  worth the additional memory.
+- The 32/64/256-row capture alternatives are checked against full-frame
+  references in both 16- and 24-bit Xvfb visuals. Compare real bridge
+  preparation times with the same X11 workload before selecting a
+  different strip size; the production setting remains 128.
+- Record pb626-profile-memory with the same services, frontlight,
+  documents, temperature and idle interval. Record PSS, MemAvailable,
+  CmaFree, reclaim/PSI and zram counters; use xrestop to separate server
+  pixmaps. Compare with both a cold and warmed-up desktop.
+- DMA release and the shared DDX remain qualification-gated. Verify
+  repeated first updates after idle under memory pressure, scanout
+  stability, both display depths, rotation, input and recovery before
+  enabling them. Do not shrink CMA or the eight-buffer queue or change
+  panel timing to chase a smaller memory figure.
+- Compare governor, runtime PM delay, zram policy and allocator settings
+  individually on hardware. Keep existing defaults absent measurements.
+  Preserve user-session D-Bus, the keyboard daemon and independent client
+  restart behavior unless profiling demonstrates a meaningful advantage.
+
+The full firmware qualification and compiler experiments do not replace
+physical A13 boot, E Ink and power/recovery checks.
