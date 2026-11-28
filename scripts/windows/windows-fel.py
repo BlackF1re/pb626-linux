@@ -115,7 +115,7 @@ def boot(kit, profile):
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument("action",choices=("prepare","probe","boot","hello","validate"))
+    ap.add_argument("action",choices=("prepare","probe","boot","hello","ready","validate"))
     ap.add_argument("--profile",choices=("ncm","rndis"),default="ncm")
     ap.add_argument("--kit",type=Path,default=Path(__file__).resolve().parent)
     args=ap.parse_args()
@@ -130,16 +130,20 @@ def main():
         rev, raw, spl=direct.checked_inputs(kit,"candidate")
         mapped=direct.mapped_chunks(kit/"native/pb626-rootfs.bmap.json")
         print(f"Validated {direct.kit_profile(kit)}: {rev}; raw kernel {len(raw)} bytes; {len(mapped)} mapped rootfs chunks; candidate {sha(spl)}")
-    elif args.action=="hello":
+    elif args.action in ("hello","ready"):
         import importlib
         direct=importlib.import_module("install-direct")
         recovery=direct.EthernetRecovery(windows=True)
         try:
-            direct.check_windows_recovery(recovery,kit)
+            direct.check_windows_recovery(recovery,kit,ready=args.action=="ready")
         finally:
             recovery.close()
-        print("Same-build recovery and storage ready")
+        print("Same-build recovery"+(" and storage ready" if args.action=="ready" else " ready"))
     else:
         boot(kit,args.profile)
 if __name__=="__main__":
-    main()
+    try:
+        main()
+    except (RuntimeError,OSError,ValueError,subprocess.SubprocessError) as exc:
+        print("ERROR: "+str(exc),flush=True)
+        raise SystemExit(1)

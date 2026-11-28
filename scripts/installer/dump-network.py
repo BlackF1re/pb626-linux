@@ -3,6 +3,9 @@
 import argparse
 import gzip
 import hashlib
+import shutil
+import time
+import os
 from pathlib import Path
 import re
 import importlib
@@ -56,7 +59,9 @@ def main():
     ap.add_argument("directory",type=Path)
     ap.add_argument("--sd",action="store_true")
     ap.add_argument("--windows",action="store_true",help="Native Windows TCP")
+    ap.add_argument("--journal",type=Path,help="Local write-state record")
     args=ap.parse_args()
+    d.journal(args.journal,'preflight')
     r=d.EthernetRecovery(windows=args.windows)
     if args.windows:
         d.check_windows_recovery(r,Path(__file__).resolve().parent)
@@ -67,7 +72,12 @@ def main():
     extname="pb626-emmc-ext-csd.bin"
     r.test_transport()
     if args.action=="backup":
-        path.mkdir(parents=True,exist_ok=False)
+        path.parent.mkdir(parents=True,exist_ok=True)
+        required=sum(size for _,_,size in images)
+        d.require(shutil.disk_usage(path.parent).free>=required+16*1024*1024,
+                  f"Not enough disk space; backup needs {required/1024**3:.2f} GiB plus metadata")
+        path.mkdir(exist_ok=False)
+        print("Backup directory:",path,flush=True)
         names=[cidname]
         (path/cidname).write_text(cid+"\n")
         if ext is not None:
@@ -76,11 +86,14 @@ def main():
         for region,name,size in images:
             h=hashlib.sha256()
             partial=path/(name+".partial")
+            started=time.monotonic()
             with partial.open("xb") as f:
                 for i,offset in enumerate(range(0,size,CHUNK)):
                     data=read_block(r,cid,sectors,region,i,min(CHUNK,size-offset))
                     f.write(data); h.update(data)
-                    if i%16==0: print(region,i+1,flush=True)
+                    d.progress(region,i+1,(size+CHUNK-1)//CHUNK,started)
+                f.flush(); os.fsync(f.fileno())
+            print("Verifying complete device region:",region,flush=True)
             d.require(h.hexdigest()==digest(r,cid,sectors,region,"backup-hash"),
                       "Full backup hash mismatch")
             partial.rename(path/name)
@@ -104,8 +117,9 @@ def main():
         d.require((path/name).stat().st_size==size,"Invalid image size "+name)
     print("Dump and device preflight passed",flush=True)
     if args.action=="preflight": return
-    d.require(input("Type RESTORE "+cid+" to continue: ")=="RESTORE "+cid,"Cancelled")
+    d.confirm("Type RESTORE "+cid+" to continue (anything else cancels): ","RESTORE "+cid)
     for region,name,size in images:
+        print("Scanning current device region:",region,flush=True)
         rows=r.lines("dump",cid,sectors,"scan",region,timeout=3600,
                      max_response=32*1024*1024)
         actual={}
@@ -119,17 +133,20 @@ def main():
         with (path/name).open("rb") as f:
             order=list(range(count))
             if region=="user": order=order[1:]+order[:1]
-            for i in order:
+            started=time.monotonic()
+            for done,i in enumerate(order,1):
                 f.seek(i*CHUNK)
                 length=min(CHUNK,size-i*CHUNK)
                 data=f.read(length)
                 d.require(len(data)==length,"Dump changed during restore")
                 if d.sha(data)!=actual[i]:
+                    d.journal(args.journal,'writing',f'restore {region} chunk {i}')
                     write_block(r,cid,sectors,region,i,data)
-                    print(region,"written block",i+1,flush=True)
+                d.progress(region,done,count,started)
         d.require(digest(r,cid,sectors,region,"verify")==sums[name],"Full restore hash mismatch")
     d.require(info(r,args.sd)[0]==cid,"CID changed")
+    d.journal(args.journal,'verified','full restore')
     print("All full-dump regions verified",flush=True)
 
-if __name__=="__main__": main()
+if __name__=="__main__": d.cli(main)
 

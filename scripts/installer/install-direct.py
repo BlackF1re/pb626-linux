@@ -33,6 +33,55 @@ def require(ok, message):
         raise RuntimeError(message)
 
 
+class Cancelled(Exception):
+    pass
+
+
+def confirm(prompt, expected):
+    if input(prompt).strip() != expected:
+        raise Cancelled("Cancelled by user; no writes started")
+
+
+def progress(label, done, total, started):
+    elapsed=max(time.monotonic()-started,0.001)
+    width=24
+    fill=min(width,int(width*done/max(total,1)))
+    rate=done/elapsed
+    remaining=max(0,int((total-done)/max(rate,0.001)))
+    row=f"{label:<12} [{'#'*fill}{'-'*(width-fill)}] {100*done/max(total,1):5.1f}%  {done}/{total}  ETA {remaining//60:02d}:{remaining%60:02d}"
+    if sys.stdout.isatty():
+        print("\r"+row.ljust(78),end="\n" if done==total else "",flush=True)
+    elif done==1 or done==total or done%16==0:
+        print(row,flush=True)
+
+
+def journal(path, state, detail=""):
+    if path is None:
+        return
+    # A durable conservative record: mark *before* sending a write. A lost
+    # ACK must never be interpreted as proof that nothing was written.
+    tmp=path.with_suffix(".tmp")
+    with tmp.open("w",encoding="ascii") as stream:
+        stream.write(state+"\n"+detail+"\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(tmp,path)
+
+
+def cli(main):
+    try:
+        main()
+    except Cancelled as exc:
+        print(str(exc),flush=True)
+        raise SystemExit(2)
+    except (KeyboardInterrupt, EOFError):
+        print("\nOperation interrupted.",flush=True)
+        raise SystemExit(130)
+    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        print("\nERROR: "+str(exc),flush=True)
+        raise SystemExit(1)
+
+
 def sha(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -304,11 +353,13 @@ def candidate_path(kit):
     return kit/'candidate'/name
 
 
-def check_windows_recovery(r, kit):
+def check_windows_recovery(r, kit, ready=True):
     expected = '{} {} {}'.format((kit/'native/BUILD-COMMIT').read_text().strip(),
                                 kit_profile(kit), filehash(candidate_path(kit)))
     require(r.lines('identity',timeout=5)==[expected],
             'Wrong RAM recovery build/profile; boot recovery from this bundle')
+    if not ready:
+        return []
     rows=r.lines('probe',timeout=10)
     require(sum(bool(re.fullmatch(r'CID=[0-9a-f]{32}',row)) for row in rows)==1,
             'eMMC not ready or not qualified')
@@ -371,10 +422,15 @@ def send_block(r, cid, kind, i, data):
 
 
 def hash_password(distro, openssl=None):
-    password = getpass.getpass('New root password (at least 4 characters): ')
-    require(len(password) >= 4 and '\n' not in password and '\r' not in password
-            and '\0' not in password, 'Invalid password')
-    require(password == getpass.getpass('Confirm root password: '), 'Passwords differ')
+    require(sys.stdin.isatty(), 'Interactive terminal required for password entry')
+    while True:
+        password = getpass.getpass('New Linux root password (at least 8 characters): ')
+        if len(password) < 8 or any(c in password for c in ('\n','\r','\0')):
+            print('Password must contain at least 8 characters and no line breaks. Try again.',flush=True)
+            continue
+        if password == getpass.getpass('Confirm root password: '):
+            break
+        print('Passwords differ. Try again.',flush=True)
     cmd = [str(openssl or 'openssl'), 'passwd', '-6', '-stdin']
     if os.name == 'nt' and openssl is None:
         cmd = ['wsl.exe', '-d', distro, '-u', 'root', '--']+cmd
@@ -393,6 +449,7 @@ def main():
     ap.add_argument('--spl', choices=('keep','qualified','candidate'), default='qualified')
     ap.add_argument('--spl-only', action='store_true', help='Only replace the selected primary SPL')
     ap.add_argument('--candidate-backup', type=Path, help='Verified full dump for experimental BT0')
+    ap.add_argument('--journal',type=Path,help='Local write-state record')
     args = ap.parse_args()
     kit = args.kit.resolve()
     require(not args.spl_only or args.spl != 'keep', 'No SPL selected')
@@ -401,6 +458,7 @@ def main():
     require(profile!='deep-lab' or (args.windows and args.spl=='candidate' and not args.spl_only),
             'Deep lab kernel/rootfs and resume SPL must be installed as one explicit pair')
     rev, raw, spl = checked_inputs(kit, args.spl)
+    journal(args.journal,'preflight')
     print('Paired flashable firmware:', rev, flush=True)
     theme_module = importlib.import_module('pb626_sleep_theme')
     mapped = mapped_chunks(kit/'native/pb626-rootfs.bmap.json')
@@ -411,6 +469,7 @@ def main():
         ids = [x[4:] for x in rows if re.fullmatch(r'CID=[0-9a-f]{32}', x)]
         require(len(ids) == 1, 'Unqualified eMMC')
         cid = ids[0]
+        print('Verified reader CID:',cid,flush=True)
         require(r.lines('layout')==['1 1009664 14260224','2 73728 65536','8 275456 500736'],
                 'Unexpected partition layout')
         if args.spl == 'keep':
@@ -438,11 +497,13 @@ def main():
                 require(path.stat().st_size==size and filehash(path)==sums.get(name),'Invalid backup: '+name)
             print('EXPERIMENTAL BT0: physical FEL has not been qualified; a bad SPL may make the reader unrecoverable.', flush=True)
             print('Candidate SHA256:', sha(spl), flush=True)
-            require(input('Type RISK '+cid+' to accept this: ') == 'RISK '+cid, 'Cancelled')
+            confirm('Type RISK '+cid+' to accept this (anything else cancels): ','RISK '+cid)
         if args.spl_only:
-            require(input('Type BOOTLOADER '+cid+' to write only LBA 16-63: ') == 'BOOTLOADER '+cid, 'Cancelled')
+            confirm('Type BOOTLOADER '+cid+' to write only LBA 16-63: ','BOOTLOADER '+cid)
+            journal(args.journal,'writing','BT0 block 0')
             send_block(r, cid, 'spl-candidate' if args.spl == 'candidate' else 'spl', 0, spl)
             require('CID='+cid in r.lines('probe'), 'Final identity check failed')
+            journal(args.journal,'verified','BT0 only')
             print('SUCCESS: BT0 alone written and read back; rootfs and kernel unchanged.', flush=True)
             return
         print('Reading factory waveform, VCOM and sleep artwork over TCP...', flush=True)
@@ -453,7 +514,7 @@ def main():
         require('CID='+cid in r.lines('probe'), 'CID changed')
         personal['password'] = hash_password(args.distro, kit/'host/openssl.exe' if args.windows else None)
         print('Only p1, raw kernel/DTB and selected BT0 (if any) will be replaced. No full backup.', flush=True)
-        require(input('Type FLASH '+cid+' to continue: ') == 'FLASH '+cid, 'Cancelled')
+        confirm('Type FLASH '+cid+' to continue (anything else cancels): ','FLASH '+cid)
         # Verify recovery supports the new protocol before any write. This operation
         # only creates a private directory in RAM, not on eMMC.
         r.run('{} reset-data {}'.format(REMOTE, cid))
@@ -465,18 +526,19 @@ def main():
                 'Personalization input verification failed')
         print('Streaming sparse ext4: {} mapped chunks of 1741'.format(len(mapped)),flush=True)
         done = 0
+        started=time.monotonic()
         with gzip.open(str(kit/'native/pb626-rootfs.ext4.gz'), 'rb') as image:
             for i, data in image_blocks(image, P1_BYTES):
                 if i not in mapped:
                     require(data == bytes(len(data)), 'Nonzero omitted rootfs chunk')
                     continue
-                start = time.monotonic()
+                journal(args.journal,'writing',f'rootfs chunk {i}; {done}/{len(mapped)} acknowledged')
                 send_block(r, cid, 'rootfs', i, data)
                 done += 1
-                print('rootfs {}/{} (chunk {}, {:.2f}s) verified'.format(
-                    done,len(mapped),i,time.monotonic()-start),flush=True)
+                progress('Rootfs',done,len(mapped),started)
         require(done==len(mapped), 'Incomplete sparse rootfs')
         print('Personalizing rootfs on device...', flush=True)
+        journal(args.journal,'writing','rootfs personalization')
         require('PB626_PERSONALIZED' in r.run('{} personalize {}'.format(REMOTE,cid), timeout=240),
                 'Personalization failed')
         print('Writing kernel/DTB and selected BT0 (last, if requested)...', flush=True)
@@ -484,10 +546,15 @@ def main():
         if spl is not None:
             images.append(('spl-candidate' if args.spl == 'candidate' else 'spl', spl))
         for kind, image in images:
+            started=time.monotonic()
+            total=(len(image)+CHUNK-1)//CHUNK
             for i, offset in enumerate(range(0,len(image),CHUNK)):
+                journal(args.journal,'writing',f'{kind} chunk {i}')
                 send_block(r,cid,kind,i,image[offset:offset+CHUNK])
+                progress(kind,i+1,total,started)
         require('CID='+cid in r.lines('probe'),
                 'Final identity check failed')
+        journal(args.journal,'verified','firmware')
         print('SUCCESS: p1 and kernel written; BT0 '+('preserved' if spl is None else 'written and verified')+
               '; all other eMMC regions preserved.', flush=True)
     finally:
@@ -495,4 +562,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    cli(main)
