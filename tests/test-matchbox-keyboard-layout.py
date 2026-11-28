@@ -45,4 +45,15 @@ if len(visible) < 35:
 for key in (node for node in visible if node.tag == "key"):
     if not any(child.tag in {"default", "shifted", "mod1", "mod2", "mod3"} for child in key):
         raise SystemExit("every visible <key> must define at least one supported face")
+# Portrait rows keep mobile letter ordering and retain essential shell actions.
+for index, expected in ((1, "qwertyuiop"), (2, "asdfghjkl"), (3, "zxcvbnm")):
+    letters = "".join(key.find("default").get("display") for key in rows[index].findall("key")
+                      if key.get("obey-caps") == "true")
+    assert letters == expected, (index, letters)
+faces = [face for key in visible if key.tag == "key" for face in key]
+actions = {face.get("action") for face in faces}
+assert {"modifier:mod1", "modifier:shift", "modifier:ctrl", "modifier:alt",
+        "backspace", "return", "space", "escape", "tab", "home", "end",
+        "pageup", "pagedown", "left", "right", "up", "down", "delete"} <= actions
+assert {face.get("display") for face in faces} >= set("0123456789[]{}\\\\|`~-_=+;:'\"/?@!#$%^&*()<>")
 print(f"Matchbox Keyboard 0.1.1 layout OK: {len(rows)} rows, {len(visible)} visible keys")
