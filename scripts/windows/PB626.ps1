@@ -241,7 +241,10 @@ if ($Action -like 'Install*') { Write-Warning 'Installation replaces the complet
 if (!$UseRunningRecovery -and $null -ne (Find-Adapter)) {
     $answer=(Read-Host 'Recovery adapter detected. Reuse running recovery [y/N/0=cancel]?').Trim()
     if ($answer -eq '0') { Cancel-Operation }
-    if ($answer -match '^[yY] @((Join-Path $kit 'windows-fel.py'),'prepare')
+    if ($answer -match '^[yY]$') { $UseRunningRecovery=$true }
+}
+if (!$UseRunningRecovery) {
+    Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare')
     Say 'STEP 1 / Cold FEL'
     while ($true) {
         $answer=Read-Host 'Power off fully, unplug, hold Menu, reconnect USB; Enter to check (0 = cancel)'
@@ -330,59 +333,3 @@ try {
     }
 }
 exit $exitCode
-) { $UseRunningRecovery=$true }
-}
-if (!$UseRunningRecovery) {
-    Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare')
-    Say 'STEP 1 / Cold FEL'
-    $null=Read-Host 'Power off fully, unplug, hold Menu, reconnect USB, then press Enter'
-    $fel=@(Find-Fel)
-    if ($fel.Count -gt 1) { throw 'Multiple FEL devices. Disconnect other readers.' }
-    $usable=$false
-    if ($fel.Count -eq 1) {
-        & $python (Join-Path $kit 'windows-fel.py') probe
-        $usable=($LASTEXITCODE -eq 0)
-    }
-    if (!$usable) {
-        Offer-Zadig
-        $null=Read-Host 'After driver setup, re-enter cold FEL and press Enter'
-        if (@(Find-Fel).Count -ne 1) { throw 'Expected exactly one Allwinner FEL device' }
-        Invoke-Python @((Join-Path $kit 'windows-fel.py'),'probe')
-    }
-    $profile=$UsbProfile.ToLowerInvariant()
-    if ($profile -eq 'auto') {
-        $build=[int](Get-CimInstance Win32_OperatingSystem).BuildNumber
-        $profile=if ($build -ge 22000) {'ncm'} else {'rndis'}
-    }
-    Say "STEP 2 / Load recovery into RAM ($profile)"
-    Invoke-Python @((Join-Path $kit 'windows-fel.py'),'boot','--profile',$profile)
-}
-Say 'STEP 3 / Establish native USB Ethernet connection'
-$script:AddedAddress=$false; $script:RestoreDhcp=$false
-try {
-    Connect-Recovery
-    if ($Action -eq 'Recovery') { Write-Host 'RAM recovery verified. No eMMC write.' -ForegroundColor Green; return }
-    Say 'STEP 4 / Device and data verification'
-    if ($Action -in @('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader')) {
-        $mode=switch ($Action) { 'Install' {'keep'} 'InstallQualified' {'qualified'} 'InstallCandidate' {'candidate'} 'InstallDeepLab' {'candidate'} 'Bootloader' {'candidate'} 'RestoreBootloader' {'qualified'} }
-        if ($mode -eq 'qualified') { Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare') }
-        $argsList=@((Join-Path $kit 'install-direct.py'),'--kit',$kit,'--windows','--spl',$mode)
-        if ($Action -in @('Bootloader','RestoreBootloader')) { $argsList+='--spl-only' }
-        if ($mode -eq 'candidate') {
-            $backup=Read-Host 'Path to a complete verified eMMC backup for this reader'
-            if (!$backup) { throw 'A verified backup is required for experimental BT0' }
-            $argsList+=@('--candidate-backup',[IO.Path]::GetFullPath($backup))
-        }
-        Invoke-Python $argsList
-    } else {
-        if ($Action -eq 'Backup') {
-            $null=New-Item -ItemType Directory -Force -Path $DataDir
-            $target=Join-Path $DataDir ('backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
-        } else {
-            $target=Read-Host 'Path to verified dump directory'
-            if (!$target) { throw 'Cancelled' }
-        }
-        Invoke-Python @((Join-Path $kit 'dump-network.py'),$Action.ToLowerInvariant(),$target,'--windows')
-    }
-    Write-Host 'SUCCESS / All requested operations verified.' -ForegroundColor Green
-} finally { Disconnect-Recovery }
