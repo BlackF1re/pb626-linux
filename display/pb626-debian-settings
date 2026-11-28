@@ -114,6 +114,31 @@ proc wifi {} {
         }
     }
 }
+# Read XI2 capabilities without opening evdev or grabbing touch events.
+proc touchCapability {data} {
+    set direct 0
+    set maximum 0
+    set found 0
+    foreach line [split $data "\n"] {
+        if {[regexp {^\s*Touch mode:\s*(\S+)} $line -> mode]} {
+            set direct [expr {$mode eq "direct"}]
+            if {$direct} {set found 1}
+        } elseif {$direct && [regexp {^\s*Max number of touches:\s*([0-9]+)} $line -> n]} {
+            if {$n > $maximum} {set maximum $n}
+            set direct 0
+        }
+    }
+    if {!$found} {return "X11 reports no direct touch class. Check ELAN detection and evdev configuration."}
+    if {!$maximum} {return "Direct touch detected. Maximum contact count is not reported."}
+    return "Direct touch detected. X11 reports up to $maximum simultaneous contacts."
+}
+proc touchStatus {} {
+    if {[catch {exec /usr/bin/timeout -k 1s 3s env LC_ALL=C /usr/bin/xinput list --long} data]} {
+        set ::touchText "Cannot query X11 input capabilities: $data"
+    } else {
+        set ::touchText [touchCapability $data]
+    }
+}
 proc bindingsSelect {} {
     set key [lsearch -exact {Left Right Home Menu} $::bindingKey]
     if {$key < 0} {return}
@@ -553,6 +578,12 @@ pack $p.bindings -fill x -padx 12 -pady 5
 button $p.save -text "Save button settings" -command {desktopApply keys}
 button $p.restart -text "Restart desktop" -command desktopRestart
 pack $p.save $p.restart -fill x -padx 12 -pady 5
+section $p touchSection "Touchscreen" "Check the capabilities reported by X11. Contact count is not a test of two-finger gestures in applications."
+set touchText "Touch capabilities not yet checked."
+label $p.touchStatus -textvariable touchText -anchor w -justify left -wraplength 520
+button $p.touchCheck -text "Check touchscreen capabilities" -command touchStatus
+pack $p.touchStatus -fill x -padx 16 -pady 4
+pack $p.touchCheck -fill x -padx 12 -pady 4
 
 set p .tabs.net.canvas.body
 section $p wireless "Wireless network" "Turn Wi-Fi on and connect to a saved or new network."

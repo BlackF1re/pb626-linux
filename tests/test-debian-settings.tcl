@@ -32,6 +32,10 @@ if {[llength [.tabs tabs]] != 5 || $::level != 37 || $::buttons ne "pages" || $:
     exit 1
 }
 if {[.tabs.display.canvas.body.brightness cget -resolution] != 1} {exit 1}
+set cap [touchCapability "Touch mode: dependent\nMax number of touches: 5\nTouch mode: direct\nMax number of touches: 2"]
+if {![string match {*2 simultaneous contacts*} $cap]} {error "Direct touch contact count wrong"}
+if {![string match {*no direct touch class*} [touchCapability "Touch mode: dependent\nMax number of touches: 5"]]} {error "Indirect touch incorrectly accepted"}
+if {![string match {*not reported*} [touchCapability "Touch mode: direct\nMax number of touches: 0"]]} {error "Unknown touch count misrepresented"}
 if {$::tone ne "cie-lstar" || $::gamma ne "1.2"} {error "Tone/gamma not restored"}
 if {$::uiDpi ne "144"} {error "Application DPI not restored"}
 set ::uiDpi 120
