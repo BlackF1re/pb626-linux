@@ -22,8 +22,21 @@ Both eGON header checksums recomputed successfully. The two BT1 copies
 are byte-identical. BT0 embedded DRAM parameters at 0x38 specify DDR3,
 408 MHz, one rank, density 2048 Mbit, device I/O width 16, bus width 16,
 CAS 9, size 256 MiB. The FEX differs (x8, size 512 MiB). The actual
-BT0 header agrees with observed physical RAM. Do not copy the FEX DRAM
-geometry or unqualified timings into a working SPL.
+BT0 header agrees with observed physical RAM. The on-disk BT1 header
+(offset 0x4c) also contains x8 / 512 MiB, but this is not its runtime
+configuration. BT0 0x4e88 reads the 80-byte block, selects direct
+initialization or a geometry detection branch (0x4d04), and writes the
+working values back into its own header via 0x1c18. That detection path
+tries bus/rank configurations and probes memory aliasing, reducing
+density when needed. On normal boot, 0x874–0x878 invokes 0x1c28, which
+copies the resulting 80-byte block into the loaded BT1 header at
+0x4240004c. This explicitly overrides the stale on-disk BT1 values;
+script.bin and script0.bin remain generic inputs. The exact downstream
+FEX/ATAG rewrite is not established by this observation. Do not copy
+generic FEX geometry or unqualified timings into a working SPL.
+Cold boot may detect geometry; retained resume must not repeat
+destructive memory probing. Validate the live DCR against the observed
+board and the paired kernel/SPL instead.
 
 ## Factory userspace and kernel
 
