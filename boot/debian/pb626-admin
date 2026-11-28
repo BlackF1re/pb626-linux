@@ -359,6 +359,16 @@ timezone)
     timedatectl list-timezones | grep -Fxq -- "$2" || exit 2
     exec timedatectl set-timezone "$2"
     ;;
+manual-time)
+    [ "$#" -eq 3 ] || exit 2
+    # Strict local civil timestamp; no arbitrary timedatectl options or
+    # implicit NTP changes. systemd refuses manual time while NTP is on.
+    case "$2" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) exit 2 ;; esac
+    case "$3" in [0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;; *) exit 2 ;; esac
+    normalized=$(date -d "$2 $3" '+%F %T') || exit 2
+    [ "$normalized" = "$2 $3" ] || exit 2
+    exec timedatectl set-time "$2 $3"
+    ;;
 restart-desktop)
     [ "$#" -eq 1 ] || exit 2
     exec systemctl --no-block restart pb626-desktop.service

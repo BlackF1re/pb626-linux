@@ -247,6 +247,41 @@ proc desktopApply {section} {
         set feedback "Saved. Restart desktop to apply."
     }
 }
+proc timeSummary {} {
+    set stamp [clock format [clock seconds] -format "%Y-%m-%d %H:%M"]
+    set zone [readfile /etc/timezone]
+    if {$zone eq "" && ![catch {exec /usr/bin/timeout -k 1s 3s timedatectl show -p Timezone --value} result]} {
+        set zone [string trim $result]
+    }
+    set ntpState unknown
+    if {![catch {exec /usr/bin/timeout -k 1s 3s timedatectl show -p NTP --value} result]} {
+        if {$result eq "yes"} {set ntpState on}
+        if {$result eq "no"} {set ntpState off}
+    }
+    set ::timeText "$stamp   $zone\nAutomatic time: $ntpState"
+}
+proc manualTime {} {
+    if {[winfo exists .manualtime]} {raise .manualtime; return}
+    set ::manualDate [clock format [clock seconds] -format "%Y-%m-%d"]
+    set ::manualClock [clock format [clock seconds] -format "%H:%M:%S"]
+    toplevel .manualtime
+    wm title .manualtime "Set date and time"
+    wm transient .manualtime .
+    label .manualtime.note -text "Turn automatic time off before setting the clock manually." -anchor w -justify left -wraplength 450
+    label .manualtime.dlabel -text "Date (YYYY-MM-DD)" -anchor w
+    entry .manualtime.date -textvariable ::manualDate
+    label .manualtime.tlabel -text "Local time (HH:MM:SS)" -anchor w
+    entry .manualtime.time -textvariable ::manualClock
+    button .manualtime.save -text "Save date and time" -command {
+        if {[act manual-time $::manualDate $::manualClock]} {
+            destroy .manualtime
+            timeSummary
+            set ::feedback "Date and time saved."
+        }
+    }
+    button .manualtime.cancel -text "Cancel" -command {destroy .manualtime}
+    pack .manualtime.note .manualtime.dlabel .manualtime.date .manualtime.tlabel .manualtime.time .manualtime.save .manualtime.cancel -fill x -padx 16 -pady 4
+}
 proc timezoneFilter {} {
     if {![winfo exists .timezone.list]} {return}
     .timezone.list delete 0 end
@@ -263,7 +298,7 @@ proc timezoneSave {} {
     if {[act timezone $z]} {
         destroy .timezone
         set ::feedback "Time zone saved: $z"
-        updateStatus
+        timeSummary
     }
 }
 proc timezoneDialog {} {
@@ -528,17 +563,21 @@ button $p.host.apply -text "Save hostname" -command {if {[act hostname $host]} {
 pack $p.host.label $p.host.entry $p.host.apply -fill x -pady 3
 pack $p.host -fill x -padx 16 -pady 4
 section $p timeSection "Date and time"
+set timeText "Time status not yet checked."
+label $p.clock -textvariable timeText -anchor w -justify left -wraplength 520
+pack $p.clock -fill x -padx 16 -pady 4
 frame $p.ntp
-button $p.ntp.on -text "Automatic time on" -command {act ntp true; updateStatus}
-button $p.ntp.off -text "Automatic time off" -command {act ntp false; updateStatus}
+button $p.ntp.on -text "Automatic time on" -command {if {[act ntp true]} {timeSummary}}
+button $p.ntp.off -text "Automatic time off" -command {if {[act ntp false]} {timeSummary}}
 pack $p.ntp.on $p.ntp.off -side left -fill x -expand 1 -padx 3
 pack $p.ntp -fill x -padx 8 -pady 4
-frame $p.actions
-button $p.actions.time -text "Time zone" -command timezoneDialog
-button $p.actions.admin -text "Administrator" -command {term "Administrator login" su -}
-button $p.actions.refresh -text "Refresh" -command updateStatus
-pack $p.actions.time $p.actions.admin $p.actions.refresh -side left -expand 1 -fill x -padx 2
-pack $p.actions -fill x -padx 8 -pady 5
+button $p.timezone -text "Choose time zone…" -command timezoneDialog
+button $p.manualtime -text "Set date and time…" -command manualTime
+pack $p.timezone $p.manualtime -fill x -padx 12 -pady 4
+section $p administration "Administration"
+button $p.admin -text "Administrator terminal" -command {term "Administrator login" su -}
+button $p.refresh -text "Refresh system diagnostics" -command {timeSummary; updateStatus}
+pack $p.admin $p.refresh -fill x -padx 12 -pady 4
 section $p diagnostics "System diagnostics" "A read-only snapshot. Refresh when needed."
 text $p.info -height 16 -wrap word -font {{Liberation Mono} 11} -background white -foreground black -state disabled -relief solid -borderwidth 1
 pack $p.info -fill x -padx 16 -pady 5
@@ -554,6 +593,6 @@ bind .tabs <<NotebookTabChanged>> {
     if {[.tabs select] eq ".tabs.net"} {networkStatus}
     if {[.tabs select] eq ".tabs.system" && !$::statusLoaded} {
         set ::statusLoaded 1
-        after idle updateStatus
+        after idle {timeSummary; updateStatus}
     }
 }

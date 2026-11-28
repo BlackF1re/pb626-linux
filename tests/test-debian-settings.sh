@@ -122,7 +122,9 @@ admin desktop-status | grep -qx PB626_EPD_MIXED=1
 for args in 'frontlight -1' 'frontlight 101' 'frontlight 01' \
     'frontlight 1+2' 'light-on extra' 'light-level 0' 'governor bad' 'power-key bad' 'led bad' 'hostname -bad' 'ntp bad' \
     'desktop-settings pages keyboard menu mono 16 0 bad' 'desktop-settings bad keyboard menu ui 16 0' \
-    'desktop-settings pages keyboard menu ui 16 5' 'suspend extra'; do
+    'desktop-settings pages keyboard menu ui 16 5' 'suspend extra' \
+    'manual-time --help 12:00:00' 'manual-time 2026-02-30 12:00:00' \
+    'manual-time 2026-02-01 25:00:00' 'timezone --help'; do
     if admin $args; then echo "Invalid command accepted: $args" >&2; exit 1; fi
 done
 test "$(admin power-key-status)" = lock
