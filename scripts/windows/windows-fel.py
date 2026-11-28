@@ -69,9 +69,78 @@ def upload(exe, temp, data, base, label, device=None):
         if (offset+len(block)) % (1024*1024) == 0 or offset+len(block) == len(data):
             print(f"{label}: {offset+len(block):,}/{len(data):,} bytes verified", flush=True)
 
+def validate_dtb(tree, profile, ramfs_size):
+    """Read FDT v17 binary data directly (no Windows text-mode tool I/O)."""
+    import struct
+
+    def check(ok):
+        require(ok, "Malformed binary DTB")
+
+    check(len(tree) >= 40)
+    magic, total, off, strings, reserve, version, compat, cpu, slen, size = struct.unpack_from(">10I", tree)
+    check(magic == 0xd00dfeed and 40 <= total <= len(tree))
+    check(version >= 17 and compat <= 17 and compat <= version)
+    check(40 <= off <= total and size <= total - off and off % 4 == 0)
+    check(40 <= strings <= total and slen <= total - strings)
+    check(40 <= reserve <= off and reserve % 8 == 0)
+    check(off + size <= strings or strings + slen <= off)
+    end = off + size
+    names = tree[strings:strings+slen]
+    stack, props, nodes = [], {}, set()
+    finished = False
+
+    while off + 4 <= end:
+        token = struct.unpack_from(">I", tree, off)[0]
+        off += 4
+        if token == 1:
+            stop = tree.find(b"\0", off, end)
+            check(stop >= off)
+            name = tree[off:stop].decode("ascii")
+            check("/" not in name and (bool(name) if stack else name == ""))
+            stack.append(name)
+            path = "/".join(stack) or "/"
+            check(path not in nodes)
+            nodes.add(path)
+            off = (stop + 4) & ~3
+        elif token == 2:
+            check(bool(stack))
+            stack.pop()
+        elif token == 3:
+            check(bool(stack) and off + 8 <= end)
+            length, nameoff = struct.unpack_from(">II", tree, off)
+            off += 8
+            check(length <= end - off and nameoff < len(names))
+            stop = names.find(b"\0", nameoff)
+            check(stop > nameoff)
+            key = ("/".join(stack) or "/", names[nameoff:stop].decode("ascii"))
+            check(key not in props)
+            props[key] = tree[off:off+length]
+            off = (off + length + 3) & ~3
+        elif token == 4:
+            continue
+        elif token == 9:
+            check(not stack and "/" in nodes)
+            finished = True
+            break
+        else:
+            check(False)
+    check(finished)
+    require(props.get(("/memory@40000000", "reg")) ==
+            struct.pack(">II", 0x40000000, 0x10000000), "Wrong RAM geometry")
+    require(props.get(("/soc/mmc@1c11000", "status")) == b"okay\0"
+            and props.get(("/soc/mmc@1c0f000", "status")) == b"disabled\0",
+            "Wrong recovery MMC policy")
+    require(("/chosen", "pb626,emmc-backup") in props, "Missing recovery flag")
+    require((("/chosen", "pb626,windows-rndis") in props) == (profile == "rndis"),
+            "Wrong USB recovery profile")
+    require(props.get(("/chosen", "linux,initrd-start")) == struct.pack(">I", 0x45000000)
+            and props.get(("/chosen", "linux,initrd-end")) == struct.pack(">I", 0x45000000 + ramfs_size),
+            "Wrong initramfs extent")
+    print("DTB verified: " + profile, flush=True)
+
+
 def boot(kit, profile):
     fel = kit/"host/sunxi-fel.exe"
-    fdtget = kit/"host/fdtget.exe"
     spl = prepare(kit)
     entry = (kit/"host/direct-entry.bin").read_bytes()
     require(len(entry) == 52 and sha(entry) == ENTRY_SHA, "Invalid ARM entry stub")
@@ -86,18 +155,8 @@ def boot(kit, profile):
             "Invalid recovery kernel or DTB")
     with tempfile.TemporaryDirectory(prefix="pb626-fel-") as name:
         temp = Path(name)
-        (temp/"board.dtb").write_bytes(tree)
         (temp/"spl.bin").write_bytes(spl.read_bytes())
-        def fdt(kind, node, prop):
-            return invoke(fdtget, ["-t", kind, "board.dtb", node, prop], temp).stdout.decode("ascii").strip()
-        require(fdt("x","/memory@40000000","reg") == "40000000 10000000", "Wrong RAM geometry")
-        require(fdt("s","/soc/mmc@1c11000","status") == "okay"
-                and fdt("s","/soc/mmc@1c0f000","status") == "disabled", "Wrong recovery MMC policy")
-        invoke(fdtget, ["board.dtb","/chosen","pb626,emmc-backup"], temp)
-        rndis = invoke(fdtget, ["board.dtb","/chosen","pb626,windows-rndis"], temp, check=False)
-        require((rndis.returncode == 0) == (profile == "rndis"), "Wrong USB recovery profile")
-        require(int(fdt("x","/chosen","linux,initrd-start"),16) == 0x45000000
-                and int(fdt("x","/chosen","linux,initrd-end"),16) == 0x45000000+len(ramfs), "Wrong initramfs extent")
+        validate_dtb(tree, profile, len(ramfs))
         print(probe(fel,temp), flush=True)
         env = os.environ.copy()
         env["PB626_FEL_KEEP_MMU_OFF"] = "1"
@@ -129,6 +188,11 @@ def main():
         direct=importlib.import_module("install-direct")
         rev, raw, spl=direct.checked_inputs(kit,"candidate")
         mapped, hashes=direct.rootfs_map(kit/"native/pb626-rootfs.bmap.json",require_hashes=True)
+        root=kit/"recovery"
+        size=(root/"pb626-megi-initramfs.cpio.gz").stat().st_size
+        for profile, name in (("ncm","pb626-elan-emmc-backup.dtb"),
+                              ("rndis","pb626-elan-emmc-windows-rndis.dtb")):
+            validate_dtb((root/name).read_bytes(),profile,size)
         modules=kit/"native/pb626-modules.sha256"
         direct.require(direct.filehash(modules)==direct.manifest(kit/"native/SHA256SUMS").get(modules.name)
                        and re.fullmatch(r"[0-9a-f]{64}",modules.read_text().strip()),

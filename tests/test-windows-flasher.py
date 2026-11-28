@@ -14,7 +14,40 @@ fel=importlib.import_module("windows-fel")
 direct=importlib.import_module("install-direct")
 dump=importlib.import_module("dump-network")
 
+def fixture_dtb(rndis=False, ram=0x10000000, initrd=123):
+    import struct
+    pack=lambda *v: struct.pack(">"+"I"*len(v),*v)
+    pad=lambda b: b+b"\0"*((-len(b))%4)
+    names=b""
+    def prop(name,value):
+        nonlocal names
+        pos=len(names)
+        names+=name.encode()+b"\0"
+        return pack(3,len(value),pos)+pad(value)
+    def node(name,body):
+        return pack(1)+pad(name.encode()+b"\0")+body+pack(2)
+    body=node("",node("memory@40000000",prop("reg",pack(0x40000000,ram)))+
+        node("soc",node("mmc@1c11000",prop("status",b"okay\0"))+
+                   node("mmc@1c0f000",prop("status",b"disabled\0")))+
+        node("chosen",prop("pb626,emmc-backup",b"")+
+             prop("linux,initrd-start",pack(0x45000000))+
+             prop("linux,initrd-end",pack(0x45000000+initrd))+
+             (prop("pb626,windows-rndis",b"") if rndis else b"")))+pack(9)
+    off=56
+    return pack(0xd00dfeed,off+len(body)+len(names),off,off+len(body),40,17,16,0,len(names),len(body))+bytes(16)+body+names
+
 class Tests(unittest.TestCase):
+    def test_binary_dtb(self):
+        for rndis in (False,True):
+            tree=fixture_dtb(rndis)
+            profile="rndis" if rndis else "ncm"
+            fel.validate_dtb(tree,profile,123)
+            for bad,p,n in ((tree,"ncm" if rndis else "rndis",123),
+                            (tree,profile,124),(tree[:-1],profile,123),
+                            (fixture_dtb(rndis,ram=0x20000000),profile,123)):
+                with self.assertRaises(RuntimeError):
+                    fel.validate_dtb(bad,p,n)
+
     def test_chunks_and_readback(self):
         data=bytes(range(256))*260
         with tempfile.TemporaryDirectory() as directory:
