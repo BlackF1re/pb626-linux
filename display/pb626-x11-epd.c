@@ -1276,6 +1276,8 @@ static int a2_eligible(const struct shared_frame *frame, const uint8_t *panel)
 }
 
 enum fast_profile { FAST_DU, FAST_A2, FAST_DU4, FAST_AUTO };
+/* Bridge-local scheduling command; wire protocol remains GC16/CLEAN. */
+enum { SETTLE_CLEAN = 'S' };
 
 /* Count completed non-scrub transitions, including GL16. A direct
  * grayscale update must not bypass the bounded ghosting budget.
@@ -1369,7 +1371,8 @@ static uint8_t automatic_command(uint64_t idle_us, int capture_pending, int capt
 {
 	if (!capture_pending) {
 		if (different && idle_us >= QUIET_US)
-			return SETTLE;
+			return cleanup_count && idle_us >= cleanup_delay(cleanup_count) ?
+				SETTLE_CLEAN : SETTLE;
 		if (!different && cleanup_count && idle_us >= cleanup_delay(cleanup_count))
 			return CLEAN;
 	}
@@ -1436,9 +1439,11 @@ static unsigned int prepare_internal(uint8_t command, const uint8_t *desired, co
 		return PIXELS;
 	}
 	memset(frame->tiles, 0, sizeof(frame->tiles));
+	const int cleaning = command == CLEAN || command == SETTLE_CLEAN;
 	for (int ty = 0; ty < TILE_ROWS; ty++)
 		for (int tx = 0; tx < TILE_COLS; tx++) {
-			if (command == CLEAN ? !cleanup_near_tile(tx, ty) : !dirty_tiles[ty][tx])
+			if (!(cleaning && cleanup_near_tile(tx, ty)) &&
+			    !(command != CLEAN && dirty_tiles[ty][tx]))
 				continue;
 			int right, bottom, differs = 0;
 			tile_bounds(tx, ty, &right, &bottom);
@@ -1446,7 +1451,8 @@ static unsigned int prepare_internal(uint8_t command, const uint8_t *desired, co
 				for (int x = tx * TILE; x < right; x++) {
 					size_t i = y * WIDTH + x;
 					uint8_t target = nibble_get(desired, i), old = nibble_get(panel, i);
-					int scrub = command == CLEAN && target == old && needs_scrub(panel, x, y);
+					int scrub = (cleaning && target == old && needs_scrub(panel, x, y)) ||
+						    (command == SETTLE_CLEAN && target != old);
 					uint8_t level = target;
 					differs |= target != old;
 					if (command == PREVIEW || command == PREVIEW_A2) {
@@ -1540,7 +1546,7 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 				}
 			dirty_tiles[ty][tx] = differs;
 		}
-	if (command == CLEAN && cleanup_filter == HALO_SHADOW)
+	if ((command == CLEAN || command == SETTLE_CLEAN) && cleanup_filter == HALO_SHADOW)
 		shadow_stage = (shadow_stage + 1) & 3;
 }
 
@@ -2099,7 +2105,7 @@ int main(int argc, char **argv)
             command = PREVIEW_A2;
         uint64_t submit_start = now_us();
 		if (changes) {
-			uint8_t wire = command;
+			uint8_t wire = command == SETTLE_CLEAN ? CLEAN : command;
 			if (lock_pending && has_frame && command == RESET && !controls.clean_requested) {
 				/* Rebuild actual X11 frame using known sleep history. */
 				wire = CLEAN;
@@ -2166,7 +2172,7 @@ int main(int argc, char **argv)
 				(unsigned long long)(now_us() - capture_start),
 				(unsigned long long)capture_start, (unsigned long long)damage_wait,
 				(unsigned long long)ack);
-		if (changes || command == SETTLE)
+		if (changes || command == SETTLE || command == SETTLE_CLEAN)
 			continue; /* Discard intermediate frames and consume accumulated damage. */
 
 wait_input:

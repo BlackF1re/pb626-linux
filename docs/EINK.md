@@ -271,3 +271,15 @@ and 14→15) directly. The former approximation dead band is unnecessary
 for a binary target and would otherwise force a slower GL16 fallback.
 A2 eligibility still excludes nonbinary old levels; explicit legacy
 approximation retains its original dead band.
+
+### Combine already-due local cleaning with a settle
+
+When both a grayscale settle and the existing idle cleanup deadline are
+due, prepare one sparse GC16 frame covering the dirty pixels and due
+same-level scrub pixels/halo instead of two sequential scans. The bridge
+logs the local command S but sends the existing CLEAN wire command, so
+no worker protocol changes are needed. Changed pixels in this GC16
+frame reset their ghosting budget only after ACK. Never advance the
+cleanup deadline, enlarge the halo, or combine with a pending capture;
+large cleanup retains its five-second delay. The optical appearance of
+GC16 still needs physical comparison; the factory sequence is unchanged.

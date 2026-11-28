@@ -528,6 +528,40 @@ static void test_optional_halo_filters(void)
 	shadow_stage = 0;
 }
 
+static void test_combined_cleanup(void)
+{
+	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
+	static struct shared_frame frame;
+	const size_t ghost = WIDTH + 1, changed = 3 * TILE + 1;
+	memset(desired, 0xff, sizeof(desired));
+	memset(panel, 0xff, sizeof(panel));
+	memset(fast_changes, 0, sizeof(fast_changes));
+	memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	nibble_set(fast_changes, ghost, CLEAN_AFTER);
+	cleanup_pixels[0][0] = 1;
+	nibble_set(fast_changes, changed, 2);
+	nibble_set(desired, changed, 7);
+	dirty_tiles[0][3] = 1;
+	int old_halo = clean_halo;
+	clean_halo = 0;
+	assert(automatic_command(CLEAN_QUIET_US - 1, 0, 0, 1, 1) == SETTLE);
+	assert(automatic_command(CLEAN_QUIET_US, 1, 0, 1, 1) == 0);
+	assert(automatic_command(CLEAN_QUIET_US, 0, 0, 1, 1) == SETTLE_CLEAN);
+	assert(automatic_command(CLEAN_QUIET_US, 0, 0, 1, LARGE_CLEAN_PIXELS) == SETTLE);
+	assert(automatic_command(LARGE_CLEAN_QUIET_US, 0, 0, 1, LARGE_CLEAN_PIXELS) == SETTLE_CLEAN);
+	assert(prepare(SETTLE_CLEAN, desired, panel, &frame) == 2);
+	assert(frame.tiles[0][0] && frame.tiles[0][3]);
+	assert(frame.pixels[ghost] == (WHITE | SCRUB));
+	assert(frame.pixels[changed] == (7 | SCRUB));
+	assert(frame.pixels[changed + 1] == KEEP);
+	acknowledge(SETTLE_CLEAN, &frame, desired, panel);
+	assert(!cleanup_pixels[0][0] && !nibble_get(fast_changes, ghost));
+	assert(!nibble_get(fast_changes, changed) && nibble_get(panel, changed) == 7);
+	assert(!dirty_tiles_pending());
+	clean_halo = old_halo;
+}
+
 static void test_settle_cleanup_budget(void)
 {
 	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
@@ -630,6 +664,7 @@ int main(void)
 	test_optional_halo_filters();
 	test_exact_preview_policy();
 	test_settle_cleanup_budget();
+	test_combined_cleanup();
 	assert(binding_index(KEY_LEFT) == 0 && binding_index(KEY_RIGHT) == 1);
 	assert(binding_index(KEY_HOME) == 2 && binding_index(KEY_MENU) == 3);
 	assert(binding_index(KEY_POWER) == -1);
