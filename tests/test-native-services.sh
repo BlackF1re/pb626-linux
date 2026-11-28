@@ -22,6 +22,18 @@ sleep_unit=boot/debian/rootfs/usr/lib/systemd/system/pb626-sleep.service
 grep -Fxq "AssertPathExists=/etc/pb626/suspend-qualified" "$sleep_unit"
 grep -Fxq "Requisite=pb626-desktop.service" "$sleep_unit"
 grep -Fxq "Requires=pb626-sleep.service" boot/debian/rootfs/usr/lib/systemd/system/systemd-suspend.service.d/pb626.conf
+grep -Fxq "After=pb626-sleep.service" boot/debian/rootfs/usr/lib/systemd/system/systemd-suspend.service.d/pb626.conf
+for contract in 'After=pb626-desktop.service' 'Before=sleep.target systemd-suspend.service' \
+    'StopWhenUnneeded=yes' 'Type=oneshot' 'RemainAfterExit=yes' \
+    'ExecStart=/usr/bin/pb626-x11-epd --sleep-prepare' \
+    'ExecStopPost=/usr/bin/pb626-x11-epd --sleep-resume'; do
+    grep -Fxq "$contract" "$sleep_unit"
+done
+sleep_conf=boot/debian/rootfs/etc/systemd/sleep.conf.d/60-pb626.conf
+for contract in 'MemorySleepMode=s2idle' 'SuspendState=mem' \
+    'AllowHibernation=no' 'AllowHybridSleep=no' 'AllowSuspendThenHibernate=no'; do
+    grep -Fxq "$contract" "$sleep_conf"
+done
 # Renderer isolation must not protect the entire app service by accident.
 unitdir=boot/debian/rootfs/usr/lib/systemd/system
 grep -Fxq 'Slice=pb626.slice' "$unitdir/pb626-desktop.service"
