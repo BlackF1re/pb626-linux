@@ -44,7 +44,7 @@ jobs:
           bash scripts/build-megi-kernel.sh prepare
           bash scripts/configure-megi-kernel.sh
           cp linux/.config deep-resume-lab/production.config
-          for patch in patches/lab/sun5i-pm-twi-read.patch patches/lab/sun5i-pm-sram-abort.patch patches/lab/sun5i-pm-prepare-rollback.patch; do
+          for patch in patches/lab/sun5i-pm-twi-read.patch patches/lab/sun5i-pm-sram-abort.patch patches/lab/sun5i-pm-prepare-rollback.patch patches/lab/sun5i-pm-watchdog.patch; do
             git -C linux apply --check "$PWD/$patch"
             git -C linux apply "$PWD/$patch"
           done
