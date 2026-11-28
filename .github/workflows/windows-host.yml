@@ -1,0 +1,86 @@
+name: Native Windows FEL and portable installer tools
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git make
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-libusb
+            mingw-w64-ucrt-x86_64-dtc
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-openssl
+      - name: Fingerprint native dependencies
+        id: packages
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          pacman -Q | LC_ALL=C sort > windows-toolchain.txt
+          echo "fingerprint=$(sha256sum windows-toolchain.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: host-cache
+        with:
+          path: windows-host
+          key: pb626-windows-host-v1-${{ steps.packages.outputs.fingerprint }}-${{ hashFiles('scripts/windows/build-host.sh', 'patches/sunxi-fel-keep-mmu-off.patch', '.github/workflows/windows-host.yml') }}
+      - name: Compile native Windows FEL
+        if: steps.host-cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: bash scripts/windows/build-host.sh windows-host
+      - name: Add portable CPython (hash pinned to python.org)
+        if: steps.host-cache.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $zip=Join-Path $env:RUNNER_TEMP 'python-embed.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.13.16/python-3.13.16-embed-amd64.zip' -OutFile $zip
+          if ((Get-FileHash $zip).Hash -ne '97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297') { throw 'Python distribution hash mismatch' }
+          Expand-Archive -LiteralPath $zip -DestinationPath windows-host/python
+          # The installer and its pure Python modules live next to the kit,
+          # not in a machine-wide Python or a user site-packages directory.
+          Add-Content -LiteralPath windows-host/python/python313._pth -Value '..\..'
+          Copy-Item windows-toolchain.txt windows-host/toolchain.txt
+      - name: Write or verify cached host manifest
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          cmp windows-toolchain.txt windows-host/toolchain.txt
+          cd windows-host
+          if [ ! -f SHA256SUMS ]; then
+            find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS
+          fi
+          sha256sum -c SHA256SUMS
+      - name: Run with ordinary Windows PATH (no MSYS2/WSL)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:Path="$env:SystemRoot\System32;$env:SystemRoot"
+          $socs=& .\windows-host\sunxi-fel.exe --list-socs
+          if ($LASTEXITCODE -ne 0 -or ($socs -join ' ') -notmatch '1625: A13') { throw 'Native FEL smoke failed' }
+          & .\windows-host\fdtget.exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'Native fdtget failed' }
+          $h='password' | & .\windows-host\openssl.exe passwd -6 -salt testsalt -stdin
+          if ($LASTEXITCODE -ne 0 -or $h -notmatch '^\$6\$testsalt\$[./0-9A-Za-z]{86}$') { throw 'Native password hashing failed' }
+          & .\windows-host\python\python.exe -c 'import ssl,socket,gzip,hashlib,struct; print(ssl.OPENSSL_VERSION)'
+          if ($LASTEXITCODE -ne 0) { throw 'Portable Python failed' }
+      - uses: actions/cache/save@v4
+        if: steps.host-cache.outputs.cache-hit != 'true'
+        with:
+          path: windows-host
+          key: ${{ steps.host-cache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-windows-host-tools
+          path: windows-host/
+          if-no-files-found: error
