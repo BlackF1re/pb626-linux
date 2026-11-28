@@ -1,4 +1,4 @@
-Full qualification request: simultaneous transition planner and settings centre
+Full qualification request: one-cycle exact E Ink update refinements
 Source branch: optimization/debian-runtime
-Source head before request: 7fee350037462297f144718747ba765214175104
-Scope: production paired firmware/recovery, mixed waveform signal-model tests, validated independent settings transactions, Tk layout/dialog smoke tests, settings icon packaging and ARM renderer regressions. Mixed waveforms remain physically qualification-gated.
+Source head before request: 9a67d6026a4a7944497221469d36d4cac97bc1a7
+Scope: exact one-pass selection, indexed scanout equivalence, prospective local scrub, bounded mixed and uniform Auto waveform selection, mandatory scrub validation, top-level window coalescing. Mixed waveforms remain physically qualification-gated.
