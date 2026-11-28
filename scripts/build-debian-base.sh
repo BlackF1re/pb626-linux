@@ -95,7 +95,7 @@ in_build env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-reco
   libx11-dev libxext-dev libxft-dev libxrender-dev libxcursor-dev libxfixes-dev \
   libxtst-dev libxdamage-dev libxrandr-dev libpng-dev libjpeg-dev libexpat1-dev libfakekey-dev \
   libmatchbox-dev libstartup-notification0-dev libcairo2-dev \
-  xserver-xorg-dev xutils-dev libpciaccess-dev
+  xserver-xorg-dev xutils-dev libpciaccess-dev xvfb
 
 # Save numeric owners, hardlinks, ACLs and xattrs in a host-owned archive.
 # No project code, kernel, credentials or machine identity enters the cache.

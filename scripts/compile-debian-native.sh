@@ -10,7 +10,7 @@ in_build() { sudo chroot "$build" "$@"; }
 sudo install -d "$build/tmp/pb626-build"
 sudo install -m 644 display/{pb626-epd.c,pb626-epd.h,pb626-sleep.h,pb626-ddx-fb.h,pb626-x11-epd.c,test-pb626-epd.c,test-pb626-x11-epd.c} "$build/tmp/pb626-build/"
 sudo cp -a "$kernel/uapi" "$build/tmp/pb626-build/uapi"
-sudo install -m 644 boot/debian/pb626-charge.c "$build/tmp/pb626-build/"
+sudo install -m 644 boot/debian/pb626-charge.c display/keyboard-us.xml display/test-matchbox-clients.sh "$build/tmp/pb626-build/"
 sudo install -m 644 display/{matchbox-keyboard-eink.patch,matchbox-panel-power-supply.patch,xorg-dummy-pb626-shared.patch} "$build/tmp/pb626-build/"
 
 fetch_source() {
@@ -81,6 +81,7 @@ in_build /bin/bash -euc '
   strip --strip-unneeded src/.libs/dummy_drv.so
   cd ..
   export CFLAGS="-O2 -std=gnu17"
+  export LDFLAGS="-Wl,-z,max-page-size=4096"
   cd matchbox-keyboard
   patch -p1 < ../matchbox-keyboard-eink.patch
   autoreconf -fi
@@ -99,6 +100,12 @@ in_build /bin/bash -euc '
         /tmp/pb626-build/panel-install/usr/bin/matchbox-panel \
         /tmp/pb626-build/panel-install/usr/bin/mb-applet-battery
 
+  # Test the actual ARM clients in a private virtual X server. Xvfb and
+  # the test layout live only in the disposable compiler chroot.
+  cd /tmp/pb626-build
+  xvfb-run -a -s "-screen 0 760x1024x16 -nolisten tcp" sh ./test-matchbox-clients.sh \
+    "$PWD/keyboard-install/usr/bin" "$PWD/panel-install/usr/bin" "$PWD/keyboard-us.xml"
+
   # Compare size-oriented builds of the pinned clients without replacing
   # the installed release artifacts. A failed candidate is not selected.
   compare_client() (
@@ -111,7 +118,7 @@ in_build /bin/bash -euc '
     esac
     candidate="/tmp/pb626-build/audit-$component"
     echo "Matchbox size audit: $component"
-    if make clean && make -j2 CFLAGS="-Os -std=gnu17 -ffunction-sections -fdata-sections" LDFLAGS="-Wl,--gc-sections" &&
+    if make clean && make -j2 CFLAGS="-Os -std=gnu17 -ffunction-sections -fdata-sections" LDFLAGS="-Wl,-z,max-page-size=4096,--gc-sections" &&
        make install DESTDIR="$candidate"; then
       for binary in "$@"; do
         base="/tmp/pb626-build/$release/usr/bin/$binary"
@@ -131,4 +138,15 @@ in_build /bin/bash -euc '
   )
   compare_client matchbox-keyboard matchbox-keyboard
   compare_client matchbox-panel matchbox-panel mb-applet-battery
+  if [ -x /tmp/pb626-build/audit-matchbox-keyboard/usr/bin/matchbox-keyboard ] &&
+     [ -x /tmp/pb626-build/audit-matchbox-panel/usr/bin/matchbox-panel ] &&
+     [ -x /tmp/pb626-build/audit-matchbox-panel/usr/bin/mb-applet-battery ]; then
+    if xvfb-run -a -s "-screen 0 760x1024x16 -nolisten tcp" sh /tmp/pb626-build/test-matchbox-clients.sh \
+      /tmp/pb626-build/audit-matchbox-keyboard/usr/bin /tmp/pb626-build/audit-matchbox-panel/usr/bin \
+      /tmp/pb626-build/keyboard-us.xml; then
+      echo "Compact Matchbox candidates passed ARM X11 smoke tests"
+    else
+      echo "Compact Matchbox candidate smoke failed; retaining release"
+    fi
+  fi
 '
