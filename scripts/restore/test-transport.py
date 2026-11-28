@@ -154,7 +154,8 @@ operation=$1""", 1)
         new = bytes(1536)
         transfer(script, ["write", "sd", "1", "raw", str(len(new)), "0" * 64], new, success=False)
         assert sd.read_bytes() == data + tail
-        transfer(script, ["write", "sd", "1", "raw", str(len(new)), hashlib.sha256(new).hexdigest()], new)
+        result=transfer(script, ["write", "sd", "1", "raw", str(len(new)), hashlib.sha256(new).hexdigest()], new)
+        assert result==f"PB626_WRITTEN 1 {hashlib.sha256(new).hexdigest()}\n".encode(),result
         assert sd.read_bytes() == data + new
         script.write_text(mock.replace(f"PB626_SD_CID={cid}", "PB626_SD_CID=wrong"))
         bad = subprocess.run(["busybox", "sh", str(script), "scan", "sd"],
@@ -162,5 +163,38 @@ operation=$1""", 1)
         assert bad.returncode != 0 and b"SD CID changed" in bad.stderr
 
 
+def direct_fixture():
+    source=Path(__file__).with_name("pb626-install-direct.sh").read_text()
+    with tempfile.TemporaryDirectory() as directory:
+        temp=Path(directory)
+        image=temp/"disk"; image.write_bytes(bytes(128*512))
+        part=temp/"part"; part.write_bytes(bytes(4194304))
+        # Replace only hardware identity and block ioctls with a file-backed
+        # fixture. The actual extent, receive, decode, write and readback run.
+        source=source.replace("D=/dev/mmcblk2\n","D="+shlex.quote(str(image))+"\n",1)
+        source=source.replace("P=/dev/mmcblk2p1\n","P="+shlex.quote(str(part))+"\n",1)
+        source=source.replace("/run/pb626-install.XXXXXX",str(temp/"work.XXXXXX"))
+        source=source.replace("operation=$1; cid=$2;",'identity() { :; }\nlock() { :; }\nblockdev() { :; }\noperation=$1; cid=$2;',1)
+        script=temp/"direct.sh"; script.write_text(source)
+        cid="a"*32
+        env=dict(os.environ,PB626_TCP="1")
+        def run(args,payload=b"",ok=True):
+            result=subprocess.run(["busybox","sh",str(script),*args],input=payload,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env,timeout=20)
+            assert (result.returncode==0)==ok,result.stdout
+            return result.stdout
+        data=b"z"*512
+        digest=hashlib.sha256(data).hexdigest()
+        assert run(["chunk-hash",cid,"kernel","0","512"])==b"BLOCK 0 "+hashlib.sha256(bytes(512)).hexdigest().encode()+b"\n"
+        run(["write",cid,"kernel","0","raw","512","0"*64,"512"],data,False)
+        assert image.read_bytes()==bytes(128*512)
+        assert b"PB626_WRITTEN" in run(["write",cid,"kernel","0","raw","512",digest,"512"],data)
+        assert run(["chunk-hash",cid,"kernel","0","512"])==f"BLOCK 0 {digest}\n".encode()
+        assert image.read_bytes()[80*512:81*512]==data
+        for kind,index,length in (("kernel","3","512"),("rootfs","1741","4194304"),("spl","1","24576"),("kernel","0","513")):
+            run(["chunk-hash",cid,kind,index,length],ok=False)
+        # An unauthorized candidate is rejected even if header/length match.
+        run(["write",cid,"spl-candidate","0","raw","24576","0"*64,"24576"],bytes(24576),False)
+
 if __name__ == "__main__":
     main()
+    direct_fixture()

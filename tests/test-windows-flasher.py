@@ -12,6 +12,7 @@ import sys
 sys.path[:0]=[str(ROOT/"scripts/windows"),str(ROOT/"scripts/installer")]
 fel=importlib.import_module("windows-fel")
 direct=importlib.import_module("install-direct")
+dump=importlib.import_module("dump-network")
 
 class Tests(unittest.TestCase):
     def test_chunks_and_readback(self):
@@ -85,4 +86,67 @@ class Tests(unittest.TestCase):
     def test_cancel_is_not_write(self):
         with patch("builtins.input",return_value="no"), self.assertRaises(direct.Cancelled):
             direct.confirm("Type FLASH: ","FLASH")
+    def test_lost_write_ack(self):
+        class Device:
+            media=b"old"
+            writes=0
+            def run(self,cmd,payload=None,timeout=120):
+                if " chunk-hash " in cmd:
+                    return ["BLOCK 0 "+direct.sha(self.media)]
+                self.writes+=1
+                self.media=b"new"
+                raise direct.TransportInterrupted("ACK lost")
+        with tempfile.TemporaryDirectory() as directory:
+            j=Path(directory)/"session.txt"
+            dev=Device()
+            with self.assertRaises(direct.TransportInterrupted):
+                direct.write_if_different(dev,"a"*32,"kernel",0,b"new",j)
+            self.assertEqual(j.read_text().splitlines()[0],"writing")
+            direct.journal(j,"preflight")
+            self.assertEqual(j.read_text().splitlines()[0],"writing")
+            self.assertFalse(direct.write_if_different(dev,"a"*32,"kernel",0,b"new",j))
+            self.assertEqual(dev.writes,1)
+    def test_bad_chunk_response_never_writes(self):
+        class Device:
+            def run(self,cmd,*args,**kwargs):
+                self.assert_cmd=cmd
+                if " chunk-hash " not in cmd:
+                    raise AssertionError("unexpected write")
+                return ["BLOCK 1 "+"a"*64]
+        with self.assertRaises(RuntimeError):
+            direct.write_if_different(Device(),"a"*32,"rootfs",0,b"data")
+    def test_resume_identity_pinned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            j=Path(directory)/"session.txt"
+            direct.pin_session(j,{"cid":"a","input":"b"})
+            direct.pin_session(j,{"cid":"a","input":"b"})
+            for changed in ({"cid":"c","input":"b"},{"cid":"a","input":"c"}):
+                with self.assertRaises(RuntimeError): direct.pin_session(j,changed)
+    def test_resume_backup_no_retransfer_verified_chunks(self):
+        blocks=[b"a"*512,b"b"*512,b"c"*128]
+        data=b"".join(blocks)
+        with tempfile.TemporaryDirectory() as directory:
+            partial=Path(directory)/"image.partial"
+            finished=Path(directory)/"image"
+            partial.write_bytes(blocks[0]+b"x"*512+b"torn")
+            with patch.object(dump,"CHUNK",512), patch.object(dump,"scan",return_value={i:direct.sha(b) for i,b in enumerate(blocks)}), patch.object(dump,"digest",return_value=direct.sha(data)), patch.object(dump,"read_block",side_effect=lambda r,c,s,reg,i,n:blocks[i]) as read:
+                self.assertEqual(dump.backup_region(None,"a",3,"user",len(data),partial,finished),direct.sha(data))
+                self.assertEqual([call.args[4] for call in read.call_args_list],[1,2])
+            self.assertEqual(finished.read_bytes(),data)
+            self.assertFalse(partial.exists())
+    def test_backup_interruption_keeps_verified_prefix(self):
+        blocks=[b"a"*512,b"b"*512]
+        with tempfile.TemporaryDirectory() as directory:
+            partial=Path(directory)/"image.partial"
+            finished=Path(directory)/"image"
+            with patch.object(dump,"CHUNK",512), patch.object(dump,"read_block",side_effect=[blocks[0],direct.TransportInterrupted("disconnected")]):
+                with self.assertRaises(direct.TransportInterrupted):
+                    dump.backup_region(None,"a",2,"user",1024,partial,finished)
+            self.assertEqual(partial.read_bytes(),blocks[0])
+            self.assertFalse(finished.exists())
+    def test_restore_requires_readback_ack(self):
+        class Device:
+            def lines(self,*args,**kwargs): return []
+        with self.assertRaises(RuntimeError):
+            dump.write_block(Device(),"a",1,"user",0,b"data")
 if __name__=="__main__": unittest.main()

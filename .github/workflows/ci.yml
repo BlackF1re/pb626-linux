@@ -150,7 +150,7 @@ jobs:
       - name: Parse Windows FEL launchers
         run: |
           pwsh -NoProfile -Command '
-            foreach ($file in @("scripts/Start-PB626.ps1", "scripts/Start-PB626Desktop.ps1", "scripts/installer/PB626.ps1", "scripts/restore/Backup-PB626Fast.ps1", "scripts/restore/Restore-PB626Fast.ps1")) {
+            foreach ($file in @("scripts/Start-PB626.ps1", "scripts/Start-PB626Desktop.ps1", "scripts/installer/PB626.ps1", "scripts/windows/PB626.ps1", "scripts/restore/Backup-PB626Fast.ps1", "scripts/restore/Restore-PB626Fast.ps1")) {
               $tokens = $errors = $null
               [void][System.Management.Automation.Language.Parser]::ParseFile(
                 "$PWD/$file", [ref]$tokens, [ref]$errors)

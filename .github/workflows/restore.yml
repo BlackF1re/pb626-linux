@@ -131,6 +131,7 @@ jobs:
           gzip -dc "$work/fixture/recovery/pb626-megi-initramfs.cpio.gz" | cpio -it >"$work/files"
           grep -Eq '^([.]/)?init$' "$work/files"
           grep -Eq '^([.]/)?usr/libexec/pb626-restore-scan$' "$work/files"
+          for applet in find sort xargs; do grep -Eq "^([.]/)?bin/$applet$" "$work/files"; done
           if grep -Eq '(^|/)(Xorg|systemd|modules|apt-get)$' "$work/files"; then exit 1; fi
           rm -rf "$work"
       - name: Package fast restore
