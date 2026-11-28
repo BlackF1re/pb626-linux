@@ -449,9 +449,31 @@ lock-indicator)
     *) exit 2 ;;
     esac
     ;;
-suspend)
+suspend|suspend-idle)
     [ "$#" -eq 1 ] || exit 2
     [ -f /etc/pb626/suspend-qualified ] || { echo "Suspend not qualified on this board" >&2; exit 1; }
+    if [ "$1" = suspend-idle ]; then
+        # The factory policy checks charging, USB and active networking
+        # before unattended sleep. Use modern kernel state, not BSP IPC.
+        # Unknown power/link state also blocks automatic sleep. Explicit
+        # suspend remains available subject to logind inhibitors.
+        if ! battery_capacity >/dev/null; then
+            echo "Idle suspend skipped: not confirmed on battery" >&2
+            exit 0
+        fi
+        for iface in /sys/class/net/*; do
+            [ -d "$iface" ] || continue
+            [ "${iface##*/}" != lo ] || continue
+            if ! read -r link <"$iface/operstate"; then
+                echo "Idle suspend skipped: unknown link state" >&2
+                exit 0
+            fi
+            case "$link" in
+                down|lowerlayerdown|notpresent) ;;
+                *) echo "Idle suspend skipped: network link ${iface##*/} is $link" >&2; exit 0 ;;
+            esac
+        done
+    fi
     exec systemctl --no-block --check-inhibitors=yes suspend
     ;;
 wifi-on)

@@ -30,7 +30,7 @@ xset -dpms 2>/dev/null || :
 case ${PB626_IDLE_MINUTES:-0} in
     5|10|15|30|60)
         if [ -f /etc/pb626/suspend-qualified ]; then
-            xidle -no -timeout "$((PB626_IDLE_MINUTES * 60))" -program '/usr/bin/doas /usr/sbin/pb626-admin suspend' &
+            xidle -no -timeout "$((PB626_IDLE_MINUTES * 60))" -program '/usr/bin/doas /usr/sbin/pb626-admin suspend-idle' &
             idle_pid=$!
         fi ;;
 esac

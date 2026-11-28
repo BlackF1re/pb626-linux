@@ -621,6 +621,8 @@ button $p.keyapply -text "Save power key action" -command {if {[act power-key $p
 pack $p.keyapply -fill x -padx 12 -pady 4
 if {$qualified} {
     choose $p idle "Sleep after minutes (0 = never)" idle {0 5 10 15 30 60}
+    label $p.idlenote -text "Automatic sleep only on battery with no active network link. Manual suspend still honors application inhibitors." -anchor w -wraplength 560 -justify left
+    pack $p.idlenote -fill x -padx 16 -pady 4
     button $p.idleapply -text "Save idle policy" -command {desktopApply idle}
     button $p.sleep -text "Suspend now" -command {power suspend}
     pack $p.idleapply $p.sleep -fill x -padx 12 -pady 4

@@ -34,6 +34,7 @@ export PB626_TEST_SYSTEMCTL_LOG="$tmp/systemctl.log"
 : >"$PB626_TEST_SYSTEMCTL_LOG"
 sed -e "s|export PATH=/sbin:/bin:/usr/sbin:/usr/bin|export PATH=$tmp/bin:/sbin:/bin:/usr/sbin:/usr/bin|" \
     -e "s|/sys/class/power_supply|$tmp/power_supply|g" \
+    -e "s|/sys/class/net|$tmp/net|g" \
     -e "s|/proc/uptime|$tmp/uptime|g" \
     -e "s|/run/pb626-battery-|$tmp/run/pb626-battery-|g" \
     -e "s|/run/pb626-desktop/ready|$tmp/run/pb626-desktop/ready|g" \
@@ -155,6 +156,7 @@ test "$(admin power-key-status)" = lock
 admin power-key ignore
 test "$(admin power-key-status)" = ignore
 if admin power-key s2idle; then exit 1; fi
+if admin suspend-idle; then exit 1; fi
 admin power-key lock
 admin led heartbeat
 admin light-on
@@ -203,6 +205,43 @@ test "$(admin battery-status)" = '15 4'
 for args in 'battery-settings 4 3' 'battery-settings 5 5' 'battery-settings 31 3' 'battery-settings 10 1'; do
     if admin $args; then echo "Invalid battery policy: $args" >&2; exit 1; fi
 done
+# Stock-style unattended sleep policy, on synthetic sysfs only.
+mkdir -p "$tmp/net/lo" "$tmp/net/wlan0" "$tmp/net/usb0"
+printf 'unknown\n' >"$tmp/net/lo/operstate"
+printf 'down\n' >"$tmp/net/wlan0/operstate"
+printf 'down\n' >"$tmp/net/usb0/operstate"
+printf 'Battery\n' >"$tmp/power_supply/battery/type"
+printf '1\n' >"$tmp/power_supply/battery/present"
+printf 'Discharging\n' >"$tmp/power_supply/battery/status"
+printf '60\n' >"$tmp/power_supply/battery/capacity"
+printf 'USB\n' >"$tmp/power_supply/usb/type"
+printf '0\n' >"$tmp/power_supply/usb/online"
+: >"$PB626_TEST_SYSTEMCTL_LOG"
+admin suspend-idle
+grep -Fxq -- '--no-block --check-inhibitors=yes suspend' "$PB626_TEST_SYSTEMCTL_LOG"
+: >"$PB626_TEST_SYSTEMCTL_LOG"
+printf '1\n' >"$tmp/power_supply/usb/online"
+admin suspend-idle
+test ! -s "$PB626_TEST_SYSTEMCTL_LOG"
+printf '0\n' >"$tmp/power_supply/usb/online"
+for link in up dormant unknown testing; do
+    printf '%s\n' "$link" >"$tmp/net/wlan0/operstate"
+    admin suspend-idle
+    test ! -s "$PB626_TEST_SYSTEMCTL_LOG"
+done
+printf 'down\n' >"$tmp/net/wlan0/operstate"
+printf 'up\n' >"$tmp/net/usb0/operstate"
+admin suspend-idle
+test ! -s "$PB626_TEST_SYSTEMCTL_LOG"
+# Explicit suspend does not inherit the conservative automatic link gate.
+admin suspend
+grep -Fxq -- '--no-block --check-inhibitors=yes suspend' "$PB626_TEST_SYSTEMCTL_LOG"
+: >"$PB626_TEST_SYSTEMCTL_LOG"
+printf 'down\n' >"$tmp/net/usb0/operstate"
+rm "$tmp/net/wlan0/operstate"
+admin suspend-idle
+test ! -s "$PB626_TEST_SYSTEMCTL_LOG"
+printf 'down\n' >"$tmp/net/wlan0/operstate"
 # Exercise the actual critical-battery transaction without the host's
 # power supplies or PID 1. No shutdown on a single sample or a charger.
 printf 'Battery\n' >"$tmp/power_supply/battery/type"
