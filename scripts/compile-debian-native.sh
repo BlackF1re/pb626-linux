@@ -39,8 +39,16 @@ in_build /bin/bash -euc '
   }
   check_native_elf() {
     readelf -Wl "$1" | awk "
-      /LOAD/ { loads++; if (\$NF != \"0x1000\" || (\$0 ~ / W / && \$0 ~ / E /)) bad=1 }
-      /GNU_STACK/ { stack++; if (\$0 ~ / E /) bad=1 }
+      /LOAD/ {
+        loads++; flags=\"\";
+        for (i=7; i<NF; i++) flags=flags \$i;
+        if (\$NF != \"0x1000\" || (flags ~ /W/ && flags ~ /E/)) bad=1
+      }
+      /GNU_STACK/ {
+        stack++; flags=\"\";
+        for (i=7; i<NF; i++) flags=flags \$i;
+        if (flags ~ /E/) bad=1
+      }
       /GNU_RELRO/ { relro++ }
       END { exit !(loads >= 2 && stack == 1 && relro == 1 && !bad) }
     "
