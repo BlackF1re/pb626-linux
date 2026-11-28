@@ -163,11 +163,72 @@ proc updateStatus {} {
     .tabs.system.canvas.body.info insert end $data
     .tabs.system.canvas.body.info configure -state disabled
 }
-proc desktopApply {} {
-    global buttons home menu gray depth idle fast
-    if {[act desktop-settings $buttons $home $menu $gray $depth $idle $fast]} {
-        tk_messageBox -title "Saved" -message "Settings saved. Restart the desktop or reboot to apply. Save open documents first."
+proc desktopApply {section} {
+    global buttons home menu gray depth idle fast tone gamma preview mixed feedback restartNeeded
+    switch -- $section {
+        display {
+            if {$preview && $mixed} {
+                set feedback "Choose either exact mixed rendering or approximate preview."
+                return
+            }
+            set ok [act desktop-display $gray $depth $fast $tone $gamma $preview $mixed]
+        }
+        keys {set ok [act desktop-buttons $buttons $home $menu]}
+        idle {set ok [act desktop-idle $idle]}
+        default {error "Unknown settings section"}
     }
+    if {$ok} {
+        set restartNeeded 1
+        set feedback "Saved. Restart desktop to apply."
+    }
+}
+proc timezoneFilter {} {
+    if {![winfo exists .timezone.list]} {return}
+    .timezone.list delete 0 end
+    foreach z $::zones {
+        if {[string first [string tolower $::zoneFilter] [string tolower $z]] >= 0} {
+            .timezone.list insert end $z
+        }
+    }
+}
+proc timezoneSave {} {
+    set chosen [.timezone.list curselection]
+    if {![llength $chosen]} {set ::zoneMessage "Select a time zone first."; return}
+    set z [.timezone.list get [lindex $chosen 0]]
+    if {[act timezone $z]} {
+        destroy .timezone
+        set ::feedback "Time zone saved: $z"
+        updateStatus
+    }
+}
+proc timezoneDialog {} {
+    if {[winfo exists .timezone]} {raise .timezone; return}
+    if {[catch {exec /usr/bin/timeout -k 1s 5s timedatectl list-timezones} result]} {
+        set ::feedback "Cannot read available time zones."
+        return
+    }
+    set ::zones [split [string trim $result] "\n"]
+    set ::zoneFilter ""
+    set ::zoneMessage "Select the local time zone."
+    toplevel .timezone
+    wm title .timezone "Time zone"
+    label .timezone.h -text "Find your time zone" -anchor w -font {{Liberation Sans} 18 bold}
+    entry .timezone.search -textvariable ::zoneFilter
+    bind .timezone.search <KeyRelease> {timezoneFilter}
+    frame .timezone.results
+    listbox .timezone.list -height 8 -exportselection 0 -yscrollcommand {.timezone.results.scroll set}
+    # Keep the list a child of the dialog for simple testable bindings.
+    scrollbar .timezone.results.scroll -width 32 -command {.timezone.list yview}
+    pack .timezone.results.scroll -side right -fill y
+    pack .timezone.list -in .timezone.results -side left -fill both -expand 1
+    label .timezone.message -textvariable ::zoneMessage -anchor w
+    button .timezone.save -text "Save time zone" -command timezoneSave
+    button .timezone.cancel -text "Cancel" -command {destroy .timezone}
+    pack .timezone.h .timezone.search -fill x -padx 12 -pady 5
+    pack .timezone.results -fill both -expand 1 -padx 12 -pady 5
+    pack .timezone.message .timezone.save .timezone.cancel -fill x -padx 12 -pady 4
+    timezoneFilter
+    focus .timezone.search
 }
 proc desktopRestart {} {
     if {[tk_messageBox -type yesno -icon question -message "Close all graphical applications and restart the desktop?"] eq "yes"} {
@@ -181,9 +242,15 @@ set gray balanced
 set fast du
 set depth 16
 set idle 0
+set tone srgb
+set gamma 1.0
+set preview 0
+set mixed 0
+set restartNeeded 0
+set feedback "Changes apply only when saved."
 if {![catch {query desktop-status} data]} {
     foreach line [split $data "\n"] {
-        if {![regexp {^([A-Z0-9_]+)=([a-z0-9]+)$} $line -> key value]} {continue}
+        if {![regexp {^([A-Z0-9_]+)=([a-z0-9.-]+)$} $line -> key value]} {continue}
         switch -- $key {
             PB626_BUTTONS {set buttons $value}
             PB626_HOME_KEY {set home $value}
@@ -192,10 +259,16 @@ if {![catch {query desktop-status} data]} {
             PB626_EPD_FAST_MODE {set fast $value}
             PB626_XORG_DEPTH {set depth $value}
             PB626_IDLE_MINUTES {set idle $value}
+            PB626_EPD_TONE {set tone $value}
+            PB626_EPD_GAMMA {set gamma $value}
+            PB626_EPD_APPROX_PREVIEW {if {$value in {0 1}} {set preview $value}}
+            PB626_EPD_MIXED {if {$value in {0 1}} {set mixed $value}}
         }
     }
 }
 set qualified [file isfile /etc/pb626/suspend-qualified]
+set mixedQualified [file isfile /etc/pb626/mixed-waveform-qualified]
+if {!$mixedQualified} {set mixed 0}
 set level 50
 set lightState 0
 set lightText "Frontlight off"
@@ -264,7 +337,18 @@ choose $p fast "Fast waveform" fast {du auto a2 du4}
 choose $p depth "X11 color depth" depth {16 24}
 label $p.note -text "Mono uses black and white only. Other profiles retain 16 gray levels.\nDisplay profile changes apply after restart." -justify left -wraplength 560
 pack $p.note -pady 6
-button $p.save -text "Save display / desktop settings" -command desktopApply
+choose $p tone "Tone curve" tone {srgb cie-lstar}
+choose $p gamma "Gamma" gamma {0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0}
+checkbutton $p.preview -text "Approximate motion preview" -variable preview -anchor w -command {if {$preview} {set mixed 0}}
+pack $p.preview -fill x -padx 12 -pady 4
+if {$mixedQualified} {
+    checkbutton $p.mixed -text "Simultaneous mixed waveforms" -variable mixed -anchor w -command {if {$mixed} {set preview 0}}
+    pack $p.mixed -fill x -padx 12 -pady 4
+} else {
+    label $p.mixednote -text "Mixed waveforms: awaiting panel qualification." -anchor w -justify left -wraplength 520
+    pack $p.mixednote -fill x -padx 12 -pady 4
+}
+button $p.save -text "Save display settings" -command {desktopApply display}
 pack $p.save -fill x -padx 12 -pady 5
 button $p.offimage -text "Power-off image…" -command shutdownPicker
 pack $p.offimage -fill x -padx 12 -pady 4
@@ -279,7 +363,7 @@ label $p.note -text "Advanced bindings override these defaults.\nWithout touch, 
 pack $p.note -pady 10
 button $p.bindings -text "Advanced button bindings…" -command buttonSettings
 pack $p.bindings -fill x -padx 12 -pady 5
-button $p.save -text "Save button settings" -command desktopApply
+button $p.save -text "Save button settings" -command {desktopApply keys}
 button $p.restart -text "Restart desktop" -command desktopRestart
 pack $p.save $p.restart -fill x -padx 12 -pady 5
 
@@ -312,7 +396,7 @@ button $p.keyapply -text "Save power key action" -command {if {[act power-key $p
 pack $p.keyapply -fill x -padx 12 -pady 4
 if {$qualified} {
     choose $p idle "Sleep after minutes (0 = never)" idle {0 5 10 15 30 60}
-    button $p.idleapply -text "Save idle policy" -command desktopApply
+    button $p.idleapply -text "Save idle policy" -command {desktopApply idle}
     button $p.sleep -text "Suspend now" -command {power suspend}
     pack $p.idleapply $p.sleep -fill x -padx 12 -pady 4
 } else {
@@ -345,7 +429,7 @@ button $p.ntp.off -text "Automatic time off" -command {act ntp false; updateStat
 pack $p.ntp.on $p.ntp.off -side left -fill x -expand 1 -padx 3
 pack $p.ntp -fill x -padx 8 -pady 4
 frame $p.actions
-button $p.actions.time -text "Time zone" -command {term "Time zone (root password)" su -c {dpkg-reconfigure tzdata}}
+button $p.actions.time -text "Time zone" -command timezoneDialog
 button $p.actions.admin -text "Administrator" -command {term "Administrator login" su -}
 button $p.actions.refresh -text "Refresh" -command updateStatus
 pack $p.actions.time $p.actions.admin $p.actions.refresh -side left -expand 1 -fill x -padx 2
@@ -356,7 +440,17 @@ text $p.info -height 15 -wrap word -font {{Liberation Mono} 12} -background whit
 scrollbar $p.scroll -orient vertical -width 40 -command [list $p.info yview]
 pack $p.scroll -side right -fill y
 pack $p.info -fill both -expand 1 -padx 8 -pady 5
+label .feedback -textvariable feedback -anchor w -justify left -wraplength 620
+pack .feedback -fill x -padx 16 -pady 4
 button .close -text "Close settings" -command {destroy .}
 pack .close -fill x -padx 12 -pady 8
 lightRefresh
-updateStatus
+# No expensive status subprocesses on initial display. Refresh on demand
+# or on first entering the System page.
+set statusLoaded 0
+bind .tabs <<NotebookTabChanged>> {
+    if {[.tabs select] eq ".tabs.system" && !$::statusLoaded} {
+        set ::statusLoaded 1
+        after idle updateStatus
+    }
+}

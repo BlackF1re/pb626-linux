@@ -462,3 +462,15 @@ disposable build chroot. A regular cached firmware build need not rerun
 these comparisons. In run 46124456613 the four kernel experiments used
 about 29 runner-minutes and the three compiler jobs about 21 runner-minutes;
 parallel wall time savings depend on the production critical path and cache.
+
+### Independent control-centre preferences
+
+Display, button defaults and idle policy are saved in separate validated
+transactions under the same root-owned settings lock. An older full
+settings command preserves unrelated EnvironmentFile keys. Display now
+exposes the renderer's tone curve, gamma and exact/approximate policy.
+Mixed waveform selection appears only after physical qualification;
+approximate preview and mixed are mutually exclusive. Time zones can be
+searched and applied directly using the validated timedatectl interface.
+The System diagnostics snapshot is loaded on demand, not at GUI startup.
+No additional resident service or GUI runtime is introduced.
