@@ -496,13 +496,13 @@ def write_if_different(r, cid, kind, index, data, record=None, compare=True):
 def hash_password(distro, openssl=None):
     require(sys.stdin.isatty(), 'Interactive terminal required for password entry')
     while True:
-        password = getpass.getpass('New Linux root password (at least 8 characters): ')
-        if len(password) < 8 or any(c in password for c in ('\n','\r','\0')):
-            print('Password must contain at least 8 characters and no line breaks. Try again.',flush=True)
+        password = getpass.getpass('Root password (min 4): ')
+        if len(password) < 4 or any(c in password for c in ('\n','\r','\0')):
+            print('Use at least 4 characters, no line breaks.',flush=True)
             continue
         if password == getpass.getpass('Confirm root password: '):
             break
-        print('Passwords differ. Try again.',flush=True)
+        print('Passwords differ.',flush=True)
     cmd = [str(openssl or 'openssl'), 'passwd', '-6', '-stdin']
     if os.name == 'nt' and openssl is None:
         cmd = ['wsl.exe', '-d', distro, '-u', 'root', '--']+cmd

@@ -39,7 +39,7 @@ offline behavior.
    exceptions, default routes or Internet sharing are created.
 5. The installer validates the model, CID, partition layout, random
    4 MiB TCP transfer, waveform, VCOM and sleep artwork; enter a
-   new Linux root password and confirm the operation with y (default: cancel). Every
+   new Linux root password (minimum four characters) and confirm the operation with y (default: cancel). Every
    written chunk is synced, relocked and read back with SHA256.
    Rootfs first, kernel/DTB second, BT0 last only if requested.
    No automatic retry after a failed write.

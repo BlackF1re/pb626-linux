@@ -119,6 +119,14 @@ class Tests(unittest.TestCase):
     def test_cancel_is_not_write(self):
         with patch("builtins.input",return_value="no"), self.assertRaises(direct.Cancelled):
             direct.confirm("Type FLASH: ","FLASH")
+    def test_four_character_password(self):
+        hashed=b"$6$testsalt$"+b"a"*86
+        with patch.object(direct.sys.stdin,"isatty",return_value=True), \
+             patch.object(direct.getpass,"getpass",side_effect=["abc","abcd","abcd"]) as ask, \
+             patch.object(direct.subprocess,"check_output",return_value=hashed) as crypt:
+            self.assertEqual(direct.hash_password("Ubuntu","openssl.exe"),hashed+b"\n")
+            self.assertEqual(ask.call_count,3)
+            self.assertEqual(crypt.call_args.kwargs["input"],b"abcd\n")
     def test_windows_confirmation(self):
         for value in ("", "n", "no", "FLASH", "yes"):
             with patch("builtins.input",return_value=value), self.assertRaises(direct.Cancelled):
