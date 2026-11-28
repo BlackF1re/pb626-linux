@@ -63,7 +63,8 @@ grep -Fq '    supervise_client matchbox-desktop --bg col-solid:white' display/pb
 # A broken X client must not terminate the X session; only X server loss or the legacy local renderer is fatal.
 grep -Fxq '    export MB_KBD_CONFIG=/usr/share/pb626/matchbox-keyboard/keyboard-us.xml' display/pb626-xsession
 grep -Fxq '    supervise_client matchbox-keyboard --daemon &' display/pb626-xsession
-grep -Fxq 'supervise_client matchbox-window-manager -theme PB626 -use_titlebar yes &' display/pb626-xsession
+grep -Fxq 'wm_theme=PB626' display/pb626-xsession
+grep -Fxq 'supervise_client matchbox-window-manager -theme "$wm_theme" -use_titlebar yes &' display/pb626-xsession
 grep -Fxq 'if [ -n "$screen" ]; then' display/pb626-xsession
 grep -Fxq '    xprop -root -spy _NET_SUPPORTING_WM_CHECK >/dev/null 2>&1 &' display/pb626-xsession
 grep -Fxq '    wait "$watcher" || :' display/pb626-xsession

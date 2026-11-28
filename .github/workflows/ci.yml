@@ -115,7 +115,11 @@ jobs:
           /tmp/test-pb626-charge --self-test
           sh -n boot/debian/pb626-admin
           sh -n boot/debian/pb626-user-session
-          sh tests/test-native-services.sh
+          if ! sh -x tests/test-native-services.sh >/tmp/pb626-native-test.log 2>&1; then
+            cat /tmp/pb626-native-test.log >&2
+            exit 1
+          fi
+          tail -n 1 /tmp/pb626-native-test.log
           if ! sh -x tests/test-debian-settings.sh >/tmp/pb626-settings-test.log 2>&1; then
             cat /tmp/pb626-settings-test.log >&2
             exit 1
