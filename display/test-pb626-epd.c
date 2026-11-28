@@ -193,6 +193,48 @@ static void test_waveform_policy(void)
 	assert(renderer.planned.phases[2].lut[0x8f] == 1);
 }
 
+static void test_mixed_plan(void)
+{
+	static struct renderer r;
+	const unsigned int codes[] = {0xf0, 0x01, 0x5f, 0x9f};
+	const enum mode expected[] = {A2, DU, DU4, GL16};
+	bool active[TRANSITIONS] = {0};
+	r.cache[A2].count = 2;
+	r.cache[DU].count = 3;
+	r.cache[DU4].count = 4;
+	r.cache[GL16].count = 6;
+	r.cache[GC16].count = 6;
+	r.mixed_a2 = r.mixed_du4 = true;
+	for (unsigned int j = 0; j < 4; j++) {
+		unsigned int t = codes[j];
+		active[t] = true;
+		r.driven[GL16][t] = r.driven[GC16][t] = true;
+		r.driven[expected[j]][t] = true;
+		for (unsigned int i = 0; i < r.cache[expected[j]].count; i++)
+			set_cached_signal(&r.cache[expected[j]], i, t, 1 + i % 2);
+		assert(mixed_transition(&r, t) == expected[j]);
+	}
+	assert(plan_mixed(&r, active));
+	unsigned int scan = 0;
+	for (unsigned int p = 0; p < r.planned.count; p++)
+		for (unsigned int n = 0; n < r.planned.phases[p].scans; n++, scan++)
+			for (unsigned int t = 0; t < TRANSITIONS; t++) {
+				unsigned int want = 0;
+				for (unsigned int j = 0; j < 4; j++)
+					if (t == codes[j] && scan < r.cache[expected[j]].count)
+						want = 1 + scan % 2;
+				assert(r.planned.phases[p].lut[t] == want);
+			}
+	assert(scan == 6);
+	r.mixed_a2 = false;
+	assert(mixed_transition(&r, codes[0]) == GL16);
+	active[0xff] = true;
+	assert(!plan_mixed(&r, active));
+	active[0xff] = false;
+	active[0x32] = true;
+	assert(!plan_mixed(&r, active));
+}
+
 static void test_fast_mode_selection(void)
 {
 	static struct renderer renderer;
@@ -301,6 +343,7 @@ int main(void)
 	test_packed_cache();
 	test_waveform_policy();
 	test_fast_mode_selection();
+	test_mixed_plan();
     assert(PREVIEW_A2 != PREVIEW && PREVIEW_DU4 != PREVIEW);
     assert(preview_level4(4) == 5 && preview_level4(8) == 10);
     assert(preview_level4(14) == WHITE);

@@ -33,8 +33,8 @@ enum { S_LE = 1 << 13, G_MODE = 1 << 15, S_OE = 1 << 20,
        S_SP = 1 << 21, G_CLK = 1 << 22, G_SP = 1 << 23,
        BASE = G_MODE | G_SP, IDLE = BASE | S_SP };
 
-enum mode { INIT, DU, GC16, GL16, A2, DU4 };
-static const char *const modes[] = { "reset", "du", "full", "partial", "a2", "du4" };
+enum mode { INIT, DU, GC16, GL16, A2, DU4, MIXED };
+static const char *const modes[] = { "reset", "du", "full", "partial", "a2", "du4", "mixed" };
 static const char state_path[] = "/run/pb626-epd.levels";
 static const enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
 
@@ -102,7 +102,7 @@ struct renderer {
 	uint16_t transitions[PIXELS];
 #endif
 	struct span_range rows[GATES];
-	bool known, auto_fast;
+	bool known, auto_fast, mixed_enabled, mixed_a2, mixed_du4;
 };
 
 static inline uint16_t transition_get(const struct renderer *r, size_t i)
@@ -396,6 +396,73 @@ static void plan(struct renderer *renderer, enum mode mode, const bool *active)
 			next->scans = 1;
 		}
 	}
+}
+
+/* Each transition retains its complete temperature-specific factory
+ * sequence. Shorter sequences are neutral after completion. No waveform
+ * truncation, interpolation, or new voltage signals. */
+static enum mode mixed_transition(const struct renderer *r, unsigned int t)
+{
+	unsigned int old = t & 15, target = t >> 4;
+	enum mode best = GL16;
+	if (!r->driven[GL16][t])
+		best = GC16;
+	if (target == 0 || target == 15) {
+		if (r->driven[DU][t] && r->cache[DU].count < r->cache[best].count)
+			best = DU;
+		if (r->mixed_a2 && (old == 0 || old == 15) &&
+		    r->driven[A2][t] && r->cache[A2].count < r->cache[best].count)
+			best = A2;
+	} else if (r->mixed_du4 && (target == 5 || target == 10) &&
+		   r->driven[DU4][t] && r->cache[DU4].count < r->cache[best].count)
+		best = DU4;
+	return best;
+}
+
+static bool plan_mixed(struct renderer *r, const bool *active)
+{
+	enum mode selected[TRANSITIONS];
+	unsigned int scans = 0, counts[DU4 + 1] = {0};
+	for (unsigned int t = 0; t < TRANSITIONS; t++) {
+		if (!active[t])
+			continue;
+		/* Never mix a same-level scrub or an unknown transition. */
+		if (!(t % (LEVELS + 1)))
+			return false;
+		enum mode m = mixed_transition(r, t);
+		if (!r->cache[m].count || !r->driven[m][t])
+			return false;
+		selected[t] = m;
+		counts[m]++;
+		if (r->cache[m].count > scans)
+			scans = r->cache[m].count;
+	}
+	if (!scans)
+		return false;
+	struct update *u = &r->planned;
+	u->count = 0;
+	for (unsigned int i = 0; i < scans; i++) {
+		uint8_t phase[TRANSITIONS] = {0};
+		for (unsigned int t = 0; t < TRANSITIONS; t++) {
+			if (!active[t])
+				continue;
+			const struct cached_update *c = &r->cache[selected[t]];
+			if (i < c->count)
+				phase[t] = packed_signal(c->lut + i * LUT_BYTES, t);
+		}
+		struct phase *last = u->count ? &u->phases[u->count - 1] : NULL;
+		if (last && !memcmp(last->lut, phase, sizeof(phase)))
+			last->scans++;
+		else {
+			struct phase *next = &u->phases[u->count++];
+			memcpy(next->lut, phase, sizeof(phase));
+			next->scans = 1;
+		}
+	}
+	if (r->profile)
+		fprintf(stderr, "epd: mixed transitions du=%u a2=%u du4=%u gl16=%u gc16=%u scans=%u\n",
+			counts[DU], counts[A2], counts[DU4], counts[GL16], counts[GC16], scans);
+	return true;
 }
 
 static unsigned int pgm_number(FILE *file)
@@ -877,11 +944,21 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 			mode = GL16;
 			cache_mode(renderer, mode);
 		}
+		/* The mixed candidate is limited to ordinary exact SETTLE
+		 * updates with known history, never RESET or CLEAN. */
+		if (fallback && mode == GL16 && renderer->mixed_enabled && !reset_first) {
+			cache_mode(renderer, GC16);
+			cache_mode(renderer, DU);
+			if (renderer->mixed_a2) cache_mode(renderer, A2);
+			if (renderer->mixed_du4) cache_mode(renderer, DU4);
+			if (plan_mixed(renderer, active))
+				mode = MIXED;
+		}
 		if (fallback && mode == GL16 && !supports(renderer, mode, active)) {
 			mode = GC16;
 			cache_mode(renderer, mode);
 		}
-		if (!supports(renderer, mode, active))
+		if (mode != MIXED && !supports(renderer, mode, active))
 			fail("this mode cannot perform every requested transition; use partial or full");
 	}
 	invalidate();
@@ -896,7 +973,8 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 		scan_us += now_us() - start;
 	}
 	if (mode != INIT && changed) {
-		plan(renderer, mode, active);
+		if (mode != MIXED)
+			plan(renderer, mode, active);
 		uint64_t start = now_us();
 		refresh(renderer, mode);
 		scan_us += now_us() - start;
@@ -1017,6 +1095,13 @@ int main(int argc, char **argv)
 	}
 	const char *fast = getenv("PB626_EPD_FAST_MODE");
 	renderer.auto_fast = fast && !strcmp(fast, "auto");
+	renderer.mixed_a2 = renderer.auto_fast || (fast && !strcmp(fast, "a2"));
+	renderer.mixed_du4 = renderer.auto_fast || (fast && !strcmp(fast, "du4"));
+	const char *mixed = getenv("PB626_EPD_MIXED");
+	renderer.mixed_enabled = serve && mixed && !strcmp(mixed, "1") &&
+		!access("/etc/pb626/mixed-waveform-qualified", F_OK);
+	if (mixed && !strcmp(mixed, "1") && !renderer.mixed_enabled)
+		fprintf(stderr, "epd: mixed waveform not qualified; retaining normal SETTLE\n");
 	load_waveform(&renderer.wbf, argv[1]);
 	/* The stock WBF targets 85 scans/s. The A13 clock tree supplies
 	 * 22.5 MHz here, giving 84.5 scans/s with Megi's porch settings.

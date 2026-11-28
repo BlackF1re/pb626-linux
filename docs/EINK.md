@@ -294,3 +294,29 @@ all voltage signals remain byte-identical; no neutral scans are dropped.
 Host regression covers dense, threshold-sized and single-transition
 masks, including index 255. This reduces CPU work in sparse updates
 without adding resident storage; measure actual preparation latency.
+
+### Experimental simultaneous transition waveforms
+
+The PIN32 worker already emits a per-transition signal in every scan.
+For ordinary exact SETTLE with known history, the candidate selects the
+shortest eligible waveform for each old/new transition: DU for binary
+targets, A2 for binary endpoints when selected by the fast policy,
+DU4 for 5/10 when selected, GL16 otherwise, and GC16 only for a missing
+GL16 transition. It checks the decoded current-temperature table.
+Every chosen sequence starts on scan zero, retains all factory signals
+in order, and emits neutral signals after completion until the longest
+sequence ends. No extra full-screen buffer, protocol change or new
+voltage/timing is needed. Same-level scrubs, INIT, RESET and sleep are
+never mixed. ACK and ghosting accounting remain unchanged.
+
+Mixed electrical sequences are not yet optically qualified: common panel
+behavior, edge crosstalk, charge balance and temperature dependence must
+be checked on the actual panel. The worker requires both the root-owned
+/etc/pb626/mixed-waveform-qualified marker and PB626_EPD_MIXED=1 in the
+service environment; without both, the existing exact SETTLE is used.
+For controlled lab qualification only, use a reversible service drop-in
+and remove the marker if residual images or edge artifacts increase.
+Compare identical black/white, gray and mixed charts over repeated
+updates and temperatures; log selected counts and total scans. Host
+regression verifies the full expanded signal sequence for four mixed
+transition classes, neutral tails, disabled A2 and invalid/scrub rejection.
