@@ -34,7 +34,7 @@ python3 - "$out/qualification/emulation.json" "$digest" "$report_key" <<'PY'
 import json,sys
 r=json.load(open(sys.argv[1]))
 if r.get("result")!="tested contract passed" or not isinstance(r.get("reference"),dict) or r.get(sys.argv[3],{}).get("sha256")!=sys.argv[2]:
-    raise SystemExit("Candidate does not match mandatory differential FEL report")
+    raise SystemExit("Bootloader does not match mandatory differential FEL report")
 PY
 # Add one immutable authorization file in a second gzip/cpio member.
 # Linux initramfs explicitly supports concatenated archives. No external

@@ -1,8 +1,8 @@
 # PB626 suspend/resume design and qualification
 
 Scope: observed late ELAN/eMMC A13 board, pinned Megi kernel
-facc87117511221bb61410e3f92ad8579697f736 and Debian/systemd. These are
-software candidates, not evidence of successful physical sleep.
+facc87117511221bb61410e3f92ad8579697f736 and Debian/systemd. This describes the normal firmware sleep path. Host/model tests do not
+establish successful physical sleep.
 
 ## Three mechanisms
 
@@ -17,16 +17,16 @@ software candidates, not evidence of successful physical sleep.
   AssertPathExists qualification gate (not a skippable Condition), including
   direct systemctl suspend; an inactive desktop also rejects preparation.
 * deep: Megi SUN5I_PM is a PMIC-assisted SoC power cycle with retained
-  DRAM, not a normal CPU idle state. The installed BT0-uncaged lacks
-  a qualified resume-aware SPL, so SUN5I_PM remains disabled. A separate
-  source-built deep candidate exists; see BT0-uncaged/RESUME.md.
+  DRAM, not a normal CPU idle state. The normal kernel enables SUN5I_PM;
+  the installer pairs it with the resume-aware SPL. systemd selects deep.
+  Physical wake qualification is still required; see BT0-uncaged/RESUME.md.
 
 ## Factory evidence
 
 The separately supplied first-68-MiB eMMC dump now provides actual
 factory BT0/BT1, including the retained-DRAM branch. See
 [FACTORY-SUSPEND.md](FACTORY-SUSPEND.md) for hashes, disassembly anchors,
-exact 256 MiB geometry, distinct stock/Megi ABIs, and lab patch scope.
+exact 256 MiB geometry, distinct stock/Megi ABIs, and suspend patch scope.
 
 Owner-supplied 5.20.1157 archive: boot/script.bin pm_para standby_mode=1;
 pmu_para selects AXP209 on TWI0 0x34, IRQ 0. libhwconfig.so device_suspend
@@ -80,7 +80,7 @@ restores saved settings on resume and reports restoration errors.
 Driver PM callbacks, not unload scripts or direct GPIO writes, own
 hardware transitions.
 
-## Deep sleep boot contract (blocking)
+## Suspend-to-RAM boot contract
 
 Kernel commit 4d8a701b7f3e2293e7557a99e597f8ad9d06dd37 introduces
 pm-sun5i.c and sleep-sun5i.S. It records DRAM ZQ calibration,
@@ -89,18 +89,18 @@ GP0..3, enters DRAM self-refresh, retains pads and uses AXP209 to
 cut SoC rails. The SPL must detect both retention and magic BEFORE
 cold DRAM initialization, recover DRAM nondestructively and jump to
 cpu_resume. It must preserve cold boot, FEL and failed-resume recovery.
-The exact dirty source tree of the installed lab SPL is still missing,
-although the historical DRAM helper and board defconfig have been
-recovered and match the independent source candidate. The candidate
-implements the RTC/pad-retention handoff but is not qualified. Keep
-CONFIG_SUN5I_PM disabled and do not substitute either candidate for the
-working SPL.
+The historical SPL source is not fully recovered. The current source-built
+resume SPL implements the RTC/pad-retention handoff and is installed only
+with the matched kernel and rootfs. The hardware qualification marker is
+not installed automatically; confirm cold boot, independent FEL recovery,
+and actual retained-DRAM wake first.
 
 ## Qualification checklist
 
 With a verified full backup and working FEL/serial recovery, test
-PM_DEBUG and PM_SLEEP_DEBUG freezer/device stages first, then actual
-s2idle (pm_test must be none). Record suspend_stats, wakeup_sources,
+PM_DEBUG and PM_SLEEP_DEBUG freezer, devices, platform, processors and
+core stages first, then actual deep suspend (pm_test must be none).
+Record suspend_stats, wakeup_sources,
 kernel messages, CPUFreq, IRQ deltas, regulator state, runtime_status,
 power measurements and scan latency.
 
@@ -164,8 +164,8 @@ cold Menu FEL validation independently of this Debian userspace.
 
 ## Source-level review of the current sleep paths
 
-The review covers the production Debian configuration and the separate
-deep SPL candidate, against the pinned Megi kernel above. It does not
+The review covers the Debian configuration and paired resume SPL,
+against the pinned Megi kernel above. It does not
 certify a physical sleep cycle.
 
 | Mechanism | Production policy | Qualification |
@@ -173,12 +173,12 @@ certify a physical sleep cycle.
 | CPU WFI / tickless idle | Enabled | No full-system sleep; measure idle power |
 | E Ink runtime PM | Enabled, stream-scoped reference, delayed rail/clock parking | Rail sequence, error rollback and repeated scans need hardware |
 | Convenience lock | Enabled by policy, no freezer or system PM | Optical/interaction check; not an authentication boundary |
-| Suspend to idle | Built in, explicitly `mem` with `MemorySleepMode=s2idle`; gated by root marker | Hardware wake, aborted sleep, peripheral restoration not certified |
+| Suspend to idle | Built in, selectable for diagnostics; gated by root marker | Hardware wake and restoration need measurement |
 | Standby (shallow) | Not selected; no platform shallow state demonstrated | Not supported |
-| Suspend to RAM (deep) | Disabled in resolved kernel config | Experimental separate SPL only; see blockers below |
+| Suspend to RAM (deep) | Built in; systemd selects deep; paired resume SPL; gated by root marker | Actual rail cut and retained DRAM still need physical acceptance |
 | Hibernation / hybrid / suspend-then-hibernate | Disabled in kernel/systemd; zram is volatile | Not supported |
 
-### s2idle transaction and failure boundaries
+### Suspend transaction and failure boundaries
 
 1. Settings, the bridge's short power-key policy and optional xidle
    call the validated admin helper, which requires the marker and honors
@@ -192,7 +192,8 @@ certify a physical sleep cycle.
    preparation. The renderer's ACK follows every completed V4L2 phase
    and STREAMOFF, not merely a successful send. Optional DMA queue
    release is independent and still qualification-gated.
-3. The kernel freezes tasks, invokes device PM, and enters s2idle.
+3. The kernel freezes tasks, invokes device PM, and enters the configured
+   suspend mode. A13 ENMI uses generic IRQ wake bookkeeping.
    The pinned AXP20x PEK driver marks its device wake-capable, enables
    IRQ wake on both button edges and clears pending button interrupts
    in resume_noirq. IRQ wake return values in that driver are not checked;
@@ -220,33 +221,26 @@ installed systemd units. None executes the kernel freezer and all device
 PM callbacks on this board. The test matrix must include successful and
 aborted transactions, not just successful wake.
 
-### Deep kernel/SPL review: additional blockers
+### Suspend kernel/SPL review and remaining acceptance
 
 The pinned `arch/arm/mach-sunxi/pm-sun5i.c` and
-`sleep-sun5i.S` implement a real platform suspend-to-RAM proposal:
+`sleep-sun5i.S` implement platform suspend-to-RAM:
 the kernel saves CCU/INTC/PIO/timer/SRAM state and the first 64 bytes
 of DRAM, publishes RTC GP0..3, moves the last operation to SRAM,
-and requests an AXP209 rail cut. The candidate SPL consumes the magic,
+and requests an AXP209 rail cut. The resume SPL consumes the magic,
 validates alignment/range and the saved single-rank 256 MiB DDR3
 geometry, excludes FEL, checks retained pads, restores the controller,
 trains DQS and jumps to the saved physical resume address. Successful
 kernel return stops the SPL watchdog and restores saved registers.
 
-The following are unresolved correctness issues, not merely performance
-tuning:
+The original upstream prepare/abort and SRAM wait problems are addressed
+by the four patches in patches/suspend/: PMIC read status handling,
+register/port rollback, bounded waits and watchdog escape. The compiled
+SRAM object is exercised against a limited MMIO fault model every build.
+Electrical rail-cut and actual watchdog behavior still require hardware.
 
-- `sun5i_axp_prepare()` modifies CCU/APB1/TWI and the PMIC VOFF wake
-  flag before the final power cut. `sun5i_pm_enter()` returns directly
-  on preparation failure and only restores the saved CCU/peripheral
-  state after a successful cpu_suspend return. Abort and partial-PMIC
-  failure need explicit rollback, including the wake flag and original
-  clock/IRQ state. The polled PMIC read path also treats any unexpected
-  I2C status at the final read as success; error handling needs review.
-- The SRAM abort path enables all 31 DRAM host ports rather than
-  restoring their original enable mask. Pad and DRAM-command waits are
-  unbounded; a hung controller or an ACKed PMIC write without actual
-  rail cut has no demonstrated recovery path. The SPL watchdog is
-  armed only on the wake-side candidate, not throughout kernel entry.
+Remaining hardware and contract checks:
+
 - The SPL validates a broad aligned physical resume range, not the exact
   installed kernel's resume address or an authenticated retained image.
   It consumes the RTC magic before the retained-pad check. Unknown
@@ -255,16 +249,15 @@ tuning:
   range/geometry checks alone do not prove a safe handoff.
 - Verify the actual 256 MiB board DDR3 geometry, pad retention, DRAM
   rail wiring, CPU/DRAM clocks, DQS training and preserved RAM on physical
-  hardware. The deep kernel reprograms several register files directly,
+  hardware. The suspend code reprograms several register files directly,
   so driver callbacks which suffice for s2idle may not suffice after
   every SoC register has been lost.
 - The Cortex-A8 model executes real Menu/FEL, raw-sector and LED code
   but stops on unmodelled controllers. It does not execute an entire
-  retained-DRAM transition. A compiled deep SPL and a successful
+  retained-DRAM transition. A compiled resume SPL and a successful
   differential cold-path test therefore do not establish deep resume.
 
-Do not make the deep candidate an installable default, enable
-CONFIG_SUN5I_PM in the production kernel, or change the s2idle policy
-until these issues and the independent recovery prerequisites have
-been addressed. Separate lab artifacts, an exact paired kernel/SPL,
-and a repeatable physical qualification report are required.
+Keep /etc/pb626/suspend-qualified absent until the physical checks pass.
+The installer and host tests establish a consistent pair, not a physical
+wake guarantee. Do not enable unattended sleep until repeated actual
+suspend/resume, storage integrity and independent recovery are confirmed.

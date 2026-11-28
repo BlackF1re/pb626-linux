@@ -106,43 +106,41 @@ remains untouched.
 2. Deep SPL validates the exact observed device/bus width and density,
    not merely capacity. The shared metadata predicate is used in the
    SPL and tested on host; the SPL cache key includes it. Source-built
-   candidate still does not replace qualified SPL.
-3. Isolated patches under patches/lab correct the pinned Megi PMIC
+   resume SPL is paired with the normal kernel by the installer.
+3. Patches under patches/suspend correct the pinned Megi PMIC
    repeated-start/read (no false success on unexpected status),
    preserve the DRAM host-port enable mask and ARM caller registers
    during SRAM abort, and attempt to restore the PMIC wake flag and
    changed APB1 clock/gate on preparation failure or abort. The CPU PM
-   notifier result is checked. These are candidate fixes, not a
+   notifier result is checked. These fixes are not a
    demonstrated hardware rollback; a failed PMIC rollback is logged.
-4. The lab watchdog patch bounds DRAM command/pad polling, refuses an
+4. The watchdog patch bounds DRAM command/pad polling, refuses an
    already active watchdog, and retains the rescue watchdog through
    kernel register restoration. If the PMIC acknowledges but power does
    not disappear, or DRAM cannot be safely restored, the SRAM path
    invalidates the RTC resume marker and waits for reset without
-   returning through DRAM. This is a candidate recovery policy, not a
+   returning through DRAM. This is a recovery policy, not a
    measured watchdog or rail-cut guarantee.
-5. Full qualification separately links a deep-enabled kernel, modules
-   and native DTB under a distinct local version, caches only verified
-   build inputs/outputs, and executes the actual compiled SRAM object
-   under a limited MMIO fault model on every run. No installer or
-   flash image consumes this lab artifact. The model checks I2C
-   failures, abort register/port restoration, controller stalls and
-   the invalidation path; it does not model electrical power loss,
-   DRAM retention or the hardware watchdog. Production config continues
-   to forbid SUN5I_PM. The existing source SPL is independently built
-   and is not yet a qualified pair with the laboratory kernel.
+5. The normal kernel enables SUN5I_PM and ARM_CPU_SUSPEND. The same
+   kernel and modules feed Debian and RAM recovery. The build executes
+   the actual compiled SRAM object against a limited MMIO fault model
+   on every run and checks I2C failures, abort register/port restoration,
+   controller stalls and resume-marker invalidation. The installer
+   binds the matching resume SPL to the recovery image. The model
+   does not establish electrical power loss, DRAM retention or the
+   hardware watchdog.
 
 ## Remaining qualification
 
-The existing laboratory SPL needs cold boot/FEL and retention tests
-with a matching deep kernel, actual DCR/ZQ, saved memory signatures,
+The paired resume SPL needs cold boot/FEL and retention tests
+with the normal kernel, actual DCR/ZQ, saved memory signatures,
 PMIC rail measurements, watchdog recovery and power-key wake. Check
 clock/reset sequencing against the actual board and prove that all
 peripherals recover after power removal, including MMC, USB, Wi-Fi,
-ELAN, E Ink and RTC. The lab source bounds DRAM-controller polling and has a proposed
+ELAN, E Ink and RTC. The suspend source bounds DRAM-controller polling and has a
 watchdog escape, but the actual reset/rail-cut sequence and validation
-of the precise resume address remain open. Do not enable deep on production until these are addressed and
-independent recovery is available.
+of the precise resume address remain open. Keep unattended suspend disabled
+until these are addressed and independent recovery is available.
 
 For s2idle, use the existing qualification checklist. The kernel
 wakeup-count contract and the final user-space-to-kernel transition

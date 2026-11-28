@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Experimental retained-DRAM SPL path for the pinned Megi U-Boot tree.
+"""Retained-DRAM SPL path for the pinned Megi U-Boot tree.
 
 References: the matching Megi Linux pm-sun5i.c/sleep-sun5i.S RTC ABI and
 Allwinner boot0 super-standby sequence. Never use this to patch the existing
-hash-qualified binary. Only a separately compiled candidate is produced.
+hash-qualified binary. The resume SPL is compiled from source.
 """
 from pathlib import Path
 import sys
@@ -70,7 +70,7 @@ change("\treturn get_ram_size((long *)PHYS_SDRAM_0, PHYS_SDRAM_0_SIZE);",
        "\treturn get_ram_size((long *)PHYS_SDRAM_0, PHYS_SDRAM_0_SIZE);")
 change("unsigned long dramc_init(struct dram_para *para)\n{", r'''
 /* PB626/Megi Linux RTC ABI. These registers survive the PMIC power cut.
- * This candidate is only for the 256 MiB A13 board and matching kernel.
+ * This SPL is only for the 256 MiB A13 board and matching kernel.
  * Menu/FEL runs in the earlier assembly hook; FEL uploads never resume. */
 #define PB626_RTC_GP(n) ((void *)(0x01c20d20U + 4U * (n)))
 #define PB626_WDOG_CTL ((void *)0x01c20c90U)

@@ -2,7 +2,7 @@
 
 Windows 10 and 11 x64, built-in Windows PowerShell 5.1. No WSL, Python
 installation, MSYS2, usbipd, or third-party Ethernet tools on the user's
-PC. Extract the entire `pb626-windows-flash-kit` artifact on a local
+PC. Extract the entire `pb626-windows-installer` artifact on a local
 NTFS disk, double-click PB626.cmd and accept the administrator prompt.
 Use the known late ELAN/eMMC model only. The native Windows USB path
 requires physical qualification; CI only checks compilation and mock/
@@ -10,11 +10,9 @@ offline behavior.
 
 ## First use
 
-1. Select an operation. Default install writes p1 and its paired
-   kernel/DTB, retaining a recognized installed uncaged BT0. It erases
-   all native rootfs user files, so back up first. Qualified installation
-   can also reconstruct the exact historical BT0. Do not use "keep"
-   when still running factory BT0.
+1. Select Install to write p1, the paired kernel/DTB, and the resume-capable
+   BT0. It erases native rootfs user files, so preserve data first. The
+   bootloader update is bound to the same-run recovery image and model report.
 2. The historical FEL-only SPL is fetched directly from its original
    author with both combined-image and SPL SHA256 checked. If unavailable,
    place your verified `uboot.bin` or `pb626-spl.bin` in `fel-inputs`.
@@ -51,39 +49,30 @@ offline behavior.
 
 ## Operations
 
-- Install: paired Debian rootfs + kernel, preserve recognized BT0.
-- InstallQualified: same payload plus historical hash-qualified BT0.
-- InstallCandidate: same payload plus new **experimental** source BT0
-  with LED animation. Requires exact same-run recovery authorization.
+- Install: paired Debian rootfs, kernel/DTB, modules and resume bootloader.
   A complete same-CID backup is optional; pass -BackupDir to verify it.
-  A single final confirmation explicitly states when no backup is supplied.
-- Bootloader / RestoreBootloader: write just LBA 16–63 (24 KiB), leaving
-  rootfs, kernel and all other sectors unchanged. Experimental option
-  has the same optional backup and final confirmation.
+  Without a backup the installer requests explicit final confirmation.
 - Backup / Restore / Preflight: existing full eMMC dump format, including
   hardware boot regions and EXT_CSD verification. Restore is destructive.
 - Recovery: verified RAM-only boot; no writes.
+- RecoveryTest: same-run identity, RAM transport, CID, layout, EXT_CSD and
+  read-only storage sampling.
+- ResumeBackup: continue an incomplete backup.
 - Validate / Prepare: offline package check / prepare FEL inputs.
 
 Examples from Windows PowerShell 5.1:
 
     .\PB626.ps1 -Action Validate
     .\PB626.ps1 -Action Install
-    .\PB626.ps1 -Action InstallDeepLab -BackupDir D:\PB626\backup-verified
+    .\PB626.ps1 -Action Install -BackupDir D:\PB626\backup-verified
     .\PB626.ps1 -Action Backup -DataDir D:\PB626
     .\PB626.ps1 -Action Recovery -UsbProfile RNDIS
 
-The experimental BT0 may break Menu/FEL. A backup is not a substitute
-for an independent physical recovery route. Do not install it until you
-accept that risk. The ordinary Windows bundle does not flash the isolated deep kernel or
-retained-DRAM SPL. It keeps production sleep policy and module
-compatibility. The separate `pb626-windows-deep-lab-EXPERIMENTAL` artifact
-from full qualification has the same launcher, but only the explicit
-InstallDeepLab option writes its paired deep kernel, matching modules
-inside the rootfs, and deep-resume SPL last. It supports an optional full verified backup and requires the same single risk confirmation. It still leaves systemd's
-s2idle default and the suspend-qualified gate untouched. Do not mix a
-lab zImage with production rootfs modules or try deep until physical
-cold boot and Menu/FEL have been checked repeatedly.
+The resume bootloader and kernel are installed together. Isolated BT0,
+kernel or rootfs updates are not enabled for this package. A BT0 update
+can prevent Menu/FEL; a backup is not a substitute for independent
+physical recovery. Verify cold boot and Menu/FEL repeatedly. Suspend
+uses deep mode once the existing hardware qualification marker is set.
 
 Native FEL source: pinned linux-sunxi/sunxi-tools commit
 0237931bb3d66de17c441a3c94d0e4b39e1308d1 with the existing lab MMU patch;
@@ -100,20 +89,10 @@ before transmission; no passwords or payloads are logged. Progress reflects
 acknowledged blocks. After a failed write keep the book powered; do not
 reboot or retry SPL automatically. Use -BackupDir to supply a verified dump (recommended); without it the final confirmation explicitly warns that no backup is present.
 
-BT0-only operations additionally verify the installed raw kernel byte for
-byte against this kit, mount p1 read-only without journal replay, and
-check the native image ID, matching module release and waveform. If the
-reader still runs factory firmware or another kernel, install the paired
-kernel/rootfs first. This restriction is intentional: a BT0-only operation
-must not replace the stock boot chain while leaving stock payloads in place.
+## Interruption recovery
 
-## Partial updates and interruption recovery
-
-Standard bundles add RootfsOnly (requires exact installed raw kernel),
-KernelOnly (requires exact installed module-tree manifest), and ResumeBackup.
-Deep lab retains the explicit all-component pair restriction. RecoveryTest
-checks same-run identity, random RAM transfer, CID, layout, EXT_CSD and
-read-only 4 MiB samples of user/boot0/boot1. No destructive self-test.
+RecoveryTest checks same-run identity, random RAM transfer, CID, layout,
+EXT_CSD and read-only 4 MiB samples of user/boot0/boot1. No destructive self-test.
 
 If TCP is interrupted, choose R to reconnect to running recovery; F is
 only for a reader that already lost power. No extra typed risk phrase is needed. Do not deliberately power-cycle

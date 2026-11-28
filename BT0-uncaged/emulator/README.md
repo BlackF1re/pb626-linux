@@ -12,7 +12,7 @@ corresponding source/license status is resolved.
 For local use, with Python 3 and the pinned dependencies:
 
     python -m pip install -r BT0-uncaged/emulator/requirements.txt
-    python BT0-uncaged/emulator/validate.py --reference BT0-uncaged.bin --candidates source-boot-candidates --report emulation.json --require-reference
+    python BT0-uncaged/emulator/validate.py --reference BT0-uncaged.bin --candidates bootloader-stage --report emulation.json --require-reference
 
 The same Unicorn Cortex-A8 engine executes machine code from each
 eGON image, starting at address zero for the Menu hook. SRAM, LRADC,
