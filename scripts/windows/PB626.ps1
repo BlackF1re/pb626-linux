@@ -32,7 +32,7 @@ function Invoke-Python([string[]]$Arguments) {
         $code=$LASTEXITCODE
     } finally { $ErrorActionPreference=$previous }
     if ($code -eq 2) { Cancel-Operation }
-    if ($code -ne 0) { throw "Operation failed (exit $code). No automatic write retry." }
+    if ($code -ne 0) { throw "Failed (exit $code). No automatic write retry." }
 }
 function Invoke-Probe([string[]]$Arguments) {
     $previous=$ErrorActionPreference
@@ -126,7 +126,13 @@ function Wait-Adapter {
         if ($null -ne $index) { return $index }
         Start-Sleep -Seconds 1
     } while ((Get-Date) -lt $until)
-    throw 'Recovery network adapter not found. Check Device Manager. Windows 10: use -UsbProfile RNDIS; Windows 11: NCM. Do not install WinUSB on recovery.'
+    $parents=@(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
+        $_.InstanceId -match '^USB\\VID_0525&PID_A4A[27]\\'
+    })
+    if (@($parents | Where-Object Class -eq 'Ports').Count) {
+        throw 'Recovery USB driver conflict (COM port on parent). In Device Manager, select USB Composite Device from C:\Windows\INF\usb.inf. Never use WinUSB on recovery.'
+    }
+    throw 'Recovery Ethernet missing. Check USB Composite Device and NCM/RNDIS driver; try -UsbProfile RNDIS after cold power-off.'
 }
 function Connect-Recovery {
     $index=Wait-Adapter
@@ -229,16 +235,15 @@ $script:JournalPath=Join-Path $journalDir ((Get-Date -Format 'yyyyMMdd-HHmmss-ff
 if ($Action -in @('InstallCandidate','Bootloader','InstallDeepLab') -and $BackupDir) {
     if (!(Test-Path -LiteralPath (Join-Path $BackupDir 'SHA256SUMS') -PathType Leaf)) { throw 'Backup manifest missing' }
 }
-if (!$UseRunningRecovery -and $null -ne (Find-Adapter)) {
-    $answer=(Read-Host 'Recovery adapter detected. Reuse running recovery [y/N/0=cancel]?').Trim()
-    if ($answer -eq '0') { Cancel-Operation }
-    if ($answer -match '^[yY]$') { $UseRunningRecovery=$true }
+if (!$UseRunningRecovery -and $UsbProfile -eq 'Auto' -and $null -ne (Find-Adapter)) {
+    Say 'Reusing RAM recovery (identity will be checked).'
+    $UseRunningRecovery=$true
 }
 function Start-ColdRecovery {
     Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare')
     Say 'STEP 1 / Cold FEL'
     while ($true) {
-        $answer=Read-Host 'Power off fully, unplug, hold Menu, reconnect USB; Enter to check (0 = cancel)'
+        $answer=Read-Host 'Cold FEL: power off, hold Menu, reconnect USB. Enter / 0=cancel'
         if ($answer -eq '0') { Cancel-Operation }
         $fel=@(Find-Fel)
         if ($fel.Count -gt 1) { throw 'Multiple FEL devices. Disconnect other readers.' }
@@ -252,7 +257,7 @@ function Start-ColdRecovery {
             if (($result.Lines -join ' ') -match 'Unexpected FEL SoC') { throw 'Incorrect SoC; refusing to initialize DRAM' }
             Offer-Zadig
         } else {
-            Write-Host 'Windows has not enumerated 1F3A:EFE8. Check the cable and cold Menu sequence.' -ForegroundColor Yellow
+            Write-Host 'FEL not found (1F3A:EFE8). Check cable and Menu.' -ForegroundColor Yellow
             if ((Read-Host 'Open driver instructions anyway? [y/N]') -match '^[yY]$') { Offer-Zadig }
         }
     }
@@ -275,19 +280,16 @@ function Invoke-Transfer([string[]]$Arguments) {
         } finally { $ErrorActionPreference=$previous }
         if ($code -eq 0) { return }
         if ($code -eq 2) { Cancel-Operation }
-        if ($code -ne 75) { throw "Operation failed (exit $code). Check the reported error; no automatic retry." }
-        Write-Host 'USB connection interrupted. The next attempt will compare verified media data, not blindly repeat writes.' -ForegroundColor Yellow
-        Write-Host 'Keep the reader powered if possible. Do not power-cycle a partially flashed reader.' -ForegroundColor Yellow
+        if ($code -ne 75) { throw "Failed (exit $code). No automatic retry." }
+        Write-Warning 'USB interrupted. Keep reader powered; matching chunks will be skipped.'
         Disconnect-Recovery
         $script:AddedAddress=$false
         $script:RestoreDhcp=$false
         while ($true) {
-            $answer=(Read-Host 'Reconnect USB and choose R=running recovery, F=reader already fully powered off, 0=stop').Trim()
+            $answer=(Read-Host 'R=running recovery, F=already powered off (cold FEL), 0=stop').Trim()
             if ($answer -eq '0' -or !$answer) { Cancel-Operation }
             if ($answer -notin @('R','F')) { Write-Host 'Choose R, F or 0.' -ForegroundColor Yellow; continue }
             if ($answer -eq 'F') {
-                Write-Warning 'Use cold FEL only if the reader is already fully powered off. Never reboot just to retry a write.'
-                if ((Read-Host 'Type COLD if power was already lost') -cne 'COLD') { continue }
                 Start-ColdRecovery
             }
             try {
@@ -311,7 +313,6 @@ try {
     if ($Action -eq 'Recovery') { Write-Host 'RAM recovery verified. No eMMC write.' -ForegroundColor Green; return }
     if ($Action -eq 'RecoveryTest') {
         Invoke-Python @((Join-Path $kit 'windows-fel.py'),'test')
-        Write-Host 'Recovery diagnostic passed. No eMMC write.' -ForegroundColor Green
         return
     }
     Say 'STEP 4 / Device and data verification'
@@ -344,9 +345,9 @@ try {
         $verb=if ($Action -eq 'ResumeBackup') {'backup'} else {$Action.ToLowerInvariant()}
         Invoke-Transfer @((Join-Path $kit 'dump-network.py'),$verb,$target,'--windows','--journal',$script:JournalPath)
     }
-    Write-Host 'SUCCESS / All requested operations verified.' -ForegroundColor Green
+    Write-Host 'SUCCESS / Verified.' -ForegroundColor Green
     if ($Action -in @('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader','RootfsOnly','KernelOnly','Restore')) {
-        Write-Host 'Writes verified. Power off and boot normally. Check Menu/FEL again before further changes.' -ForegroundColor Green
+        Write-Host 'Power off, boot normally, then check Menu/FEL.' -ForegroundColor Green
     } else { Write-Host 'No device writes requested. Recovery remains running.' }
 } finally { Disconnect-Recovery }
 }
@@ -369,11 +370,11 @@ try {
             if ($script:JournalPath -and (Test-Path -LiteralPath $script:JournalPath)) { $state=@(Get-Content -LiteralPath $script:JournalPath) }
             if ($state.Count -and $state[0] -eq 'writing') {
                 Write-Host "WRITE STATE UNCERTAIN: $($state[1])" -ForegroundColor Red
-                Write-Host 'Keep the reader powered and connected. Do not reboot. Relaunch the same operation using running recovery. Existing matching chunks will be skipped.' -ForegroundColor Yellow
+                Write-Warning 'Keep powered. Relaunch with -UseRunningRecovery; matching chunks are skipped.'
             } elseif ($state.Count -and $state[0] -eq 'verified') {
                 Write-Host 'Device writes were verified, but a later host-side step failed. Check the reported error before disconnecting.' -ForegroundColor Yellow
             } elseif ($script:FelStarted) {
-                Write-Host 'No eMMC write was started in this session. Do not repeat SPL in this power cycle; use running recovery or a full cold power-off.' -ForegroundColor Yellow
+                Write-Warning 'No eMMC writes. Reuse recovery or fully power off before FEL.'
             } else { Write-Host 'No eMMC write was started in this session.' }
             if ($script:JournalPath -and (Test-Path -LiteralPath $script:JournalPath)) { Write-Host "Session record: $script:JournalPath" }
         }

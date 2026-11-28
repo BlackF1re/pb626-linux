@@ -28,6 +28,11 @@ offline behavior.
    In Zadig, choose Options > List All Devices, select only USB ID
    **1F3A:EFE8**, choose WinUSB and install the driver. Do not replace
    any other USB device or the recovery Ethernet/ACM driver.
+   If Windows binds the NCM parent (0525:A4A7) to ELMO GMAS or another
+   COM-port driver, manually select USB Composite Device via Device
+   Manager > Update driver > Have Disk > C:\Windows\INF\usb.inf.
+   Keep the reader powered; then use -UseRunningRecovery. Do not remove
+   unrelated driver packages. RNDIS is an alternative after cold power-off.
 4. FEL initializes DDR once and verifies kernel, DTB, initramfs and
    entry in 64 KiB RAM chunks before execution. Do not retry SPL in
    the same power cycle. On Windows 11 use inbox USB NCM; on Windows
@@ -64,6 +69,7 @@ Examples from Windows PowerShell 5.1:
 
     .\PB626.ps1 -Action Validate
     .\PB626.ps1 -Action Install
+    .\PB626.ps1 -Action InstallDeepLab -BackupDir D:\PB626\backup-verified
     .\PB626.ps1 -Action Backup -DataDir D:\PB626
     .\PB626.ps1 -Action Recovery -UsbProfile RNDIS
 
@@ -88,7 +94,7 @@ https://github.com/pbatard/libwdi/tree/v1.5.1); it installs Microsoft's
 WinUSB driver for FEL, not a replacement for sunxi-fel.
 
 The menu accepts 0 to cancel and invalid selections can be corrected.
-The launcher offers to reuse an existing same-build recovery. A session
+With the automatic USB profile, the launcher reuses an existing recovery adapter and checks the exact build before proceeding. Use -UsbProfile NCM or RNDIS to explicitly cold boot, or -UseRunningRecovery to skip FEL. A session
 record in private/sessions marks the latest potentially destructive write
 before transmission; no passwords or payloads are logged. Progress reflects
 acknowledged blocks. After a failed write keep the book powered; do not
@@ -110,7 +116,7 @@ checks same-run identity, random RAM transfer, CID, layout, EXT_CSD and
 read-only 4 MiB samples of user/boot0/boot1. No destructive self-test.
 
 If TCP is interrupted, choose R to reconnect to running recovery; F is
-only for a reader that already lost power. Do not deliberately power-cycle
+only for a reader that already lost power. No extra typed risk phrase is needed. Do not deliberately power-cycle
 a partially flashed reader. The same session pins CID, operation and input
 manifest. Each firmware or restore chunk is compared to actual eMMC data;
 matching chunks are skipped, even if the final acknowledgement was lost.
