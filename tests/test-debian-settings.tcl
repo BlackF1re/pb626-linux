@@ -12,6 +12,7 @@ proc exec {args} {
             light-status {return "1 37"}
             power-key-status {return "ignore"}
             led-status {return "on"}
+            button-bindings-status {return "Left none none Right none none Home none none Menu refresh none"}
             default {error "unexpected privileged operation"}
         }
     }
@@ -47,6 +48,13 @@ update
 lassign [$canvas yview] top bottom
 if {$top <= 0.0 || $bottom < 0.99} {error "Cannot reach final power settings"}
 puts "Debian settings UI loaded with five tabs, persistent values and compact scrolling"
+buttonSettings
+setBindingKey Right
+if {[.bindings.short.select cget -textvariable] ne "::bindAction(3)"} {error "Wrong gesture target"}
+set ::bindAction(3) Page_Down
+setBindingKey Left
+if {$::bindAction(0) ne "Left" || $::bindAction(3) ne "Page_Down"} {error "Gesture state was lost"}
+destroy .bindings
 timezoneDialog
 set ::zoneFilter Berlin
 timezoneFilter
