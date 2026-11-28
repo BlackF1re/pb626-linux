@@ -9,7 +9,9 @@
 void pb626_led_error(unsigned int code) __attribute__((noreturn));
 
 /* Cooperative startup indication: count is the existing 24 MHz timer0.
- * No timer registers, IRQ vectors, or BootROM state are changed. */
+ * Two complete 100 ms pulses, then steady on. No timer registers, IRQ
+ * vectors, or BootROM state are changed. The native handoff completes
+ * any missing edges (at most 400 ms); FEL and resume do not wait. */
 void pb626_led_boot_start(unsigned int count);
 void pb626_led_boot_tick(unsigned int count);
 

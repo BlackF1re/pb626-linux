@@ -20,7 +20,9 @@
 #define PB626_PIO_GATE       0x01c20068U
 #define PB626_GATE_BIT       (1U << 5)
 #define PB626_RTC_MAGIC      0x01c20d28U
+#define PB626_TIMER0_VAL     0x01c20c18U
 #define PB626_TIMER_HZ_MS    24000U
+#define PB626_BOOT_EDGE_MS   100U
 
 /* Nonzero initializers keep state in SRAM .data before BSS is cleared. */
 static u32 boot_origin = ~0U;
@@ -62,27 +64,39 @@ void pb626_led_boot_start(unsigned int count)
 
 void pb626_led_boot_tick(unsigned int count)
 {
-	unsigned int elapsed, phase;
-
 	if (boot_phase >= 4)
 		return;
-	elapsed = count - boot_origin; /* wrap-safe for a 140 ms interval */
-	phase = elapsed < 30U * PB626_TIMER_HZ_MS ? 0 :
-		elapsed < 80U * PB626_TIMER_HZ_MS ? 1 :
-		elapsed < 110U * PB626_TIMER_HZ_MS ? 2 :
-		elapsed < 140U * PB626_TIMER_HZ_MS ? 3 : 4;
-	if (phase != boot_phase) {
-		/* Do not replay missed edges in a burst or delay boot. */
-		boot_phase = phase;
-		pb626_led_drive(!(phase & 1));
-	}
+	if (count - boot_origin < PB626_BOOT_EDGE_MS * PB626_TIMER_HZ_MS)
+		return;
+
+	/* Timestamp the actual edge, not a theoretical animation timeline.
+	 * A long MMC operation may stretch a pulse but must never erase it. */
+	boot_origin = count;
+	++boot_phase;
+	pb626_led_drive(!(boot_phase & 1));
 }
 
 void spl_board_prepare_for_boot(void)
 {
+	unsigned int i;
+
+	/* Only an animation started by the native cold path may finish here.
+	 * FEL and retained-DRAM paths must not write GPIO or wait. */
+	if (boot_phase >= 4)
+		return;
+
+	/* Most edges happen during existing timer polls. Finish any missing
+	 * phases before Linux takes PE8: at most four 100 ms intervals.
+	 * udelay itself services boot_tick through the existing timer hook. */
+	for (i = 0; i < 4 && boot_phase < 4; ++i) {
+		udelay(PB626_BOOT_EDGE_MS * 1000UL);
+		pb626_led_boot_tick(~readl((void *)PB626_TIMER0_VAL));
+	}
+	/* With a working timer phase 4 is already steady on. Stop the
+	 * animation even if the timer did not advance as expected. */
+	if (boot_phase < 4)
+		pb626_led_drive(true);
 	boot_phase = 5;
-	/* Linux gpio-leds takes over PE8 and init-megi selects its PID1 pulse. */
-	pb626_led_drive(true);
 }
 
 void pb626_led_error(unsigned int code)

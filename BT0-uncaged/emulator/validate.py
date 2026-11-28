@@ -71,6 +71,7 @@ class Board:
                      PIO_GATE: 0x10, PE_CFG: 0xa5a5a5af, PE_DATA: 0xffffffff,
                      RTC_MAGIC: rtc, TIMER0: 0xffffffff}
         self.writes = []
+        self.timer_step = 0
         self.unsupported = None
         self.hit = None
         self.targets = {}
@@ -101,6 +102,8 @@ class Board:
             return
         if access == UC_MEM_READ:
             val = self.regs[address]
+            if address == TIMER0:
+                self.regs[address] = (val - self.timer_step) & 0xffffffff
             if address == ADC+8:
                 val = (int(self.index < len(self.samples)) | self.events) if self.converting else 0
             elif address == ADC+12:
@@ -179,29 +182,54 @@ def menu_cases(image, save, report):
     return result
 
 def led_cases(image, sym):
-    for mode, rtc in ((False,0),(True,0),(False,0x53555350)):
+    def states(board):
+        return [int(not(v & 0x100)) for a,v in board.writes if a == PE_DATA]
+
+    start = sym["pb626_led_boot_start"]
+    tick = sym["pb626_led_boot_tick"]
+    handoff = sym["spl_board_prepare_for_boot"]
+    for mode, rtc in ((True,0),(False,0x53555350)):
         board = Board(image, fel=mode, rtc=rtc)
-        origin = 0xffff0000
-        board.call(sym["pb626_led_boot_start"], origin)
-        if mode or rtc:
-            require(not board.writes, "LED touched FEL or retained DRAM")
-            continue
-        def states():
-            return [int(not(v & 0x100)) for a,v in board.writes if a == PE_DATA]
-        require(states() == [1], "initial LED")
-        for i, ms in enumerate((30,80,110,140)):
-            board.call(sym["pb626_led_boot_tick"], (origin+ms*24000-1)&0xffffffff)
-            require(len(states()) == i+1, "premature edge")
-            board.call(sym["pb626_led_boot_tick"], (origin+ms*24000)&0xffffffff)
-            require(states() == [1,0,1,0,1][:i+2], "edge timing")
-        require(board.regs[PE_CFG] == 0xa5a5a5a1, "neighbor mux altered")
-        require(board.regs[PE_DATA] == 0xfffffeff, "neighbor output altered")
-        require(board.regs[PIO_GATE] == 0x30, "neighbor clock altered")
-        board.call(sym["spl_board_prepare_for_boot"])
-        require(states()[-1] == 1, "handoff LED")
-        board.call(sym["pb626_led_boot_tick"], 0)
-        require(states()[-1] == 1, "timer interfered after handoff")
-    return "passed: real ARM instructions, 30/50/30/30 ms thresholds, wrap, FEL/resume isolation"
+        board.call(start, 0)
+        board.call(handoff)
+        require(not board.writes, "LED touched FEL or retained DRAM")
+
+    board = Board(image)
+    origin = 0xffff0000
+    board.call(start, origin)
+    require(states(board) == [1], "initial LED")
+    for i, ms in enumerate((100,200,300,400)):
+        board.call(tick, (origin+ms*24000-1)&0xffffffff)
+        require(len(states(board)) == i+1, "premature edge")
+        board.call(tick, (origin+ms*24000)&0xffffffff)
+        require(states(board) == [1,0,1,0,1][:i+2], "edge timing")
+    require(board.regs[PE_CFG] == 0xa5a5a5a1, "neighbor mux altered")
+    require(board.regs[PE_DATA] == 0xfffffeff, "neighbor output altered")
+    require(board.regs[PIO_GATE] == 0x30, "neighbor clock altered")
+    board.call(handoff)
+    require(states(board) == [1,0,1,0,1], "handoff changed completed animation")
+    board.call(tick, 0)
+    require(states(board) == [1,0,1,0,1], "timer interfered after handoff")
+
+    # Execute the actual handoff and U-Boot delay/timer routines. The
+    # modeled downcounter advances 1 ms per read; no timing assertion
+    # here claims to measure the optical hardware.
+    for sparse in (False, True):
+        board = Board(image)
+        board.call(start, 0)
+        elapsed = 12000000 if sparse else 0
+        if sparse:
+            board.call(tick, elapsed)
+            require(states(board) == [1,0], "sparse poll skipped a pulse")
+            board.call(tick, elapsed)
+            require(states(board) == [1,0], "replayed missed edge")
+        board.regs[TIMER0] = (~elapsed) & 0xffffffff
+        board.timer_step = 24000
+        board.call(handoff)
+        require(states(board) == [1,0,1,0,1], "handoff failed to finish two pulses")
+        board.call(tick, elapsed+48000000)
+        require(states(board) == [1,0,1,0,1], "post-handoff edge")
+    return "passed: real ARM LED edges and handoff, sparse polls, wrap, FEL/resume isolation"
 
 def config_number(path, key):
     for line in path.read_text().splitlines():

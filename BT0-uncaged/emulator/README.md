@@ -32,10 +32,13 @@ The candidate artifact is uploaded before emulation, so the report can
 diagnose failures. Missing reference fails differential validation
 after candidate-only checks; no false green reference result.
 
-Startup is cooperative: existing timer reads service the 30/50/30/30 ms
-thresholds, with no artificial wait. If a long operation does not read
-the timer, an edge can be late or skipped. Exact independent hardware
-timing would require a qualified interrupt-driven implementation.
+Startup is cooperative: existing timer reads advance one edge after at
+least 100 ms, measured from the actual previous edge. Sparse polling
+stretches pulses but cannot skip them. A native cold handoff completes
+any outstanding edges using the existing timer (up to four 100 ms
+waits); FEL and retained-DRAM paths do not wait or touch PE8. The
+actual handoff runs in the model with an advancing timer. Optical timing
+and hardware recovery still require physical qualification.
 
 The dependency-free instruction interpreter also runs 5249 Menu cases
 per actual binary (timeout loop shortened in that model only). Both
