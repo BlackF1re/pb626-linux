@@ -216,15 +216,24 @@ printf 'ready\n' >"$tmp/run/pb626-desktop/ready"
 admin battery-check
 grep -Fxq -- '--no-block start pb626-battery-warning.service' "$PB626_TEST_SYSTEMCTL_LOG"
 grep -Fxq -- '--no-block start pb626-battery-confirm.timer' "$PB626_TEST_SYSTEMCTL_LOG"
-! grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+if grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 printf '105.00 0.00\n' >"$tmp/uptime"
 admin battery-check
-! grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+if grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 printf '1\n' >"$tmp/power_supply/usb/online"
 printf '112.00 0.00\n' >"$tmp/uptime"
 admin battery-check
 test ! -e "$tmp/run/pb626-battery-critical"
-! grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+if grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 # Missing battery presence also fails closed.
 printf '0\n' >"$tmp/power_supply/battery/present"
 printf '0\n' >"$tmp/power_supply/usb/online"
