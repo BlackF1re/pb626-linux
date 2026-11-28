@@ -1,4 +1,4 @@
-Qualification: A13 PMIC ENMI wake bookkeeping
-Source head: 6a2fc0c3e9c36e42488c91f1e7b1432c32f385bb
-Scope: full Debian qualification, standard and experimental deep Windows kits, same-run recovery and host tests.
-No merge. Hardware qualification remains separate.
+Firmware qualification: unified Debian installer and suspend-to-RAM
+Source head: 5df98df78c88c8776104f7fa4350d99d0f132609
+Scope: one kernel, Debian native firmware, resume bootloader, RAM recovery, Windows installer and all required tests.
+No merge. Physical qualification remains separate.

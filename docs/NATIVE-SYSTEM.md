@@ -1,5 +1,7 @@
 # Native system administration
 
+> **Historical Alpine/OpenRC system documentation. The current distribution is Debian 13 armhf with systemd; see [Debian migration](DEBIAN-MIGRATION.md) and [Windows flashing](WINDOWS-FLASH.md).**
+
 Only the persistent eMMC desktop gets the full Alpine base.
 Native package installation uses a checksum-verified x86_64 Alpine APK
 executable with the ARM target root and architecture. This avoids QEMU

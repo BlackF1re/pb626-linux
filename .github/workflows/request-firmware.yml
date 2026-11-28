@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       kernel_audit:
-        description: Rebuild isolated experimental kernel compiler profiles
+        description: Compare isolated kernel compiler configurations
         type: boolean
         default: false
 

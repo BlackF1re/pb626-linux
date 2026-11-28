@@ -280,6 +280,8 @@ sudo install -m 644 tests/check-control-center.tcl "$root/tmp/pb626-check-tk.tcl
 in_root tclsh /tmp/pb626-check-tk.tcl /usr/bin/pb626-control-center /usr/bin/pb626-open-document
 sudo rm "$root/tmp/pb626-check-tk.tcl"
 
+grep -Fxq 'MemorySleepMode=deep' "$root/etc/systemd/sleep.conf.d/60-pb626.conf"
+test ! -e "$root/etc/pb626/suspend-qualified"
 mkdir -p "$out"
 in_root dpkg-query -W -f='${Package}\t${Version}\n' | LC_ALL=C sort > "$out/DEBIAN-PACKAGES.txt"
 sudo tar --numeric-owner -C "$root" -czf "$out/pb626-native-rootfs.tar.gz" .

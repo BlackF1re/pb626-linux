@@ -1,5 +1,7 @@
 # Debian 13 armhf native system
 
+> **Migration history. Debian is now the sole actively built distribution. The current installer is [pb626-windows-installer](WINDOWS-FLASH.md), with a shared suspend-enabled kernel and paired resume bootloader. References below to the parallel Alpine build describe the earlier migration period.**
+
 The first migration candidate is built independently from the paired
 Megi kernel-stage artifact by `scripts/build-debian-rootfs.sh`. It
 uses mmdebstrap minbase and Debian trixie, updates and security repositories.

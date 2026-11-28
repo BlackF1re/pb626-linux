@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Build an independent source candidate. No devices, no writes, never
-# automatically replace the hash-qualified historical BT0.
+# Build the source bootloader and cold-path comparison images. No device access.
 set -Eeuo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(dirname "$here")
@@ -44,7 +43,7 @@ cp .config "$out/fel.config"
 make -j"$(nproc)" spl/u-boot-spl.bin
 # sunxi-spl.bin contains the eGON header; u-boot-spl.bin does not.
 make -j"$(nproc)" spl/sunxi-spl.bin
-cp spl/sunxi-spl.bin "$out/pb626-fel-spl-candidate.bin"
+cp spl/sunxi-spl.bin "$out/pb626-fel-spl-source.bin"
 "${CROSS_COMPILE}objdump" -d spl/u-boot-spl >"$out/fel-disassembly.txt"
 "${CROSS_COMPILE}nm" -n spl/u-boot-spl >"$out/fel-symbols.txt"
 # Preserve the source for actual DRAM resume review. The upstream
@@ -124,8 +123,8 @@ printf '%s\n' "$rev" >"$out/UBOOT-REV"
 cd "$repo"
 "${CROSS_COMPILE}as" -march=armv7-a "$here/fel-entry.S" -o "$work/entry.o"
 "${CROSS_COMPILE}ld" -Ttext=0x41000000 -e _start "$work/entry.o" -o "$work/entry.elf"
-"${CROSS_COMPILE}objcopy" -O binary -j .text "$work/entry.elf" "$out/direct-entry-candidate.bin"
-(cd "$out" && echo "1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd  direct-entry-candidate.bin" | sha256sum -c -)
+"${CROSS_COMPILE}objcopy" -O binary -j .text "$work/entry.elf" "$out/direct-entry-source.bin"
+(cd "$out" && echo "1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd  direct-entry-source.bin" | sha256sum -c -)
 git init -q "$work/sunxi-tools"
 toolsrev=0237931bb3d66de17c441a3c94d0e4b39e1308d1
 git -C "$work/sunxi-tools" fetch -q --depth=1 https://github.com/linux-sunxi/sunxi-tools.git "$toolsrev"

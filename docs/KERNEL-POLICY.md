@@ -5,8 +5,10 @@ development board. The pinned Megi baseline is resolved through explicit
 enable/module/disable requests in scripts/configure-megi-kernel.sh and
 checked after olddefconfig, including when restoring a cached kernel.
 Unknown or disabled options may disappear from the resolved Kconfig; the
-negative checks reject both y and m. This is a shared kernel for RAM,
-native and recovery; only the board DTB controls hardware binding.
+negative checks reject both y and m. This is a shared kernel for native
+Debian and RAM recovery; the board DTB controls hardware binding.
+SUN5I_PM and ARM_CPU_SUSPEND are required; the paired installer includes
+resume-capable BT0. Physical qualification still gates system suspend.
 
 ## Hardware
 
