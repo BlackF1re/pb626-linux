@@ -206,6 +206,15 @@ jobs:
           /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x24' /tmp/test-pb626-x11-epd
+          # Alternate strip heights must preserve exact pixel output.
+          for rows in 32 64 256; do
+            gcc -O2 -Wall -Wextra -Werror -DPB626_CAPTURE_ROWS="$rows" display/test-pb626-x11-epd.c -o /tmp/test-pb626-strip -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
+            for depth in 16 24; do
+              PB626_TEST_X11=1 xvfb-run -a -s "-screen 0 760x1024x$depth" /tmp/test-pb626-strip
+            done
+          done
+          gcc -O2 -Wall -Wextra -Werror -DPB626_PACKED_TRANSITIONS -I /tmp/pb626-uapi display/test-pb626-epd.c -o /tmp/test-pb626-packed
+          /tmp/test-pb626-packed
           xvfb-run -a -s '-screen 0 760x1024x16' wish tests/test-debian-settings.tcl
       - name: Smoke-test pinned Matchbox Keyboard with the PB626 flat layout
         run: |

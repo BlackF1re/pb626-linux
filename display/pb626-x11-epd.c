@@ -696,7 +696,12 @@ static void contrast_row(const uint8_t *row, const uint8_t *above,
 }
 
 /* Strips have a one-row contrast halo on both sides. */
-enum { CAPTURE_ROWS = 128, CAPTURE_READ_ROWS = CAPTURE_ROWS + 2 };
+#ifndef PB626_CAPTURE_ROWS
+#define PB626_CAPTURE_ROWS 128
+#endif
+_Static_assert(PB626_CAPTURE_ROWS >= 16 && PB626_CAPTURE_ROWS <= 256,
+	       "capture strips must remain bounded");
+enum { CAPTURE_ROWS = PB626_CAPTURE_ROWS, CAPTURE_READ_ROWS = CAPTURE_ROWS + 2 };
 
 static inline uint8_t rgb565_gray(unsigned int pixel)
 {

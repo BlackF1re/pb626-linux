@@ -95,6 +95,10 @@ for program in pb626-epd pb626-x11-epd pb626-charge; do
     run_one "$program" release "${release[@]}" -Wl,-z,max-page-size=4096
     if [ "$program" = pb626-epd ]; then
         run_one "$program" packed-transitions "${release[@]}" -Wl,-z,max-page-size=4096 -DPB626_PACKED_TRANSITIONS
+    elif [ "$program" = pb626-x11-epd ]; then
+        for rows in 32 64 256; do
+            run_one "$program" "capture-$rows" "${release[@]}" -Wl,-z,max-page-size=4096 "-DPB626_CAPTURE_ROWS=$rows"
+        done
     fi
     run_one "$program" release-page4k-common "${release[@]}" -Wl,-z,max-page-size=4096,-z,common-page-size=4096
     for profile in baseline release-before-page4k release release-page4k-common; do
