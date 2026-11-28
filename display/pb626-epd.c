@@ -102,7 +102,7 @@ struct renderer {
 	uint16_t transitions[PIXELS];
 #endif
 	struct span_range rows[GATES];
-	bool known, auto_fast, mixed_enabled, mixed_a2, mixed_du4;
+	bool known, auto_fast, auto_exact, mixed_enabled, mixed_a2, mixed_du4;
 };
 
 static inline uint16_t transition_get(const struct renderer *r, size_t i)
@@ -881,6 +881,35 @@ static enum mode select_a2_or_du(const struct renderer *renderer,
 	return A2;
 }
 
+/* In exact Auto mode choose the shortest complete, eligible factory
+ * waveform, not just the bridge's target-class preference. Ties retain
+ * the baseline (which already favors DU over equal-duration A2). */
+static enum mode select_exact_uniform(const struct renderer *r, enum mode baseline,
+				      const bool *active)
+{
+	const enum mode candidates[] = {DU, A2, DU4, GL16};
+	enum mode best = baseline;
+	for (unsigned int i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++) {
+		enum mode m = candidates[i];
+		if (!r->cache[m].count || r->cache[m].count >= r->cache[best].count)
+			continue;
+		bool eligible = true;
+		for (unsigned int t = 0; t < TRANSITIONS; t++) {
+			if (!active[t]) continue;
+			unsigned int old = t & 15, target = t >> 4;
+			if (old == target || !r->driven[m][t] ||
+			    ((m == DU || m == A2) && target != 0 && target != 15) ||
+			    (m == A2 && old != 0 && old != 15) ||
+			    (m == DU4 && target % 5)) {
+				eligible = false;
+				break;
+			}
+		}
+		if (eligible) best = m;
+	}
+	return best;
+}
+
 static void invalidate(void)
 {
 	if (unlink(state_path) && errno != ENOENT)
@@ -968,6 +997,16 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 		}
 		if (!supports(renderer, mode, active))
 			fail("this mode cannot perform every requested transition; use partial or full");
+		if (fallback && renderer->auto_exact && !reset_first &&
+		    (mode == DU || mode == A2 || mode == DU4 || mode == GL16)) {
+			/* The bridge supplied exact target levels. Evaluate actual
+			 * scan lengths after decoding the current temperature. */
+			cache_mode(renderer, DU);
+			cache_mode(renderer, A2);
+			cache_mode(renderer, DU4);
+			cache_mode(renderer, GL16);
+			mode = select_exact_uniform(renderer, mode, active);
+		}
 		/* Compare against a proven eligible single-mode baseline.
 		 * A required GC16 fallback is never replaced by a mixture. */
 		if (fallback && (mode == GL16 || mode == DU4) &&
@@ -1119,6 +1158,7 @@ int main(int argc, char **argv)
 	renderer.mixed_du4 = renderer.auto_fast || (fast && !strcmp(fast, "du4"));
 	const char *mixed = getenv("PB626_EPD_MIXED");
 	const char *approx = getenv("PB626_EPD_APPROX_PREVIEW");
+	renderer.auto_exact = renderer.auto_fast && (!approx || strcmp(approx, "1"));
 	renderer.mixed_enabled = serve && mixed && !strcmp(mixed, "1") &&
 		(!approx || strcmp(approx, "1")) &&
 		!access("/etc/pb626/mixed-waveform-qualified", F_OK);

@@ -276,6 +276,26 @@ static void test_fast_mode_selection(void)
 	assert(select_a2_or_du(&renderer, active) == DU);
 }
 
+static void test_exact_uniform_selection(void)
+{
+	static struct renderer r;
+	bool active[TRANSITIONS] = { [0xf0] = true };
+	r.cache[DU].count = 31; r.cache[A2].count = 15;
+	r.cache[DU4].count = 35; r.cache[GL16].count = 59;
+	for (unsigned int m = DU; m <= DU4; m++)
+		r.driven[m][0xf0] = r.driven[m][0xf4] = r.driven[m][0x5f] = true;
+	assert(select_exact_uniform(&r, GL16, active) == A2);
+	active[0xf4] = true;
+	assert(select_exact_uniform(&r, GL16, active) == DU);
+	active[0x5f] = true;
+	assert(select_exact_uniform(&r, GL16, active) == DU4);
+	r.cache[GL16].count = 30;
+	assert(select_exact_uniform(&r, GL16, active) == GL16);
+	r.cache[DU4].count = 20;
+	r.driven[DU4][0x5f] = false;
+	assert(select_exact_uniform(&r, GL16, active) == GL16);
+}
+
 static void test_state_format(void)
 {
 	static uint8_t before[PACKED_PIXELS], after[PACKED_PIXELS];
@@ -365,6 +385,7 @@ int main(void)
 	test_packed_cache();
 	test_waveform_policy();
 	test_fast_mode_selection();
+	test_exact_uniform_selection();
 	test_mixed_plan();
     assert(PREVIEW_A2 != PREVIEW && PREVIEW_DU4 != PREVIEW);
     assert(preview_level4(4) == 5 && preview_level4(8) == 10);

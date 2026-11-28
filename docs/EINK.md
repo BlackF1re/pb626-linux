@@ -366,3 +366,13 @@ Expand only active transition codes per phase; no second framebuffer.
 This preserves the qualification gate and ensures that mixing cannot
 increase the nominal scan count. CPU and physical optical latency still
 need measurement. Host tests cover longer-plan and redundant-plan rejection.
+
+### Temperature-aware uniform Auto selection
+
+The exact Auto policy compares complete eligible DU, A2, DU4 and GL16
+sequences after decoding the current-temperature tables. It can choose a
+strictly shorter uniform mode without requiring mixed qualification.
+The target and source classes are checked explicitly; ties preserve the
+validated baseline. Manual mode preferences and approximate preview are
+unchanged. GC16 cleanup and required fallback are never replaced. The
+mixed planner subsequently compares against this selected baseline.
