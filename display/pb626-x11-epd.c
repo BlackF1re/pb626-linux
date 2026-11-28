@@ -38,7 +38,7 @@
 #endif
 
 enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 180000, QUIET_US = 300000,
-       MAX_PENDING_US = 850000,
+       MAX_PENDING_US = 850000, CAPTURE_COALESCE_US = 24000,
        CLEAN_QUIET_US = 1200000, LARGE_CLEAN_QUIET_US = 5000000,
        LARGE_CLEAN_PIXELS = PIXELS / 16, CLEAN_AFTER = 8, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
@@ -1351,6 +1351,19 @@ static uint64_t cleanup_delay(unsigned int cleanup_count)
 	return cleanup_count >= LARGE_CLEAN_PIXELS ? LARGE_CLEAN_QUIET_US : CLEAN_QUIET_US;
 }
 
+/* XDamageReportNonEmpty emits one notification until Subtract. Use a
+ * bounded window from the first event, not an indefinitely sliding timer. */
+static uint64_t damage_capture_due(uint64_t next_capture, uint64_t now)
+{
+	uint64_t coalesce = now + CAPTURE_COALESCE_US;
+	return next_capture > coalesce ? next_capture : coalesce;
+}
+
+static int may_retry_capture(int has_frame, int manual, int lock_pending, int retried)
+{
+	return has_frame && !manual && !lock_pending && !retried;
+}
+
 static uint8_t automatic_command(uint64_t idle_us, int capture_pending, int captured,
 				 int different, unsigned int cleanup_count)
 {
@@ -1817,6 +1830,7 @@ int main(int argc, char **argv)
 	unsigned int cleanup_count = 0;
 	uint64_t last_damage = 0, pending_since = 0, next_capture = 0, layout_until = 0;
 	uint64_t damage_seen = 0;
+	int capture_retry = 0;
 
 	for (;;) {
 		XEvent event;
@@ -1825,7 +1839,12 @@ int main(int argc, char **argv)
 			if (damage && event.type == damage_event + XDamageNotify) {
 				if (profile && !damage_seen)
 					damage_seen = now_us();
-				if (!screen_locked || lock_pending) dirty = 1;
+				if (!screen_locked || lock_pending) {
+					if (!dirty && may_retry_capture(has_frame, controls.clean_requested,
+								 lock_pending, capture_retry))
+						next_capture = damage_capture_due(next_capture, now_us());
+					dirty = 1;
+				}
 			} else if (event.type == ConfigureNotify ||
 				   (randr && (event.type == randr_event + RRScreenChangeNotify ||
 					      event.type == randr_event + RRNotify))) {
@@ -2016,13 +2035,30 @@ int main(int argc, char **argv)
 			for (int i = 0; i < count; i++)
 				if (capture(display, root, offset, areas[i], frame, pointer, controls.vertical, &stats, &shm))
 					goto failed;
-			captured = count != 0;
+			/* A deferred capture already changed the logical frame even
+			 * if its retry has no remaining rectangles. */
+			captured = count != 0 || capture_retry;
 			if (damage_seen)
 				damage_wait = capture_start - damage_seen;
 			damage_seen = 0;
 			dirty = 0;
 			now = now_us();
 			next_capture = now + (damage ? 16000 : 250000);
+			if (stats.changed)
+				last_damage = now;
+			/* X can repaint while we read separate strips. If damage
+			 * arrived during this capture, prefer one fresh snapshot
+			 * over sending a visibly stale intermediate frame.
+			 * One retry only: continuous animation must make progress. */
+			if (damage && may_retry_capture(has_frame, controls.clean_requested,
+						       lock_pending, capture_retry) &&
+			    XCheckTypedEvent(display, damage_event + XDamageNotify, &event)) {
+				dirty = capture_retry = 1;
+				if (profile)
+					damage_seen = now;
+				continue;
+			}
+			capture_retry = 0;
 		}
 
 		if (!has_frame && !captured)
@@ -2034,8 +2070,6 @@ int main(int argc, char **argv)
 				different |= dirty_tiles[y][x];
 				cleanup_count += cleanup_pixels[y][x];
 			}
-		if (stats.changed)
-			last_damage = now;
 		if (different) {
 			if (!pending)
 				pending_since = now;

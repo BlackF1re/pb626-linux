@@ -251,3 +251,17 @@ compares every panel coordinate in all four rotations against panel_index,
 including partial row starts. The existing Xvfb full/partial comparison
 continues to verify pixel output. No changes to dither, panel orientation
 or capture geometry; target timing still requires measurement.
+
+### Bounded XDamage coalescing
+
+On the first normal XDamage notification after a completed capture, wait
+up to a 24 ms coalescing window before reading the root. NonEmpty events
+are not a per-paint clock, so this deadline is not extended by subsequent
+notifications. If another damage notification arrives while reading the
+strips, defer the unsubmitted frame for at most one recapture. Retain
+all accumulated dirty tiles; a second capture must make progress even
+under continuous animation. Boot, manual reset and lock/resume bypass
+this policy. This reduces the chance of scanning a transient window or
+partially painted widget. It does not change waveforms or cleanup.
+The window adds latency to an isolated update, while potentially avoiding
+hundreds of milliseconds of physical scanout for transient content.

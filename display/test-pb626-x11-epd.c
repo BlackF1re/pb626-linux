@@ -616,6 +616,13 @@ int main(void)
 	test_gray_rows();
 	test_ddx_layout();
 	test_capture_coordinates();
+	assert(damage_capture_due(0, 1000) == 1000 + CAPTURE_COALESCE_US);
+	assert(damage_capture_due(100000, 1000) == 100000);
+	assert(may_retry_capture(1, 0, 0, 0));
+	assert(!may_retry_capture(0, 0, 0, 0));
+	assert(!may_retry_capture(1, 1, 0, 0));
+	assert(!may_retry_capture(1, 0, 1, 0));
+	assert(!may_retry_capture(1, 0, 0, 1));
 	test_gray();
 	test_contrast_row();
 	test_stock_sleep();
