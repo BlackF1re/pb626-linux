@@ -9,13 +9,17 @@ mkdir -p "$out"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 rev=0237931bb3d66de17c441a3c94d0e4b39e1308d1
-git init -q "$work/src"
-git -C "$work/src" fetch -q --depth=1 https://github.com/linux-sunxi/sunxi-tools.git "$rev"
-git -C "$work/src" -c core.autocrlf=false checkout -q --detach FETCH_HEAD
+# Export Git objects, not Windows working-tree files: core.autocrlf can
+# rewrite the patch itself even if the upstream checkout uses LF.
+git init -q "$work/git"
+git -C "$work/git" fetch -q --depth=1 https://github.com/linux-sunxi/sunxi-tools.git "$rev"
+test "$(git -C "$work/git" rev-parse FETCH_HEAD)" = "$rev"
+mkdir "$work/src"
+git -C "$work/git" archive FETCH_HEAD | tar -x -C "$work/src"
+git -C "$repo" show HEAD:patches/sunxi-fel-keep-mmu-off.patch >"$work/fel.patch"
 cd "$work/src"
-test "$(git rev-parse HEAD)" = "$rev"
-git apply --check "$repo/patches/sunxi-fel-keep-mmu-off.patch"
-git apply "$repo/patches/sunxi-fel-keep-mmu-off.patch"
+git apply --check "$work/fel.patch"
+git apply "$work/fel.patch"
 printf '%s\n' '7b097c7148faf1032cf78d31ee25832d08556a61f89cd23dd234b0aa2508274e  fel.c' '76195e9312a81b5461785982300803a7d8b22fa5feb6a023b56df3a054baf61a  fel_lib.c' | sha256sum -c -
 printf '#define VERSION "v1.4.2"\n' >version.h
 # Force the Windows branch, but use DLLs rather than assuming all MSYS2
