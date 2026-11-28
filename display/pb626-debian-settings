@@ -504,7 +504,6 @@ foreach {tab title} {display Display keys Buttons net Network power Power system
     pack $page.canvas -side left -fill both -expand 1
     .tabs add $page -text $title
 }
-pack .tabs -fill both -expand 1 -padx 8 -pady 4
 proc scrollPage {units} {
     set page [.tabs select]
     if {$page ne ""} {$page.canvas yview scroll $units units}
@@ -681,12 +680,14 @@ section $p diagnostics "System diagnostics" "A read-only snapshot. Refresh when 
 text $p.info -height 16 -wrap word -font {{Liberation Mono} 11} -background white -foreground black -state disabled -relief solid -borderwidth 1
 pack $p.info -fill x -padx 16 -pady 5
 label .feedback -textvariable feedback -anchor w -justify left -wraplength 620
-pack .feedback -fill x -padx 16 -pady 4
 frame .footer
 button .footer.restart -text "Restart desktop" -command desktopRestart
 button .footer.close -text "Close settings" -command {destroy .}
 pack .footer.restart .footer.close -side left -expand 1 -fill x -padx 3
-pack .footer -fill x -padx 9 -pady 8
+# Reserve the global actions and status before allocating the scrollable pages.
+pack .footer -side bottom -fill x -padx 9 -pady 8
+pack .feedback -side bottom -fill x -padx 16 -pady 4
+pack .tabs -fill both -expand 1 -padx 8 -pady 4
 # Drag on headings, explanatory text and empty page areas. Do not
 # intercept controls (brightness slider, menus, buttons, entries, scrollbar).
 proc swipeStart {canvas y} {
