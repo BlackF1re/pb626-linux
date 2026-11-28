@@ -1,4 +1,4 @@
-Full qualification: resumable Windows flasher with verified source chunk hashes
-Source head: f31ed6ef156474d557ac46686c95055d6efbf0aa
-Scope: complete standard/deep kits, native FEL, PowerShell 5.1, full and guarded component flashing, partial backup resume, differential restoration, source chunk hashes, recovery fault tests.
-No merge. Physical qualification remains required.
+Full qualification: Windows physical-test fixes and simplified console
+Source head: 5699bc9ffbd51ff9847fc719e58cb841a0be842f
+Scope: standard/deep Windows kits, binary DTB validation, optional backup, single write confirmation, four-character passwords, transport diagnostics and USB driver conflict guidance.
+No merge. Experimental installed BT0 and suspend remain hardware qualification-gated.
