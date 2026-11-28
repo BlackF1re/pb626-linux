@@ -1,4 +1,4 @@
-Qualification: E Ink TPS65185 suspend and AXP USB wake fixes
-Source head: eaa4b6959f88a8e68b984d476d7f7edf3530f98a
+Qualification: A13 PMIC ENMI wake bookkeeping
+Source head: 6a2fc0c3e9c36e42488c91f1e7b1432c32f385bb
 Scope: full Debian qualification, standard and experimental deep Windows kits, same-run recovery and host tests.
 No merge. Hardware qualification remains separate.
