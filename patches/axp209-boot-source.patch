@@ -135,4 +135,40 @@ diff --git a/drivers/power/supply/axp20x_usb_power.c b/drivers/power/supply/axp2
 +	}
  	while (i < power->num_irqs)
  		enable_irq(power->irqs[i++]);
+diff --git a/drivers/irqchip/irq-sun4i.c b/drivers/irqchip/irq-sun4i.c
+--- a/drivers/irqchip/irq-sun4i.c
++++ b/drivers/irqchip/irq-sun4i.c
+@@ -91,9 +91,29 @@
+ };
  
+-static int sun4i_irq_map(struct irq_domain *d, unsigned int virq,
+-			 irq_hw_number_t hw)
+-{
+-	irq_set_chip_and_handler(virq, &sun4i_irq_chip, handle_fasteoi_irq);
++/*
++ * A13's external NMI is the normal PMIC interrupt on PocketBook.
++ * There is no separate INTC wake-enable register for this input.
++ * Let generic IRQ PM keep it armed for s2idle; platform deep suspend
++ * and power-on wake are handled independently by the PMIC.
++ */
++static struct irq_chip sun5i_a13_enmi_irq_chip = {
++	.name		= "sun4i_irq",
++	.irq_eoi	= sun4i_irq_ack,
++	.irq_mask	= sun4i_irq_mask,
++	.irq_unmask	= sun4i_irq_unmask,
++	.flags		= IRQCHIP_EOI_THREADED | IRQCHIP_EOI_IF_HANDLED |
++			  IRQCHIP_SKIP_SET_WAKE,
++};
++
++static int sun4i_irq_map(struct irq_domain *d, unsigned int virq,
++			 irq_hw_number_t hw)
++{
++	struct irq_chip *chip = &sun4i_irq_chip;
++
++	if (hw == 0 && of_machine_is_compatible("allwinner,sun5i-a13"))
++		chip = &sun5i_a13_enmi_irq_chip;
++
++	irq_set_chip_and_handler(virq, chip, handle_fasteoi_irq);
+ 	irq_set_probe(virq);
+ 
+ 	return 0;
