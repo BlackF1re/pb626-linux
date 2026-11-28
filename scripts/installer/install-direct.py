@@ -284,10 +284,10 @@ class EthernetRecovery:
                     out.extend(part)
                     require(len(out) <= max_response, "Oversized recovery response")
         except OSError as exc:
-            raise TransportInterrupted(str(exc)) from exc
+            raise TransportInterrupted(f"{' '.join(words)}: {exc}") from exc
         match = re.search(rb"\nPB626_STATUS ([0-9]+)\n\Z", out)
         if match is None:
-            raise TransportInterrupted("Incomplete TCP response; verify media before resuming")
+            raise TransportInterrupted(f"{' '.join(words)}: incomplete TCP response; verify media before resuming")
         require(match[1] == b"0", "Recovery command failed: "+
                 bytes(out[:match.start()])[-1000:].decode("ascii","replace"))
         return bytes(out[:match.start()])

@@ -46,6 +46,12 @@ class Tests(unittest.TestCase):
                 p.write_text(json.dumps(m))
                 with self.assertRaises(RuntimeError):
                     d.mapped_chunks(p,d.CHUNK*3)
+    def test_timeout_names_command(self):
+        from unittest.mock import patch
+        r=d.EthernetRecovery(configure=False)
+        with patch.object(d.socket,"socket",side_effect=TimeoutError("timed out")):
+            with self.assertRaisesRegex(d.TransportInterrupted,"dump-info emmc: timed out"):
+                r.lines("dump-info","emmc")
     def test_tcp(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp=Path(tmp)

@@ -204,16 +204,20 @@ def main():
         dump=importlib.import_module("dump-network")
         recovery=direct.EthernetRecovery(windows=True)
         try:
+            print("TEST: identity / storage",flush=True)
             rows=direct.check_windows_recovery(recovery,kit)
             cid=next(x[4:] for x in rows if re.fullmatch(r"CID=[0-9a-f]{32}",x))
             recovery.test_transport()
+            print("TEST: partition layout",flush=True)
             direct.require(recovery.lines("layout")==["1 1009664 14260224","2 73728 65536","8 275456 500736"],"Unexpected partition layout")
+            print("TEST: EXT_CSD",flush=True)
             other,sectors,ext=dump.info(recovery,False)
             direct.require(other==cid and sectors==15269888 and len(ext)==512,"Wrong eMMC geometry")
             for region in ("user","boot0","boot1"):
+                print("TEST: "+region+" (4 MiB)",flush=True)
                 data=dump.read_block(recovery,cid,sectors,region,0,direct.CHUNK)
-                print(f"{region}: read-only 4 MiB verified {direct.sha(data)}",flush=True)
-            print("Recovery diagnostic passed: identity, transport, layout, EXT_CSD, all three regions. No eMMC writes.")
+                print(f"{region}: verified {direct.sha(data)}",flush=True)
+            print("Recovery diagnostic passed. No eMMC writes.")
         finally:
             recovery.close()
     elif args.action in ("hello","ready"):
