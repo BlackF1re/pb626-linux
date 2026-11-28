@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('Install','InstallQualified','InstallCandidate','Bootloader','RestoreBootloader','Backup','Restore','Preflight','Validate','Prepare','Recovery')][string]$Action,
+    [ValidateSet('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader','Backup','Restore','Preflight','Validate','Prepare','Recovery')][string]$Action,
     [ValidateSet('Auto','NCM','RNDIS')][string]$UsbProfile='Auto',
     [string]$DataDir,
     [switch]$UseRunningRecovery
@@ -9,6 +9,9 @@ param(
 $ErrorActionPreference='Stop'
 $kit=$PSScriptRoot
 $python=Join-Path $kit 'host\python\python.exe'
+$firmwareProfile=(Get-Content -Raw -LiteralPath (Join-Path $kit 'PROFILE')).Trim()
+if ($firmwareProfile -notin @('standard','deep-lab')) { throw 'Unknown firmware profile' }
+$candidate=if ($firmwareProfile -eq 'deep-lab') { 'candidate/BT0-uncaged-deep-candidate.bin' } else { 'candidate/BT0-uncaged-source-candidate.bin' }
 if (!$DataDir) { $DataDir=Join-Path $kit 'private' }
 function Say([string]$Message) { Write-Host $Message -ForegroundColor Cyan }
 function Invoke-Python([string[]]$Arguments) {
@@ -26,13 +29,15 @@ function Verify-Kit {
         if ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Unexpected link: $name" }
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $digest) { throw "Kit hash mismatch: $name" }
     }
-    foreach ($name in @('PB626.ps1','windows-fel.py','install-direct.py','dump-network.py','host/python/python.exe','host/sunxi-fel.exe','host/fdtget.exe','host/openssl.exe','host/direct-entry.bin','native/BUILD-COMMIT','native/SHA256SUMS','native/raw-linux.img','native/pb626-rootfs.ext4.gz','native/pb626-rootfs.bmap.json','native/pb626-bt0-menu.raw','recovery/BUILD-COMMIT','recovery/pb626-megi-zImage','recovery/pb626-megi-initramfs.cpio.gz','recovery/pb626-elan-emmc-backup.dtb','recovery/pb626-elan-emmc-windows-rndis.dtb','candidate/BT0-uncaged-source-candidate.bin','qualification/emulation.json')) {
+    foreach ($name in @('PB626.ps1','windows-fel.py','install-direct.py','dump-network.py','host/python/python.exe','host/sunxi-fel.exe','host/fdtget.exe','host/openssl.exe','host/direct-entry.bin','native/BUILD-COMMIT','native/SHA256SUMS','native/raw-linux.img','native/pb626-rootfs.ext4.gz','native/pb626-rootfs.bmap.json','native/pb626-bt0-menu.raw','recovery/BUILD-COMMIT','recovery/pb626-megi-zImage','recovery/pb626-megi-initramfs.cpio.gz','recovery/pb626-elan-emmc-backup.dtb','recovery/pb626-elan-emmc-windows-rndis.dtb',$candidate,'qualification/emulation.json','PROFILE')) {
         if (!$seen.ContainsKey($name)) { throw "Missing kit file: $name" }
     }
     $native=(Get-Content -Raw -LiteralPath (Join-Path $kit 'native/BUILD-COMMIT')).Trim()
     if ($native -notmatch '^[a-f0-9]{40}$' -or $native -ne (Get-Content -Raw -LiteralPath (Join-Path $kit 'recovery/BUILD-COMMIT')).Trim()) { throw 'Mixed build revisions' }
     $report=Get-Content -Raw -LiteralPath (Join-Path $kit 'qualification/emulation.json') | ConvertFrom-Json
     if ($report.result -ne 'tested contract passed' -or $report.reference -is [string]) { throw 'Missing required SPL differential qualification' }
+    $expected=if ($firmwareProfile -eq 'deep-lab') { $report.deep_cold_path.sha256 } else { $report.native.sha256 }
+    if (!$expected -or (Get-FileHash -LiteralPath (Join-Path $kit $candidate)).Hash -ne $expected) { throw 'Candidate not bound to differential report' }
     Write-Host "Verified build $native ($($seen.Count) files)" -ForegroundColor Green
 }
 function Find-Fel {
@@ -115,6 +120,20 @@ Write-Host '========================================================' -Foregroun
 Write-Host '   PB626 UNCAGED  |  Native Windows firmware console' -ForegroundColor Cyan
 Write-Host '   ELAN / eMMC   |  PowerShell 5.1   |  no WSL' -ForegroundColor Gray
 Write-Host '========================================================' -ForegroundColor DarkCyan
+if (!$Action -and $firmwareProfile -eq 'deep-lab') {
+    Write-Host '  DEEP LAB / NOT HARDWARE QUALIFIED' -ForegroundColor Yellow
+    Write-Host '  1   Install deep kernel, paired rootfs/modules and resume SPL' -ForegroundColor Yellow
+    Write-Host '  2   Backup complete eMMC'
+    Write-Host '  3   Restore verified eMMC dump'
+    Write-Host '  4   Read-only restore preflight'
+    Write-Host '  5   Boot RAM recovery only'
+    Write-Host '  6   Verify package (offline)'
+    Write-Host '  7   Prepare historical FEL SPL'
+    $Action=switch (Read-Host 'Select 1-7') {
+        '1' {'InstallDeepLab'} '2' {'Backup'} '3' {'Restore'} '4' {'Preflight'}
+        '5' {'Recovery'} '6' {'Validate'} '7' {'Prepare'} default {throw 'Cancelled'}
+    }
+}
 if (!$Action) {
     Write-Host '  1   Install paired Debian + kernel (keep current BT0)'
     Write-Host '  2   Install paired Debian + kernel + qualified BT0'
@@ -134,6 +153,8 @@ if (!$Action) {
     }
 }
 Verify-Kit
+if ($firmwareProfile -eq 'deep-lab' -and $Action -in @('Install','InstallQualified','InstallCandidate','Bootloader','RestoreBootloader')) { throw 'Deep profile requires the paired InstallDeepLab action' }
+if ($firmwareProfile -eq 'standard' -and $Action -eq 'InstallDeepLab') { throw 'Use the separate deep lab bundle' }
 if ($Action -eq 'Validate') { return }
 if ($Action -eq 'Prepare') { Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare'); return }
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
@@ -145,8 +166,9 @@ if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     $child=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -ArgumentList $launch -Wait -PassThru
     exit $child.ExitCode
 }
-if ($Action -in @('InstallCandidate','Bootloader')) {
-    Write-Warning 'NEW SPL is experimental. A successful CI or FEL RAM boot does NOT prove recovery after replacing installed BT0. Keep a complete verified backup and independent hardware recovery. Deep resume is NOT enabled by this candidate.'
+if ($Action -in @('InstallCandidate','Bootloader','InstallDeepLab')) {
+    Write-Warning 'NEW SPL is experimental. A successful CI or FEL RAM boot does NOT prove recovery after replacing installed BT0. Keep a complete verified backup and independent hardware recovery.'
+    if ($Action -eq 'InstallDeepLab') { Write-Warning 'Paired deep laboratory kernel and modules; deep sleep remains qualification-gated and s2idle is the default.' }
     if ((Read-Host 'Type EXPERIMENTAL to continue') -cne 'EXPERIMENTAL') { throw 'Cancelled' }
 }
 if ($Action -like 'Install*') { Write-Warning 'Installation replaces the complete Debian p1 partition, including user files. Back up first.' }
@@ -181,8 +203,8 @@ try {
     Connect-Recovery
     if ($Action -eq 'Recovery') { Write-Host 'RAM recovery verified. No eMMC write.' -ForegroundColor Green; return }
     Say 'STEP 4 / Device and data verification'
-    if ($Action -in @('Install','InstallQualified','InstallCandidate','Bootloader','RestoreBootloader')) {
-        $mode=switch ($Action) { 'Install' {'keep'} 'InstallQualified' {'qualified'} 'InstallCandidate' {'candidate'} 'Bootloader' {'candidate'} 'RestoreBootloader' {'qualified'} }
+    if ($Action -in @('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader')) {
+        $mode=switch ($Action) { 'Install' {'keep'} 'InstallQualified' {'qualified'} 'InstallCandidate' {'candidate'} 'InstallDeepLab' {'candidate'} 'Bootloader' {'candidate'} 'RestoreBootloader' {'qualified'} }
         if ($mode -eq 'qualified') { Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare') }
         $argsList=@((Join-Path $kit 'install-direct.py'),'--kit',$kit,'--windows','--spl',$mode)
         if ($Action -in @('Bootloader','RestoreBootloader')) { $argsList+='--spl-only' }

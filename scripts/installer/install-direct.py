@@ -292,6 +292,18 @@ def get_wbf(r):
     return wbf
 
 
+def kit_profile(kit):
+    path=kit/'PROFILE'
+    profile=path.read_text().strip() if path.is_file() else 'standard'
+    require(profile in ('standard','deep-lab'),'Invalid kit profile')
+    return profile
+
+
+def candidate_path(kit):
+    name='BT0-uncaged-deep-candidate.bin' if kit_profile(kit)=='deep-lab' else 'BT0-uncaged-source-candidate.bin'
+    return kit/'candidate'/name
+
+
 def checked_inputs(kit, spl_mode='qualified'):
     native = kit/'native'
     rev = (native/'BUILD-COMMIT').read_text().strip()
@@ -318,7 +330,7 @@ def checked_inputs(kit, spl_mode='qualified'):
     if spl_mode == 'qualified':
         spl = bytes(bt0.build(kit/'fel-inputs/pb626-spl.bin', native/'pb626-bt0-menu.raw'))
     elif spl_mode == 'candidate':
-        candidate = kit/'candidate/BT0-uncaged-source-candidate.bin'
+        candidate = candidate_path(kit)
         spl = candidate.read_bytes()
         bt0.verify(spl)
         sums = manifest(kit/'SHA256SUMS')
@@ -374,6 +386,9 @@ def main():
     kit = args.kit.resolve()
     require(not args.spl_only or args.spl != 'keep', 'No SPL selected')
     require(args.spl != 'candidate' or args.windows, 'Experimental SPL is restricted to Windows lab recovery')
+    profile=kit_profile(kit)
+    require(profile!='deep-lab' or (args.windows and args.spl=='candidate' and not args.spl_only),
+            'Deep lab kernel/rootfs and resume SPL must be installed as one explicit pair')
     rev, raw, spl = checked_inputs(kit, args.spl)
     print('Paired flashable firmware:', rev, flush=True)
     theme_module = importlib.import_module('pb626_sleep_theme')
@@ -390,7 +405,7 @@ def main():
         if args.spl == 'keep':
             current = r.run('{} bootloader-hash {}'.format(REMOTE,cid))
             allowed = {'1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6'}
-            candidate = kit/'candidate/BT0-uncaged-source-candidate.bin'
+            candidate = candidate_path(kit)
             if candidate.is_file():
                 allowed.add(filehash(candidate))
             require(len(current)==1 and current[0] in allowed,

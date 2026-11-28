@@ -68,9 +68,16 @@ Examples from Windows PowerShell 5.1:
 
 The experimental BT0 may break Menu/FEL. A backup is not a substitute
 for an independent physical recovery route. Do not install it until you
-accept that risk. The ordinary Windows bundle does not flash the isolated
-deep kernel or retained-DRAM SPL. It keeps production sleep policy and
-module compatibility. Do not mix lab zImage with production rootfs modules.
+accept that risk. The ordinary Windows bundle does not flash the isolated deep kernel or
+retained-DRAM SPL. It keeps production sleep policy and module
+compatibility. The separate `pb626-windows-deep-lab-EXPERIMENTAL` artifact
+from full qualification has the same launcher, but only the explicit
+InstallDeepLab option writes its paired deep kernel, matching modules
+inside the rootfs, and deep-resume SPL last. It requires a full verified
+backup and the same risk confirmations. It still leaves systemd's
+s2idle default and the suspend-qualified gate untouched. Do not mix a
+lab zImage with production rootfs modules or try deep until physical
+cold boot and Menu/FEL have been checked repeatedly.
 
 Native FEL source: pinned linux-sunxi/sunxi-tools commit
 0237931bb3d66de17c441a3c94d0e4b39e1308d1 with the existing lab MMU patch;
