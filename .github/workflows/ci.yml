@@ -87,6 +87,12 @@ jobs:
           bash -n BT0-uncaged/build-from-source.sh
           bash -n BT0-uncaged/build-fel-host.sh
           python3 -m py_compile scripts/prepare-fel-inputs.py
+          python3 scripts/build-matchbox-themes.py /tmp/pb626-test-themes
+          for size in 32 48 56 64; do
+            test -s /tmp/pb626-test-themes/PB626-$size/matchbox/theme.xml
+            test -s /tmp/pb626-test-themes/PB626-$size/matchbox/close.png
+            test -s /tmp/pb626-test-themes/PB626-$size/matchbox/menu.png
+          done
           python3 -m py_compile BT0-uncaged/prepare-source-resume.py BT0-uncaged/prepare-source-hook.py
           gcc -O2 -Wall -Wextra -Werror diagnostics/pb626-diag-clock.c -o /tmp/pb626-diag-clock
           /tmp/pb626-diag-clock resolution
