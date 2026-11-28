@@ -1,5 +1,9 @@
 #!/usr/bin/wish
 # On-demand, touch-oriented control centre. No resident settings daemon.
+# Keep the recovery path for display preferences usable even at high Xorg DPI.
+# Other clients retain their configured DPI; only this compact settings UI caps
+# point scaling when the screen is too small for its navigation and dialogs.
+if {[winfo screenwidth .] <= 1024 && [tk scaling] > 1.65} {tk scaling 1.65}
 tk_setPalette background white foreground black activeBackground #cccccc \
     activeForeground black selectBackground black selectForeground white
 option add *Font {{Liberation Sans} 15}
@@ -70,7 +74,7 @@ proc term {title args} {
 }
 proc choose {parent name caption variable choices} {
     frame $parent.$name
-    label $parent.$name.label -text $caption -anchor w -justify left
+    label $parent.$name.label -text $caption -anchor w -justify left -wraplength 540
     tk_optionMenu $parent.$name.select $variable {*}$choices
     $parent.$name.select configure -width 13 -anchor w -padx 12 -pady 9
     pack $parent.$name.label -fill x -pady {0 3}
@@ -462,7 +466,7 @@ canvas .header.icon -width 44 -height 44 -background white -borderwidth 0 -highl
 gear .header.icon
 frame .header.text -background white
 label .header.text.title -text "Settings" -font {{Liberation Sans} 24 bold} -anchor w
-label .header.text.subtitle -text "PocketBook 626 Plus  /  Debian" -font {{Liberation Sans} 12} -anchor w
+label .header.text.subtitle -text "PocketBook 626 Plus / Debian — drag on labels to scroll" -font {{Liberation Sans} 12} -anchor w
 pack .header.text.title .header.text.subtitle -fill x
 pack .header.icon -side left -padx {0 10}
 pack .header.text -side left -fill x -expand 1
@@ -508,21 +512,6 @@ proc scrollPage {units} {
 bind . <Button-4> {scrollPage -3}
 bind . <Button-5> {scrollPage 3}
 set p .tabs.display.canvas.body
-section $p scaleui "Application scaling" "DPI changes text and controls in DPI-aware applications. Fixed-pixel applications and panels may not scale. Native resolution stays unchanged."
-choose $p dpi "Application DPI (auto = system default)" uiDpi {auto 96 120 144 168 192 216}
-button $p.dpisave -text "Save application DPI" -command {desktopApply dpi}
-pack $p.dpisave -fill x -padx 12 -pady 5
-section $p panels "Panels and window controls" "Adjust the bottom panel and title bars independently of application DPI."
-choose $p panelsize "Bottom panel height (px)" panelSize {32 40 48 56 64 72}
-choose $p titlesize "Window title bar height (px)" titlebarSize {32 40 48 56 64}
-button $p.panelsave -text "Save panel and title bar sizes" -command {desktopApply appearance}
-pack $p.panelsave -fill x -padx 12 -pady 5
-section $p tasks "Running applications (experimental)" "Top tabs show running windows. Tap to switch; hold a tab to request normal window closure. More pages appear if needed."
-checkbutton $p.taskenable -text "Show running application tabs" -variable taskbarEnabled -anchor w
-pack $p.taskenable -fill x -padx 12 -pady 4
-choose $p tasksize "Top task panel height (px)" taskbarSize {32 40 48 56 64 72}
-button $p.tasksave -text "Save running application panel" -command {desktopApply taskbar}
-pack $p.tasksave -fill x -padx 12 -pady 5
 section $p light "Frontlight" "Brightness and power are saved independently."
 label $p.state -textvariable lightText -font {{Liberation Sans} 15 bold} -anchor w
 pack $p.state -fill x -padx 16 -pady 3
@@ -557,12 +546,24 @@ if {$mixedQualified} {
 }
 button $p.save -text "Save display settings" -command {desktopApply display}
 pack $p.save -fill x -padx 12 -pady 5
+section $p scaleui "Application scaling" "DPI changes text and controls in DPI-aware applications. Fixed-pixel applications and panels may not scale. Native resolution stays unchanged."
+choose $p dpi "Application DPI (auto = system default)" uiDpi {auto 96 120 144 168 192 216}
+button $p.dpisave -text "Save application DPI" -command {desktopApply dpi}
+pack $p.dpisave -fill x -padx 12 -pady 5
+section $p panels "Panels and window controls" "Adjust the bottom panel and title bars independently of application DPI."
+choose $p panelsize "Bottom panel height (px)" panelSize {32 40 48 56 64 72}
+choose $p titlesize "Window title bar height (px)" titlebarSize {32 40 48 56 64}
+button $p.panelsave -text "Save panel and title bar sizes" -command {desktopApply appearance}
+pack $p.panelsave -fill x -padx 12 -pady 5
+section $p tasks "Running applications (experimental)" "Top tabs show running windows. Tap to switch; hold a tab to request normal window closure. More pages appear if needed."
+checkbutton $p.taskenable -text "Show running application tabs" -variable taskbarEnabled -anchor w
+pack $p.taskenable -fill x -padx 12 -pady 4
+choose $p tasksize "Top task panel height (px)" taskbarSize {32 40 48 56 64 72}
+button $p.tasksave -text "Save running application panel" -command {desktopApply taskbar}
+pack $p.tasksave -fill x -padx 12 -pady 5
 section $p appearance "Power-off appearance"
 button $p.offimage -text "Power-off image…" -command shutdownPicker
 pack $p.offimage -fill x -padx 12 -pady 4
-button $p.restart -text "Restart desktop" -command desktopRestart
-pack $p.restart -fill x -padx 12 -pady 5
-
 set p .tabs.keys.canvas.body
 section $p basic "Physical buttons" "Choose short-press defaults or configure individual gestures below."
 choose $p arrows "Left / Right" buttons {arrows pages}
@@ -576,8 +577,7 @@ pack $p.holdsave -fill x -padx 12 -pady 5
 button $p.bindings -text "Advanced button bindings…" -command buttonSettings
 pack $p.bindings -fill x -padx 12 -pady 5
 button $p.save -text "Save button settings" -command {desktopApply keys}
-button $p.restart -text "Restart desktop" -command desktopRestart
-pack $p.save $p.restart -fill x -padx 12 -pady 5
+pack $p.save -fill x -padx 12 -pady 5
 section $p touchSection "Touchscreen" "Check the capabilities reported by X11. Contact count is not a test of two-finger gestures in applications."
 set touchText "Touch capabilities not yet checked."
 label $p.touchStatus -textvariable touchText -anchor w -justify left -wraplength 520
@@ -682,8 +682,35 @@ text $p.info -height 16 -wrap word -font {{Liberation Mono} 11} -background whit
 pack $p.info -fill x -padx 16 -pady 5
 label .feedback -textvariable feedback -anchor w -justify left -wraplength 620
 pack .feedback -fill x -padx 16 -pady 4
-button .close -text "Close settings" -command {destroy .}
-pack .close -fill x -padx 12 -pady 8
+frame .footer
+button .footer.restart -text "Restart desktop" -command desktopRestart
+button .footer.close -text "Close settings" -command {destroy .}
+pack .footer.restart .footer.close -side left -expand 1 -fill x -padx 3
+pack .footer -fill x -padx 9 -pady 8
+# Drag on headings, explanatory text and empty page areas. Do not
+# intercept controls (brightness slider, menus, buttons, entries, scrollbar).
+proc swipeStart {canvas y} {
+    set ::swipeCanvas $canvas
+    set ::swipeY $y
+}
+proc swipeMove {canvas y} {
+    if {![info exists ::swipeCanvas] || $::swipeCanvas ne $canvas} {return}
+    set units [expr {int(($::swipeY - $y) / 20.0)}]
+    if {$units != 0} {
+        $canvas yview scroll $units units
+        set ::swipeY [expr {$::swipeY - 20*$units}]
+    }
+}
+proc swipeEnd {} {unset -nocomplain ::swipeCanvas ::swipeY}
+proc bindSwipe {w canvas} {
+    if {[winfo class $w] in {Frame Label Canvas}} {
+        bind $w <ButtonPress-1> [list swipeStart $canvas %Y]
+        bind $w <B1-Motion> [list swipeMove $canvas %Y]
+        bind $w <ButtonRelease-1> swipeEnd
+    }
+    foreach child [winfo children $w] {bindSwipe $child $canvas}
+}
+foreach page [.tabs tabs] {bindSwipe $page.canvas $page.canvas}
 lightRefresh
 # No expensive status subprocesses on initial display. Refresh on demand
 # or on first entering the System page.

@@ -229,6 +229,7 @@ jobs:
           gcc -O2 -Wall -Wextra -Werror display/test-pb626-taskbar.c -o /tmp/test-pb626-taskbar -lX11 -lXtst
           xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-taskbar /tmp/pb626-taskbar
           xvfb-run -a -s '-screen 0 760x1024x16' wish tests/test-debian-settings.tcl
+          xvfb-run -a -s '-screen 0 760x1024x16 -dpi 216' wish tests/test-debian-settings.tcl
       - name: Smoke-test pinned Matchbox Keyboard with the PB626 flat layout
         run: |
           set -euo pipefail

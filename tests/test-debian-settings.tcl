@@ -66,6 +66,16 @@ update
 set canvas .tabs.power.canvas
 lassign [$canvas yview] top bottom
 if {$bottom >= 1.0} {error "Power settings should scroll in compact geometry"}
+if {[winfo screenwidth .] <= 1024 && [tk scaling] > 1.7} {error "Settings scaling must remain recoverable"}
+if {![winfo ismapped .footer.restart] || ![winfo ismapped .footer.close]} {error "Global actions unavailable"}
+if {[bind .tabs.power.canvas.body.shutdownSection.title <B1-Motion>] eq ""} {error "Touch scrolling missing"}
+if {[bind .tabs.display.canvas.body.brightness <B1-Motion>] ne ""} {error "Slider must keep native motion"}
+$canvas yview moveto 0.0
+swipeStart $canvas 380
+swipeMove $canvas 180
+swipeEnd
+lassign [$canvas yview] swipeTop swipeBottom
+if {$swipeTop <= 0.0} {error "Touch drag did not scroll"}
 $canvas yview moveto 1.0
 update
 lassign [$canvas yview] top bottom
