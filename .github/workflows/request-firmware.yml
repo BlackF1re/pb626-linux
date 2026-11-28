@@ -8,10 +8,18 @@ on:
       - '.github/firmware-build-request'
   workflow_dispatch:
     inputs:
+      include_alpine:
+        description: Also build legacy Alpine images
+        type: boolean
+        default: false
       kernel_audit:
         description: Rebuild isolated experimental kernel compiler profiles
         type: boolean
         default: false
+
+concurrency:
+  group: firmware-request-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -21,198 +29,8 @@ jobs:
     uses: ./.github/workflows/megi-fel.yml
     secrets: inherit
     with:
-      debian_only: false
-
-  deep-resume-lab:
-    name: Deep resume isolated kernel and SRAM model (not for flash)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install pinned-tree build prerequisites
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends git gcc-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod
-      - name: Fingerprint deep kernel build tools
-        id: tools
-        run: |
-          set -euo pipefail
-          dpkg-query -W gcc-arm-linux-gnueabihf gcc-13-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod | tee /tmp/deep-toolchain
-          echo "fingerprint=$(sha256sum /tmp/deep-toolchain | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: Restore isolated deep kernel cache
-        id: deep
-        uses: actions/cache/restore@v4
-        with:
-          path: deep-resume-lab
-          key: pb626-deep-kernel-v1-facc87117511221-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('scripts/build-megi-kernel.sh', 'scripts/configure-megi-kernel.sh', 'scripts/build-megi-variants.sh', 'board/megi/**', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch', 'patches/lab/**', '.github/workflows/request-firmware.yml') }}
-      - name: Compile and link isolated deep kernel
-        if: steps.deep.outputs.cache-hit != 'true'
-        env:
-          ARCH: arm
-          CROSS_COMPILE: arm-linux-gnueabihf-
-        run: |
-          set -euo pipefail
-          mkdir -p deep-resume-lab
-          bash scripts/build-megi-kernel.sh prepare
-          bash scripts/configure-megi-kernel.sh
-          cp linux/.config deep-resume-lab/production.config
-          for patch in patches/lab/sun5i-pm-twi-read.patch patches/lab/sun5i-pm-sram-abort.patch patches/lab/sun5i-pm-prepare-rollback.patch patches/lab/sun5i-pm-watchdog.patch; do
-            git -C linux apply --check "$PWD/$patch"
-            git -C linux apply "$PWD/$patch"
-          done
-          linux/scripts/config --file linux/.config -e SUN5I_PM --set-str LOCALVERSION '-pb626-deep-lab'
-          make -C linux olddefconfig
-          grep -qx 'CONFIG_SUN5I_PM=y' linux/.config
-          grep -qx 'CONFIG_ARM_CPU_SUSPEND=y' linux/.config
-          cp linux/.config deep-resume-lab/experimental.config
-          # One Kbuild invocation for the complete kernel and modules.
-          make -C linux -j"$(nproc)" KCFLAGS=-Wno-error zImage modules
-          test -s linux/arch/arm/mach-sunxi/pm-sun5i.o
-          test -s linux/arch/arm/mach-sunxi/sleep-sun5i.o
-          cp linux/arch/arm/boot/zImage deep-resume-lab/zImage
-          cp linux/arch/arm/mach-sunxi/sleep-sun5i.o deep-resume-lab/
-          arm-linux-gnueabihf-objdump -dr linux/arch/arm/mach-sunxi/sleep-sun5i.o > deep-resume-lab/sram-disassembly.txt
-          arm-linux-gnueabihf-size linux/arch/arm/mach-sunxi/{pm-sun5i,sleep-sun5i}.o > deep-resume-lab/object-sizes.txt
-          arm-linux-gnueabihf-nm linux/vmlinux | awk '$3 == "cpu_resume" {print $1}' > deep-resume-lab/cpu-resume-virtual.txt
-          test "$(wc -l < deep-resume-lab/cpu-resume-virtual.txt)" -eq 1
-          release=$(cat linux/include/config/kernel.release)
-          test -n "$release"
-          printf '%s\n' "$release" > deep-resume-lab/KERNELRELEASE
-          make -C linux modules_install KERNELRELEASE="$release" INSTALL_MOD_PATH="$PWD/deep-module-root" INSTALL_MOD_STRIP=1 DEPMOD=true
-          depmod -b deep-module-root "$release"
-          tar -C deep-module-root -czf deep-resume-lab/kernel-modules.tar.gz lib/modules
-          bash scripts/build-megi-variants.sh linux deep-dtbs "$PWD"
-          cp deep-dtbs/pb626-elan-emmc-native.dtb deep-resume-lab/
-          git -C linux diff --check
-          cp /tmp/deep-toolchain deep-resume-lab/toolchain.txt
-          (cd deep-resume-lab && sha256sum production.config experimental.config zImage sleep-sun5i.o sram-disassembly.txt object-sizes.txt cpu-resume-virtual.txt KERNELRELEASE kernel-modules.tar.gz pb626-elan-emmc-native.dtb toolchain.txt > SHA256SUMS)
-      - name: Verify isolated kernel artifacts
-        run: |
-          set -euo pipefail
-          (cd deep-resume-lab && sha256sum -c SHA256SUMS)
-          cmp /tmp/deep-toolchain deep-resume-lab/toolchain.txt
-          bash scripts/configure-megi-kernel.sh --check deep-resume-lab/production.config
-          grep -qx 'CONFIG_SUN5I_PM=y' deep-resume-lab/experimental.config
-          grep -qx 'CONFIG_ARM_CPU_SUSPEND=y' deep-resume-lab/experimental.config
-          grep -qx 'CONFIG_LOCALVERSION="-pb626-deep-lab"' deep-resume-lab/experimental.config
-          test -s deep-resume-lab/zImage
-          test "$(fdtget -t x deep-resume-lab/pb626-elan-emmc-native.dtb /memory@40000000 reg)" = "40000000 10000000"
-          gzip -t deep-resume-lab/kernel-modules.tar.gz
-          tar -xOzf deep-resume-lab/kernel-modules.tar.gz "lib/modules/$(cat deep-resume-lab/KERNELRELEASE)/modules.dep" >/tmp/deep-modules.dep
-          test -s /tmp/deep-modules.dep
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: BT0-uncaged/emulator/requirements.txt
-      - run: python -m pip install -r BT0-uncaged/emulator/requirements.txt
-      - name: Execute actual SRAM object with current fault tests (also on cache hit)
-        run: |
-          set -euo pipefail
-          arm-linux-gnueabihf-objcopy -O binary -j .text deep-resume-lab/sleep-sun5i.o /tmp/deep-sram.bin
-          python3 tests/test-deep-sram.py deep-resume-lab/sleep-sun5i.o /tmp/deep-sram.bin
-      - name: Cache verified isolated kernel, not test result
-        if: steps.deep.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: deep-resume-lab
-          key: ${{ steps.deep.outputs.cache-primary-key }}
-      - name: Record qualification limits
-        run: |
-          printf '%s\n' 'Linked laboratory kernel and SRAM control-flow model only. No board resume qualification, not for ordinary flash.' > deep-resume-lab/STATUS
-          git rev-parse HEAD >deep-resume-lab/BUILD-COMMIT
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: pb626-deep-resume-lab-NOT-FOR-FLASH
-          path: deep-resume-lab/
-          if-no-files-found: error
-
-  windows-deep-kit:
-    name: Pair experimental deep kernel and rootfs for explicit Windows lab flashing
-    needs: [full, deep-resume-lab]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: pb626-native-debian13-armhf
-          path: native-stage
-      - uses: actions/download-artifact@v4
-        with:
-          name: pb626-deep-resume-lab-NOT-FOR-FLASH
-          path: deep-resume-lab
-      - uses: actions/download-artifact@v4
-        with:
-          name: pb626-debian-recovery
-          path: recovery-stage
-      - uses: actions/download-artifact@v4
-        with:
-          name: pb626-windows-host-tools
-          path: windows-host
-      - uses: actions/download-artifact@v4
-        with:
-          name: pb626-fel-host-tools
-          path: fel-host
-      - uses: actions/download-artifact@v4
-        with:
-          name: pb626-source-boot-candidates-NOT-FOR-FLASH
-          path: source-boot-candidates
-      - uses: actions/download-artifact@v4
-        with:
-          name: pb626-spl-emulation-report
-          path: qualification
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cpio device-tree-compiler kmod clang lld llvm e2fsprogs
-          (cd native-stage && sha256sum -c SHA256SUMS)
-          (cd deep-resume-lab && sha256sum -c SHA256SUMS)
-          test "$(cat native-stage/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
-          test "$(cat deep-resume-lab/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
-      - uses: actions/cache@v4
-        id: deep-native
-        with:
-          path: deep-native
-          key: pb626-deep-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native-stage/pb626-native-rootfs.tar.gz','native-stage/KERNELRELEASE','deep-resume-lab/kernel-modules.tar.gz','deep-resume-lab/KERNELRELEASE','deep-resume-lab/zImage','deep-resume-lab/pb626-elan-emmc-native.dtb','deep-resume-lab/experimental.config','scripts/windows/build-deep-native.sh','scripts/build-direct-image.sh','scripts/build-rootfs-bmap.py','BT0-uncaged/pack-kernel.py','BT0-uncaged/kernel-entry.S','BT0-uncaged/early-menu.S') }}
-      - if: steps.deep-native.outputs.cache-hit != 'true'
-        run: bash scripts/windows/build-deep-native.sh deep-native
-      - name: Assemble and authorize only the exact same-run deep pair
-        run: |
-          set -euo pipefail
-          (cd deep-native && sha256sum -c SHA256SUMS)
-          cmp deep-native/KERNELRELEASE deep-resume-lab/KERNELRELEASE
-          cmp deep-native/pb626-native-zImage deep-resume-lab/zImage
-          cmp deep-native/pb626-elan-emmc-native.dtb deep-resume-lab/pb626-elan-emmc-native.dtb
-          git rev-parse HEAD >deep-native/BUILD-COMMIT
-          (cd deep-native && sha256sum pb626-* KERNELRELEASE raw-linux.img BUILD-COMMIT >SHA256SUMS)
-          mv native-stage ordinary-native
-          cp -a deep-native native-stage
-          PB626_WINDOWS_PROFILE=deep-lab bash scripts/windows/assemble-kit.sh windows-deep-kit
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pb626-windows-deep-lab-EXPERIMENTAL
-          path: windows-deep-kit/
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-  windows-deep-check:
-    name: Verify complete deep Windows bundle using PowerShell 5.1
-    needs: [windows-deep-kit]
-    runs-on: windows-2022
-    timeout-minutes: 15
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: pb626-windows-deep-lab-EXPERIMENTAL
-          path: windows-deep-kit
-      - shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          & .\windows-deep-kit\PB626.ps1 -Action Validate
-          if ($LASTEXITCODE -ne 0) { throw 'Actual deep package validation failed' }
-          if ((Get-Content -Raw .\windows-deep-kit\PROFILE).Trim() -ne 'deep-lab') { throw 'Wrong deep profile' }
+      debian_only: ${{ !inputs.include_alpine }}
+      include_deep: true
 
   # Experimental builds never feed the production firmware or its caches.
   kernel-size-audit:
