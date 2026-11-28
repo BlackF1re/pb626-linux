@@ -34,6 +34,12 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends git gcc-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: BT0-uncaged/emulator/requirements.txt
+      - run: python -m pip install -r BT0-uncaged/emulator/requirements.txt
       - name: Compile isolated deep-resume objects
         env:
           ARCH: arm
@@ -61,7 +67,9 @@ jobs:
           arm-linux-gnueabihf-objdump -dr linux/arch/arm/mach-sunxi/sleep-sun5i.o > deep-resume-lab/sram-disassembly.txt
           arm-linux-gnueabihf-size linux/arch/arm/mach-sunxi/{pm-sun5i,sleep-sun5i}.o | tee deep-resume-lab/object-sizes.txt
           git -C linux diff --check
-          printf '%s\n' 'Compile check only: no linked kernel, no board resume qualification, not for flash.' > deep-resume-lab/STATUS
+          arm-linux-gnueabihf-objcopy -O binary -j .text linux/arch/arm/mach-sunxi/sleep-sun5i.o deep-resume-lab/sram.bin
+          python3 tests/test-deep-sram.py linux/arch/arm/mach-sunxi/sleep-sun5i.o deep-resume-lab/sram.bin
+          printf '%s\n' 'Compile and SRAM control-flow model only: no linked kernel, no board resume qualification, not for flash.' > deep-resume-lab/STATUS
       - uses: actions/upload-artifact@v4
         if: always()
         with:
