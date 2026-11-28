@@ -37,7 +37,7 @@ class Cancelled(Exception):
     pass
 
 
-class TransportInterrupted(RuntimeError):
+class TransportInterrupted(OSError):
     pass
 
 

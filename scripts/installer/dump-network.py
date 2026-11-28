@@ -37,8 +37,15 @@ def read_block(r,cid,sectors,region,i,length):
     n = int(match[1])
     d.require(0<=n<=CHUNK and raw[match.end()+n:]==b"\nPB626_DATA_END\n","Invalid frame length")
     payload = raw[match.end():match.end()+n]
-    data = gzip.decompress(payload) if match[3]==b"gzip" else (
-        bytes(length) if match[3]==b"zero" else payload)
+    if match[3]==b"gzip":
+        import io
+        with gzip.GzipFile(fileobj=io.BytesIO(payload)) as stream:
+            data=stream.read(length+1)
+    elif match[3]==b"zero":
+        d.require(n==0,"Unexpected zero-frame payload")
+        data=bytes(length)
+    else:
+        data=payload
     d.require(len(data)==length and d.sha(data)==match[2].decode(),"Backup chunk hash mismatch")
     return data
 
@@ -72,15 +79,16 @@ def backup_region(r,cid,sectors,region,size,partial,finished):
     local=finished if finished.exists() else partial
     if local.exists():
         d.require(local.is_file() and local.stat().st_size<=size,"Invalid partial backup extent")
+        if local==finished:
+            # Completed regions need one full hash comparison, not a
+            # redundant scan followed by another full-device read.
+            saved=d.filehash(local)
+            if local.stat().st_size==size and saved==digest(r,cid,sectors,region,"backup-hash"):
+                print("Already verified:",region,flush=True)
+                return saved
+            local.rename(partial)
         print("Checking saved chunks against current eMMC:",region,flush=True)
         actual=scan(r,cid,sectors,region,count)
-        if local==finished:
-            # A completed region may be reused only if the live medium
-            # still matches the complete local image.
-            if local.stat().st_size==size and d.filehash(local)==digest(r,cid,sectors,region,"backup-hash"):
-                print("Already verified:",region,flush=True)
-                return d.filehash(local)
-            local.rename(partial)
         mode="r+b"
     else:
         actual={}
