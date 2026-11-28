@@ -33,8 +33,8 @@ enum { S_LE = 1 << 13, G_MODE = 1 << 15, S_OE = 1 << 20,
        S_SP = 1 << 21, G_CLK = 1 << 22, G_SP = 1 << 23,
        BASE = G_MODE | G_SP, IDLE = BASE | S_SP };
 
-enum mode { INIT, DU, GC16, GL16, A2, DU4 };
-static const char *const modes[] = { "reset", "du", "full", "partial", "a2", "du4" };
+enum mode { INIT, DU, GC16, GL16, A2, DU4, MIXED };
+static const char *const modes[] = { "reset", "du", "full", "partial", "a2", "du4", "mixed" };
 static const char state_path[] = "/run/pb626-epd.levels";
 static const enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
 
@@ -94,10 +94,69 @@ struct renderer {
 	uint64_t temperature_checked;
 	uint32_t neutral_data[2][GROUPS];
 	uint8_t previous[PACKED_PIXELS];
+#ifdef PB626_PACKED_TRANSITIONS
+	/* Exact codes 0..256: low byte plus a bitmap for code 256.
+	 * Only the experimental build selects this representation. */
+	uint8_t transitions[PIXELS], transition_high[(PIXELS + 7) / 8];
+#else
 	uint16_t transitions[PIXELS];
+#endif
 	struct span_range rows[GATES];
-	bool known, auto_fast;
+	bool known, auto_fast, auto_exact, mixed_enabled, mixed_a2, mixed_du4;
 };
+
+static inline uint16_t transition_get(const struct renderer *r, size_t i)
+{
+#ifdef PB626_PACKED_TRANSITIONS
+	return r->transitions[i] | (((r->transition_high[i >> 3] >> (i & 7)) & 1u) << 8);
+#else
+	return r->transitions[i];
+#endif
+}
+
+static inline void transition_set(struct renderer *r, size_t i, uint16_t value)
+{
+	r->transitions[i] = value;
+#ifdef PB626_PACKED_TRANSITIONS
+	uint8_t bit = 1u << (i & 7);
+	r->transition_high[i >> 3] = (r->transition_high[i >> 3] & ~bit) |
+		(value == 256 ? bit : 0);
+#endif
+}
+
+/* Spans are always aligned to four-source groups, including row boundaries. */
+static inline void transition_clear(struct renderer *r, size_t first, size_t count)
+{
+	memset(r->transitions + first, 0, count * sizeof(*r->transitions));
+#ifdef PB626_PACKED_TRANSITIONS
+	if (!count)
+		return;
+	if (first & 7) {
+		r->transition_high[first >> 3] &= 0x0f;
+		first += 4;
+		count -= 4;
+	}
+	if (count & 7) {
+		r->transition_high[(first + count - 4) >> 3] &= 0xf0;
+		count -= 4;
+	}
+	memset(r->transition_high + (first >> 3), 0, count >> 3);
+#endif
+}
+
+static inline const uint16_t *transition_group(const struct renderer *r, size_t i,
+					      uint16_t scratch[4])
+{
+#ifdef PB626_PACKED_TRANSITIONS
+	unsigned int high = r->transition_high[i >> 3] >> (i & 7);
+	for (unsigned int p = 0; p < 4; p++)
+		scratch[p] = r->transitions[i + p] | (((high >> p) & 1u) << 8);
+	return scratch;
+#else
+	(void)scratch;
+	return r->transitions + i;
+#endif
+}
 
 static _Noreturn void fail(const char *message)
 {
@@ -296,7 +355,11 @@ static void cache_mode(struct renderer *renderer, enum mode mode)
 static bool supports(const struct renderer *renderer, enum mode mode, const bool *active)
 {
 	for (unsigned int t = 0; t < TRANSITIONS; t++)
-		if (active[t] && t % (LEVELS + 1) && !renderer->driven[mode][t])
+		/* Same-level GC16 transitions are explicit SCRUB requests,
+		 * not ordinary unchanged pixels. Do not acknowledge a scrub
+		 * with no drive pulses and silently reset its ghosting budget. */
+		if (active[t] && (mode == GC16 || t % (LEVELS + 1)) &&
+		    !renderer->driven[mode][t])
 			return false;
 	return true;
 }
@@ -306,11 +369,27 @@ static void plan(struct renderer *renderer, enum mode mode, const bool *active)
 	struct update *update = &renderer->planned;
 	const struct cached_update *decoded = &renderer->cache[mode];
 	update->count = 0;
+	/* Sparse text/cursor updates often use only a few of 256 transitions.
+	 * Collect them once, then expand only those entries in each scan. */
+	uint8_t active_codes[TRANSITIONS];
+	unsigned int active_count = 0;
+	if (active)
+		for (unsigned int t = 0; t < TRANSITIONS; t++)
+			if (active[t])
+				active_codes[active_count++] = t;
 	for (unsigned int i = 0; i < decoded->count; i++) {
 		uint8_t phase[TRANSITIONS];
 		const uint8_t *lut = decoded->lut + i * LUT_BYTES;
-		for (unsigned int t = 0; t < TRANSITIONS; t++)
-			phase[t] = !active || active[t] ? packed_signal(lut, t) : 0;
+		if (active && active_count <= TRANSITIONS / 4) {
+			memset(phase, 0, sizeof(phase));
+			for (unsigned int j = 0; j < active_count; j++) {
+				unsigned int t = active_codes[j];
+				phase[t] = packed_signal(lut, t);
+			}
+		} else {
+			for (unsigned int t = 0; t < TRANSITIONS; t++)
+				phase[t] = !active || active[t] ? packed_signal(lut, t) : 0;
+		}
 
 		struct phase *last = update->count ? &update->phases[update->count - 1] : NULL;
 		if (last && !memcmp(last->lut, phase, sizeof(phase))) {
@@ -321,6 +400,76 @@ static void plan(struct renderer *renderer, enum mode mode, const bool *active)
 			next->scans = 1;
 		}
 	}
+}
+
+/* Each transition retains its complete temperature-specific factory
+ * sequence. Shorter sequences are neutral after completion. No waveform
+ * truncation, interpolation, or new voltage signals. */
+static enum mode mixed_transition(const struct renderer *r, unsigned int t)
+{
+	unsigned int old = t & 15, target = t >> 4;
+	enum mode best = GL16;
+	if (!r->driven[GL16][t])
+		best = GC16;
+	if (target == 0 || target == 15) {
+		if (r->driven[DU][t] && r->cache[DU].count < r->cache[best].count)
+			best = DU;
+		if (r->mixed_a2 && (old == 0 || old == 15) &&
+		    r->driven[A2][t] && r->cache[A2].count < r->cache[best].count)
+			best = A2;
+	} else if (r->mixed_du4 && (target == 5 || target == 10) &&
+		   r->driven[DU4][t] && r->cache[DU4].count < r->cache[best].count)
+		best = DU4;
+	return best;
+}
+
+static bool plan_mixed(struct renderer *r, const bool *active, enum mode baseline)
+{
+	uint8_t codes[TRANSITIONS], selected[TRANSITIONS];
+	unsigned int used = 0, scans = 0, counts[DU4 + 1] = {0};
+	for (unsigned int t = 0; t < TRANSITIONS; t++) {
+		if (!active[t])
+			continue;
+		/* Never mix a same-level scrub or an unknown transition. */
+		if (!(t % (LEVELS + 1)))
+			return false;
+		enum mode m = mixed_transition(r, t);
+		if (!r->cache[m].count || !r->driven[m][t])
+			return false;
+		codes[used] = t;
+		selected[used++] = m;
+		counts[m]++;
+		if (r->cache[m].count > scans)
+			scans = r->cache[m].count;
+	}
+	/* Do not lengthen the overall transaction or synthesize a plan
+	 * identical to the already valid single-waveform baseline. */
+	if (!scans || scans > r->cache[baseline].count ||
+	    counts[baseline] == used)
+		return false;
+	struct update *u = &r->planned;
+	u->count = 0;
+	for (unsigned int i = 0; i < scans; i++) {
+		uint8_t phase[TRANSITIONS] = {0};
+		for (unsigned int j = 0; j < used; j++) {
+			unsigned int t = codes[j];
+			const struct cached_update *c = &r->cache[selected[j]];
+			if (i < c->count)
+				phase[t] = packed_signal(c->lut + i * LUT_BYTES, t);
+		}
+		struct phase *last = u->count ? &u->phases[u->count - 1] : NULL;
+		if (last && !memcmp(last->lut, phase, sizeof(phase)))
+			last->scans++;
+		else {
+			struct phase *next = &u->phases[u->count++];
+			memcpy(next->lut, phase, sizeof(phase));
+			next->scans = 1;
+		}
+	}
+	if (r->profile)
+		fprintf(stderr, "epd: mixed transitions du=%u a2=%u du4=%u gl16=%u gc16=%u scans=%u\n",
+			counts[DU], counts[A2], counts[DU4], counts[GL16], counts[GC16], scans);
+	return true;
 }
 
 static unsigned int pgm_number(FILE *file)
@@ -477,7 +626,8 @@ static unsigned int index_groups(struct renderer *renderer)
 	for (unsigned int y = 0; y < GATES; y++) {
 		struct span_range row = renderer->rows[y];
 		for (unsigned int x = row.first; x < row.end; x++) {
-			const uint16_t *p = renderer->transitions + y * SOURCES + 4 * x;
+			uint16_t scratch[4];
+			const uint16_t *p = transition_group(renderer, y * SOURCES + 4 * x, scratch);
 			unsigned int slot = (p[0] * 137 + p[1] * 149 + p[2] * 167 +
 					     p[3] * 179) & (GROUP_HASH_SIZE - 1);
 			while (hash[slot] &&
@@ -497,25 +647,40 @@ static unsigned int index_groups(struct renderer *renderer)
 	return count;
 }
 
+static inline unsigned int phase_signal(const struct phase *phase, uint16_t code)
+{
+	return code ? phase->lut[code - 1] : 0;
+}
+
+static inline uint32_t pattern_pins(const struct phase *phase, const uint16_t *p)
+{
+	unsigned int data = (phase_signal(phase, p[0]) << 6) |
+			    (phase_signal(phase, p[1]) << 4) |
+			    (phase_signal(phase, p[2]) << 2) |
+			    phase_signal(phase, p[3]);
+	return htole32(source_word(data));
+}
+
 static void render(struct buffer *buffer, const struct renderer *renderer,
 		   const struct phase *phase, bool reset)
 {
-	uint32_t pins[4][TRANSITIONS + 1] = {0};
+	uint32_t pins[4][TRANSITIONS + 1];
 	buffer->data[3] = htole32(phase->scans - 1);
-	if (!reset) {
-		for (unsigned int pixel = 0; pixel < 4; pixel++)
-			for (unsigned int t = 0; t < TRANSITIONS; t++)
-				pins[pixel][t + 1] = htole32(source_word(phase->lut[t] << (6 - 2 * pixel)));
-	}
 	uint32_t uniform = htole32(source_word(phase->lut[0] * 0x55));
 	uint32_t group_pins[GROUP_CODES];
 	bool indexed = !reset && renderer->patterns_count;
-	if (indexed)
-		for (unsigned int i = 0; i < renderer->patterns_count; i++) {
-			const uint16_t *p = renderer->group_patterns[i];
-			group_pins[i] = pins[0][p[0]] | pins[1][p[1]] |
-					pins[2][p[2]] | pins[3][p[3]];
+	if (indexed) {
+		/* Indexed mode needs only the actual groups, not four complete
+		 * 257-entry transition tables for each scan. */
+		for (unsigned int i = 0; i < renderer->patterns_count; i++)
+			group_pins[i] = pattern_pins(phase, renderer->group_patterns[i]);
+	} else if (!reset) {
+		for (unsigned int pixel = 0; pixel < 4; pixel++) {
+			pins[pixel][0] = 0;
+			for (unsigned int t = 0; t < TRANSITIONS; t++)
+				pins[pixel][t + 1] = htole32(source_word(phase->lut[t] << (6 - 2 * pixel)));
 		}
+	}
 	for (unsigned int y = 0; y < GATES; y++) {
 		struct span_range old = buffer->rows[y];
 		struct span_range row = reset ? (struct span_range){0, GROUPS} : renderer->rows[y];
@@ -533,7 +698,6 @@ static void render(struct buffer *buffer, const struct renderer *renderer,
 				unsigned int first = old.first > row.end ? old.first : row.end;
 				memcpy(out + first, neutral + first, (old.end - first) * sizeof(*out));
 			}
-			const uint16_t *pixels = renderer->transitions + y * SOURCES + 4 * row.first;
 			uint32_t staged[GROUPS];
 			uint32_t *dest = renderer->style == RENDER_SCALAR ? out : staged;
 			if (reset) {
@@ -544,9 +708,12 @@ static void render(struct buffer *buffer, const struct renderer *renderer,
 				for (unsigned int x = row.first; x < row.end; x++)
 					dest[x] = neutral[x] | group_pins[codes[x]];
 			} else {
-				for (unsigned int x = row.first; x < row.end; x++, pixels += 4)
+				for (unsigned int x = row.first; x < row.end; x++) {
+					uint16_t scratch[4];
+					const uint16_t *pixels = transition_group(renderer, y * SOURCES + 4 * x, scratch);
 					dest[x] = neutral[x] | pins[0][pixels[0]] | pins[1][pixels[1]] |
 						  pins[2][pixels[2]] | pins[3][pixels[3]];
+				}
 			}
 			if (dest == staged)
 				memcpy(out + row.first, staged + row.first,
@@ -718,6 +885,35 @@ static enum mode select_a2_or_du(const struct renderer *renderer,
 	return A2;
 }
 
+/* In exact Auto mode choose the shortest complete, eligible factory
+ * waveform, not just the bridge's target-class preference. Ties retain
+ * the baseline (which already favors DU over equal-duration A2). */
+static enum mode select_exact_uniform(const struct renderer *r, enum mode baseline,
+				      const bool *active)
+{
+	const enum mode candidates[] = {DU, A2, DU4, GL16};
+	enum mode best = baseline;
+	for (unsigned int i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++) {
+		enum mode m = candidates[i];
+		if (!r->cache[m].count || r->cache[m].count >= r->cache[best].count)
+			continue;
+		bool eligible = true;
+		for (unsigned int t = 0; t < TRANSITIONS; t++) {
+			if (!active[t]) continue;
+			unsigned int old = t & 15, target = t >> 4;
+			if (old == target || !r->driven[m][t] ||
+			    ((m == DU || m == A2) && target != 0 && target != 15) ||
+			    (m == A2 && old != 0 && old != 15) ||
+			    (m == DU4 && target % 5)) {
+				eligible = false;
+				break;
+			}
+		}
+		if (eligible) best = m;
+	}
+	return best;
+}
+
 static void invalidate(void)
 {
 	if (unlink(state_path) && errno != ENOENT)
@@ -738,8 +934,8 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 	if (mode != INIT) {
 		for (unsigned int gate = 0; gate < GATES; gate++) {
 			struct span_range old = renderer->rows[gate];
-			memset(renderer->transitions + gate * SOURCES + 4 * old.first, 0,
-			       4 * (old.end - old.first) * sizeof(*renderer->transitions));
+			transition_clear(renderer, gate * SOURCES + 4 * old.first,
+					 4 * (old.end - old.first));
 			renderer->rows[gate] = (struct span_range){0};
 		}
 		for (int ty = 0; ty < TILE_ROWS; ty++)
@@ -769,7 +965,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 						unsigned int t = old | (level << 4);
 						active[t] = true;
 						changed = true;
-						renderer->transitions[gate * SOURCES + source] = t + 1;
+						transition_set(renderer, gate * SOURCES + source, t + 1);
 						struct span_range *row = &renderer->rows[gate];
 						if (!row->end)
 							row->first = source / 4;
@@ -805,6 +1001,28 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 		}
 		if (!supports(renderer, mode, active))
 			fail("this mode cannot perform every requested transition; use partial or full");
+		if (fallback && renderer->auto_exact && !reset_first &&
+		    (mode == DU || mode == A2 || mode == DU4 || mode == GL16)) {
+			/* The bridge supplied exact target levels. Evaluate actual
+			 * scan lengths after decoding the current temperature. */
+			cache_mode(renderer, DU);
+			cache_mode(renderer, A2);
+			cache_mode(renderer, DU4);
+			cache_mode(renderer, GL16);
+			mode = select_exact_uniform(renderer, mode, active);
+		}
+		/* Compare against a proven eligible single-mode baseline.
+		 * A required GC16 fallback is never replaced by a mixture. */
+		if (fallback && (mode == GL16 || mode == DU4) &&
+		    renderer->mixed_enabled && !reset_first) {
+			cache_mode(renderer, GL16);
+			cache_mode(renderer, GC16);
+			cache_mode(renderer, DU);
+			if (renderer->mixed_a2) cache_mode(renderer, A2);
+			if (renderer->mixed_du4) cache_mode(renderer, DU4);
+			if (plan_mixed(renderer, active, mode))
+				mode = MIXED;
+		}
 	}
 	invalidate();
 	if (!renderer->buffers_count)
@@ -818,7 +1036,8 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 		scan_us += now_us() - start;
 	}
 	if (mode != INIT && changed) {
-		plan(renderer, mode, active);
+		if (mode != MIXED)
+			plan(renderer, mode, active);
 		uint64_t start = now_us();
 		refresh(renderer, mode);
 		scan_us += now_us() - start;
@@ -828,7 +1047,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 		for (unsigned int gate = 0; gate < GATES; gate++) {
 			struct span_range row = renderer->rows[gate];
 			for (unsigned int source = 4 * row.first; source < 4 * row.end; source++) {
-				uint16_t transition = renderer->transitions[gate * SOURCES + source];
+				uint16_t transition = transition_get(renderer, gate * SOURCES + source);
 				if (transition)
 					nibble_set(previous, portrait_index(gate, source), (transition - 1) >> 4);
 			}
@@ -939,6 +1158,16 @@ int main(int argc, char **argv)
 	}
 	const char *fast = getenv("PB626_EPD_FAST_MODE");
 	renderer.auto_fast = fast && !strcmp(fast, "auto");
+	renderer.mixed_a2 = renderer.auto_fast || (fast && !strcmp(fast, "a2"));
+	renderer.mixed_du4 = renderer.auto_fast || (fast && !strcmp(fast, "du4"));
+	const char *mixed = getenv("PB626_EPD_MIXED");
+	const char *approx = getenv("PB626_EPD_APPROX_PREVIEW");
+	renderer.auto_exact = renderer.auto_fast && (!approx || strcmp(approx, "1"));
+	renderer.mixed_enabled = serve && mixed && !strcmp(mixed, "1") &&
+		(!approx || strcmp(approx, "1")) &&
+		!access("/etc/pb626/mixed-waveform-qualified", F_OK);
+	if (mixed && !strcmp(mixed, "1") && !renderer.mixed_enabled)
+		fprintf(stderr, "epd: mixed waveform not qualified; retaining normal SETTLE\n");
 	load_waveform(&renderer.wbf, argv[1]);
 	/* The stock WBF targets 85 scans/s. The A13 clock tree supplies
 	 * 22.5 MHz here, giving 84.5 scans/s with Megi's porch settings.

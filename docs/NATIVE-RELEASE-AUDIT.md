@@ -14,11 +14,10 @@ and the known working BT0 before testing any candidate.
   IRQ before destroying the workqueue. Never shorten waveform or rail delays.
 - s2idle: required renderer preparation, input quiescence, driver PM, and
   resume restoration. The qualification marker is not a substitute for tests.
-- Deep sleep: CONFIG_SUN5I_PM remains disabled by default. A matched SPL is
-  needed to restore retained DRAM. The pinned sleep-sun5i.S contains unbounded
-  DRAM command/pad waits and assumes the PMIC cuts SoC power after acknowledgement.
-  The abort path needs separate validation. Retain watchdog and independent
-  FEL recovery; do not treat successful host tests as proof of retained DRAM.
+- Suspend-to-RAM: CONFIG_SUN5I_PM is enabled and the installer pairs the
+  kernel with the resume SPL. Patches bound the DRAM waits and test abort
+  behavior in the SRAM model. Retain the hardware qualification marker,
+  watchdog and independent FEL recovery. Host tests do not prove retained DRAM.
 - Wi-Fi: do not force runtime USB suspend while associated. The pinned rtl8xxxu
   lacks the necessary callbacks. Check disconnect/reassociation after system
   sleep. RTC wake is not established on the current DT.
@@ -45,14 +44,14 @@ and the known working BT0 before testing any candidate.
    SPL. Keep a copy of the known working loader and original calibration.
 3. Cold boots, shutdown images, reboot, buttons, touch, brightness range,
    charging/unplugging and low-battery handling.
-4. Repeated s2idle wake cycles with and without Wi-Fi and USB; compare
+4. Repeated suspend-to-RAM wake cycles with and without Wi-Fi and USB; compare
    power-supply, regulator, clock and runtime PM state and verify filesystem
    integrity. Include aborted suspend and active transfers.
 5. All six panel modes, black/white and grayscale transitions, full and partial
    updates, keyboard/scrolling, worker restart and memory pressure. Compare
    scan timings and visually check residual images.
-6. Deep resume, SD, Lima and optional rendering optimizations are independent
-   experiments. Do not change their defaults until the relevant tests pass.
+6. SD, Lima and optional rendering optimizations remain independent
+   opt-in features. Enable unattended suspend only after physical wake tests.
 
 Record baseline and post-change diagnostics on the actual device at matching
 temperature, battery state and workload. A successful CI run only qualifies

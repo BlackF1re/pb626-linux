@@ -30,7 +30,7 @@ xset -dpms 2>/dev/null || :
 case ${PB626_IDLE_MINUTES:-0} in
     5|10|15|30|60)
         if [ -f /etc/pb626/suspend-qualified ]; then
-            xidle -no -timeout "$((PB626_IDLE_MINUTES * 60))" -program '/usr/bin/doas /usr/sbin/pb626-admin suspend' &
+            xidle -no -timeout "$((PB626_IDLE_MINUTES * 60))" -program '/usr/bin/doas /usr/sbin/pb626-admin suspend-idle' &
             idle_pid=$!
         fi ;;
 esac
@@ -41,6 +41,13 @@ export NO_COLOR=1 CLICOLOR=0
 if ! xrdb -nocpp -merge /etc/X11/pb626.Xresources; then
     echo 'PB626: xrdb failed; using session resource file' >&2
     export XENVIRONMENT=/etc/X11/pb626.Xresources
+fi
+if [ -f /etc/debian_version ]; then
+    case ${PB626_UI_DPI:-auto} in
+        96|120|144|168|192|216)
+            printf 'Xft.dpi: %s\n' "$PB626_UI_DPI" | xrdb -nocpp -merge || :
+            ;;
+    esac
 fi
 # Supervise every X client independently. Client failures must not terminate
 # xinit; only loss of X itself (or the legacy local E Ink renderer) ends the
@@ -71,13 +78,32 @@ supervise_client() (
         sleep "$delay"
     done
 )
-supervise_client matchbox-window-manager -theme PB626 -use_titlebar yes &
+panel_size=48
+wm_theme=PB626
+if [ -f /etc/debian_version ]; then
+    case ${PB626_PANEL_SIZE:-48} in
+        32|40|48|56|64|72) panel_size=${PB626_PANEL_SIZE:-48} ;;
+    esac
+    case ${PB626_TITLEBAR_SIZE:-40} in
+        32|48|56|64)
+            if [ -r "/usr/share/themes/PB626-$PB626_TITLEBAR_SIZE/matchbox/theme.xml" ]; then
+                wm_theme=PB626-$PB626_TITLEBAR_SIZE
+            fi
+            ;;
+    esac
+fi
+supervise_client matchbox-window-manager -theme "$wm_theme" -use_titlebar yes &
 wm=$!
 panel=
 if command -v matchbox-panel >/dev/null; then
-    supervise_client matchbox-panel --orientation south --size 48 --bgcolor white --no-session \
+    supervise_client matchbox-panel --orientation south --size "$panel_size" --bgcolor white --no-session \
         --default-apps 'mb-applet-menu-launcher,mb-applet-launcher --desktop /etc/pb626/keyboard.desktop,mb-applet-battery,mb-applet-clock' &
     panel=$!
+fi
+taskbar=
+if [ -f /etc/debian_version ] && [ "${PB626_TASKBAR:-0}" = 1 ] && command -v pb626-taskbar >/dev/null; then
+    supervise_client pb626-taskbar &
+    taskbar=$!
 fi
 if [ -f /etc/debian_version ]; then
     supervise_client matchbox-keyboard --daemon &
@@ -99,7 +125,8 @@ else
         --fontcol black --no-outline --no-title --icon-size 112 --icon-padding 8 &
 fi
 desktop=$!
-trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${screen:+"$screen"} ${idle_pid:+"$idle_pid"} 2>/dev/null || true' EXIT
+watcher=
+trap 'kill "$wm" "$keyboard" "$desktop" ${panel:+"$panel"} ${taskbar:+"$taskbar"} ${screen:+"$screen"} ${idle_pid:+"$idle_pid"} ${watcher:+"$watcher"} 2>/dev/null || true' EXIT
 trap 'exit 1' HUP INT TERM
 if [ -n "${PB626_EPD_BRIDGE_PID:-}" ]; then
     : > "${PB626_EPD_SESSION_STARTED:?}"
@@ -114,9 +141,12 @@ if [ -n "$screen" ]; then
 else
     # Debian's renderer is supervised by pb626-desktop.service. Keep the X
     # session alive independently of all clients; only loss of X itself ends it.
-    while xset q >/dev/null 2>&1; do
-        sleep 2
-    done
+    # xprop keeps an X connection open and blocks for root property events.
+    # X server disconnect terminates it; no recurring process or timer.
+    xprop -root -spy _NET_SUPPORTING_WM_CHECK >/dev/null 2>&1 &
+    watcher=$!
+    wait "$watcher" || :
+    watcher=
     echo 'PB626: X server connection lost; ending session for systemd recovery.' >&2
     exit 1
 fi

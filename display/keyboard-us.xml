@@ -1,377 +1,245 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  PB626 uses the classic, self-contained Matchbox Keyboard 0.1.1 layout
-  format. Keep this file free of <include> elements: the pinned 0.1.1
-  parser does not implement the newer Debian include-based layout format.
-  Upstream US layout by Matt Reimer.
--->
+<!-- PB626 mobile QWERTY with a number row and a secondary symbol/navigation
+     layer. Matchbox 0.1.1 supports a single flat layout and one-shot modifiers.
+     Retain terminal navigation and Ctrl/Alt without a separate desktop layout.
+     Based on the upstream US layout by Matt Reimer. -->
 <keyboard>
-
-<!--
-
- US keyboard layout by Matt Reimer <mreimer@vpop.net>
-
--->
-
-<options>
-<!-- not yet implemented -->
-</options>
-
-<layout id="default keyboard">
-
-<!--
-  <row>
-     <key>
-	  <default display="ヂ" />                
-    </key>
-    <key>
-	  <default display="Ӫ" />                
-    </key>
-    <key width="1500">
-	  <default display="Ω" />                
-    </key>
-    <space width="1500" />
-    <key fill="true">
-	  <default display="⠿" />                
-    </key>
-  </row>
--->
-
-  <row>
-
-    <space width="500" extended="true"/>
-
-    <key fill="true">
-	  <default display="Esc" action="escape" />
-    </key>
-    <key>
-	  <default display="`" />
-	  <shifted display="~" />
-    </key>
-    <key>
-	  <default display="1" />                
-	  <shifted display="!" />
-    </key>
-    <key>
-	  <default display="2" />                
-	  <shifted display='@' />
-          <mod1    display="½" />
-    </key>
-    <key>
-	  <default display="3" />
-	  <shifted display="#" />
-          <mod1    display="¾" />               
-    </key>
-    <key>
-	  <default display="4" />
-	  <shifted display="$" />                
-    </key>
-    <key>
-	  <default display="5" />
-	  <shifted display="%" />                
-    </key>
-    <key>
-	  <default display="6" />
-	  <shifted display="^" />                
-    </key>
-    <key>
-	  <default display="7" />
-	  <shifted display="&amp;" />                
-    </key>
-    <key>
-	  <default display="8" />
-	  <shifted display="*" />                
-    </key>
-    <key>
-	  <default display="9" />
-	  <shifted display="(" />                
-    </key>
-    <key>
-	  <default display="0" />
-	  <shifted display=")" />                
-    </key>
-    <key>
-	  <default display="-" />
-	  <shifted display="_" />                
-    </key>
-    <key>
-	  <default display="=" />
-	  <shifted display="+" />                
-    </key>
-
-    <key fill="true">
-	  <default display="Bksp" action="backspace"/>
-    </key>
-
-    <space width="500" extended="true"/>
-
-    <key width="4000"  extended="true">
-	  <default display="Home" action="home"/>
-    </key>
-    <key width="4000"  extended="true">
-	  <default display="PgUp" action="pageup"/>
-    </key>
-
-    <space width="500" extended="true"/>
-
-
-  </row>
-
-  <row>
-
-    <space width="500" extended="true"/>
-
-    <key fill="true">
-	  <default display="Tab" action="tab"/>                
-    </key>
-    <key obey-caps='true'>
-	  <default display="q" />                
-	  <shifted display="Q" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="w" />                
-	  <shifted display="W" />
-    </key>
-    <key obey-caps='true'>
-	  <mod1 display="ë" />
-	  <default    display="e" />                
-	  <shifted display="E" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="r" />                
-	  <shifted display="R" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="t" />                
-	  <shifted display="T" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="y" />                
-	  <shifted display="Y" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="u" />                
-	  <shifted display="U" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="i" />                
-	  <shifted display="I" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="o" />                
-	  <shifted display="O" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="p" />                
-	  <shifted display="P" />
-    </key>
-    <key>
-	  <default display="[" />                
-	  <shifted display="{" />
-    </key>
-    <key>
-	  <default display="]" />                
-	  <shifted display="}" />
-    </key>
-    <key fill="true">
-	  <default display="\" />                
-	  <shifted display="|" />
-    </key>
-
-    <space width="500" extended="true"/>
-
-    <key width="4000"  extended="true">
-	  <default display="End" action="end"/>
-    </key>
-    <key width="4000"  extended="true">
-	  <default display="PgDn" action="pagedown"/>
-    </key>
-
-    <space width="500" extended="true"/>
-
-  </row>
-  <row>
-
-    <space width="500" extended="true"/>
-
-    <key fill="true">
-	  <default display="Caps" action="modifier:caps"/>                
-    </key>
-    <key obey-caps='true'>
-	  <default display="a" />                
-	  <shifted display="A" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="s" />                
-	  <shifted display="S" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="d" />                
-	  <shifted display="D" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="f" />                
-	  <shifted display="F" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="g" />                
-	  <shifted display="G" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="h" />                
-	  <shifted display="H" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="j" />                
-	  <shifted display="J" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="k" />                
-	  <shifted display="K" />
-    </key>
-    <key obey-caps='true'>
-	  <default display="l" />                
-	  <shifted display="L" />
-    </key>
-    <key>
-	  <default display=";" />                
-	  <shifted display=":" />
-    </key>
-    <key>
-	  <default display="'" />                
-	  <shifted display='"' />
-    </key>
-    <key fill="true">
-	  <default display="Ret" action="return"/>
-    </key>
-
-    <space width="500" extended="true"/>
-
-    <space width="4000"  extended="true" />
-
-    <space width="4000"  extended="true" />
-
-    <space width="500" extended="true"/>
-
-
-  </row>
-  <row>
-
-    <space width="500" extended="true"/>
-
-    <key fill="true">
-	  <default display="Shift" action="modifier:shift"/>                
-    </key>
-
-    <key obey-caps='true'>
-	  <default display="z" />                
-	  <shifted display="Z" />
-    </key>
-
-    <key obey-caps='true'>
-	  <default display="x" />                
-	  <shifted display="X" />
-    </key>
-
-    <key obey-caps='true'>
-	  <default display="c" />                
-	  <shifted display="C" />
-    </key>
-
-    <key obey-caps='true'>
-	  <default display="v" />                
-	  <shifted display="V" />
-    </key>
-
-    <key obey-caps='true'>
-	  <default display="b" />                
-	  <shifted display="B" />
-    </key>
-
-    <key obey-caps='true'>
-	  <default display="n" />                
-	  <shifted display="N" />
-    </key>
-
-    <key obey-caps='true'>
-	  <default display="m" />                
-	  <shifted display="M" />
-    </key>
-
-    <key>
-	  <default display="," />                
-	  <shifted display="&lt;" />
-    </key>
-    <key>
-	  <default display="." />                
-	  <shifted display="&gt;" />
-    </key>
-    <key>
-	  <default display="/" />                
-	  <shifted display="?" />
-    </key>
-
-
-    <key fill="true">
-	  <default display="Shift" action="modifier:shift"/>                
-    </key>
-
-    <space width="500" extended="true"/>
-
-    <space width="4000"  extended="true" />
-
-    <space width="4000"  extended="true" />
-
-    <space width="500" extended="true"/>
-
-
-
- </row>
-  <row>
-
-    <space width="500" extended="true"/>
-
-    <key>
-	  <default display="äëö" action="modifier:mod1"/>                
-    </key>
-
-    <key fill="true">
-	  <default display="Ctrl" action="modifier:ctrl"/>                
-    </key>
-
-    <key>
-	  <default display="Alt" action="modifier:alt"/>                
-    </key>
-
-
-    <key width="12000">
-	  <default display=" " action="space" />                
-    </key>
-
-    <key>
-	  <default display="^" action="up" />                
-    </key>
-    <key>
-	  <default display="V" action="down" />                
-    </key>
-    <key>
-	  <default display="&lt;" action="left" />                
-    </key>
-    <key>
-	  <default display="&gt;" action="right" />                
-    </key>
-
-    <space width="500" extended="true"/>
-
-    <space width="4000"  extended="true" />
-
-    <space width="4000"  extended="true" />
-
-    <space width="500" extended="true"/>
-
-</row>
-
-</layout>
-
-
+  <options/>
+  <layout id="default keyboard">
+    <row>
+      <key>
+        <default display="1"/>
+        <shifted display="!"/>
+        <mod1 display="Esc" action="escape"/>
+      </key>
+      <key>
+        <default display="2"/>
+        <shifted display="@"/>
+        <mod1 display="Tab" action="tab"/>
+      </key>
+      <key>
+        <default display="3"/>
+        <shifted display="#"/>
+        <mod1 display="Home" action="home"/>
+      </key>
+      <key>
+        <default display="4"/>
+        <shifted display="$"/>
+        <mod1 display="PgUp" action="pageup"/>
+      </key>
+      <key>
+        <default display="5"/>
+        <shifted display="%"/>
+        <mod1 display="End" action="end"/>
+      </key>
+      <key>
+        <default display="6"/>
+        <shifted display="^"/>
+        <mod1 display="PgDn" action="pagedown"/>
+      </key>
+      <key>
+        <default display="7"/>
+        <shifted display="&amp;"/>
+        <mod1 display="←" action="left"/>
+      </key>
+      <key>
+        <default display="8"/>
+        <shifted display="*"/>
+        <mod1 display="↓" action="down"/>
+      </key>
+      <key>
+        <default display="9"/>
+        <shifted display="("/>
+        <mod1 display="↑" action="up"/>
+      </key>
+      <key>
+        <default display="0"/>
+        <shifted display=")"/>
+        <mod1 display="→" action="right"/>
+      </key>
+    </row>
+    <row>
+      <key obey-caps="true">
+        <default display="q"/>
+        <shifted display="Q"/>
+        <mod1 display="["/>
+      </key>
+      <key obey-caps="true">
+        <default display="w"/>
+        <shifted display="W"/>
+        <mod1 display="]"/>
+      </key>
+      <key obey-caps="true">
+        <default display="e"/>
+        <shifted display="E"/>
+        <mod1 display="{"/>
+      </key>
+      <key obey-caps="true">
+        <default display="r"/>
+        <shifted display="R"/>
+        <mod1 display="}"/>
+      </key>
+      <key obey-caps="true">
+        <default display="t"/>
+        <shifted display="T"/>
+        <mod1 display="\"/>
+      </key>
+      <key obey-caps="true">
+        <default display="y"/>
+        <shifted display="Y"/>
+        <mod1 display="|"/>
+      </key>
+      <key obey-caps="true">
+        <default display="u"/>
+        <shifted display="U"/>
+        <mod1 display="`"/>
+      </key>
+      <key obey-caps="true">
+        <default display="i"/>
+        <shifted display="I"/>
+        <mod1 display="~"/>
+      </key>
+      <key obey-caps="true">
+        <default display="o"/>
+        <shifted display="O"/>
+        <mod1 display="-"/>
+      </key>
+      <key obey-caps="true">
+        <default display="p"/>
+        <shifted display="P"/>
+        <mod1 display="_"/>
+      </key>
+    </row>
+    <row>
+      <space width="500"/>
+      <key obey-caps="true">
+        <default display="a"/>
+        <shifted display="A"/>
+        <mod1 display="="/>
+      </key>
+      <key obey-caps="true">
+        <default display="s"/>
+        <shifted display="S"/>
+        <mod1 display="+"/>
+      </key>
+      <key obey-caps="true">
+        <default display="d"/>
+        <shifted display="D"/>
+        <mod1 display=";"/>
+      </key>
+      <key obey-caps="true">
+        <default display="f"/>
+        <shifted display="F"/>
+        <mod1 display=":"/>
+      </key>
+      <key obey-caps="true">
+        <default display="g"/>
+        <shifted display="G"/>
+        <mod1 display="'"/>
+      </key>
+      <key obey-caps="true">
+        <default display="h"/>
+        <shifted display="H"/>
+        <mod1 display="&quot;"/>
+      </key>
+      <key obey-caps="true">
+        <default display="j"/>
+        <shifted display="J"/>
+        <mod1 display="/"/>
+      </key>
+      <key obey-caps="true">
+        <default display="k"/>
+        <shifted display="K"/>
+        <mod1 display="?"/>
+      </key>
+      <key obey-caps="true">
+        <default display="l"/>
+        <shifted display="L"/>
+        <mod1 display="@"/>
+      </key>
+      <space width="500"/>
+    </row>
+    <row>
+      <key fill="true" width="1500">
+        <default display="Shift" action="modifier:shift"/>
+        <shifted display="Shift" action="modifier:shift"/>
+        <mod1 display="Shift" action="modifier:shift"/>
+      </key>
+      <key obey-caps="true">
+        <default display="z"/>
+        <shifted display="Z"/>
+        <mod1 display="ä"/>
+      </key>
+      <key obey-caps="true">
+        <default display="x"/>
+        <shifted display="X"/>
+        <mod1 display="ë"/>
+      </key>
+      <key obey-caps="true">
+        <default display="c"/>
+        <shifted display="C"/>
+        <mod1 display="ö"/>
+      </key>
+      <key obey-caps="true">
+        <default display="v"/>
+        <shifted display="V"/>
+        <mod1 display="½"/>
+      </key>
+      <key obey-caps="true">
+        <default display="b"/>
+        <shifted display="B"/>
+        <mod1 display="¾"/>
+      </key>
+      <key obey-caps="true">
+        <default display="n"/>
+        <shifted display="N"/>
+        <mod1 display="&lt;"/>
+      </key>
+      <key obey-caps="true">
+        <default display="m"/>
+        <shifted display="M"/>
+        <mod1 display="&gt;"/>
+      </key>
+      <key fill="true" width="1500">
+        <default display="Bksp" action="backspace"/>
+        <shifted display="Bksp" action="backspace"/>
+        <mod1 display="Del" action="delete"/>
+      </key>
+    </row>
+    <row>
+      <key width="1500">
+        <default display="#+=" action="modifier:mod1"/>
+        <shifted display="#+=" action="modifier:mod1"/>
+        <mod1 display="ABC" action="modifier:mod1"/>
+      </key>
+      <key>
+        <default display="Ctrl" action="modifier:ctrl"/>
+        <mod1 display="Ctrl" action="modifier:ctrl"/>
+      </key>
+      <key>
+        <default display=","/>
+        <shifted display="&lt;"/>
+        <mod1 display=","/>
+      </key>
+      <key width="4000" fill="true">
+        <default display=" " action="space"/>
+        <shifted display=" " action="space"/>
+        <mod1 display=" " action="space"/>
+      </key>
+      <key>
+        <default display="."/>
+        <shifted display="&gt;"/>
+        <mod1 display="."/>
+      </key>
+      <key>
+        <default display="Alt" action="modifier:alt"/>
+        <mod1 display="Alt" action="modifier:alt"/>
+      </key>
+      <key width="1500">
+        <default display="Enter" action="return"/>
+        <shifted display="Enter" action="return"/>
+        <mod1 display="Enter" action="return"/>
+      </key>
+    </row>
+  </layout>
 </keyboard>

@@ -1,19 +1,90 @@
-name: Full firmware qualification (pre-merge)
+name: Firmware request
 
 # No ordinary code commit triggers this expensive build.
 on:
   push:
-    branches: [enhance/native-reliability]
+    branches: [enhance/native-reliability, optimization/debian-runtime]
     paths:
       - '.github/firmware-build-request'
   workflow_dispatch:
+    inputs:
+      kernel_audit:
+        description: Compare isolated kernel compiler configurations
+        type: boolean
+        default: false
+
+concurrency:
+  group: firmware-request-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   full:
+    name: Build
     uses: ./.github/workflows/megi-fel.yml
     secrets: inherit
-    with:
-      debian_only: false
+
+  # Experimental builds never feed the production firmware or its caches.
+  kernel-size-audit:
+    if: ${{ inputs.kernel_audit }}
+    name: 'Kernel audit: ${{ matrix.profile }}'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    continue-on-error: ${{ matrix.profile != 'baseline' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [baseline, thumb2, dead-code, cortex-a8-tune]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends git gcc-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod
+      - name: Build candidate
+        env:
+          PROFILE: ${{ matrix.profile }}
+          ARCH: arm
+          CROSS_COMPILE: arm-linux-gnueabihf-
+        run: |
+          set -euo pipefail
+          mkdir -p kernel-audit
+          arm-linux-gnueabihf-gcc --version > kernel-audit/compiler.txt
+          bash scripts/build-megi-kernel.sh prepare
+          bash scripts/configure-megi-kernel.sh
+          cp linux/.config kernel-audit/baseline.config
+          flags=-Wno-error
+          case "$PROFILE" in
+            thumb2) linux/scripts/config --file linux/.config -e THUMB2_KERNEL ;;
+            dead-code) linux/scripts/config --file linux/.config -e LD_DEAD_CODE_DATA_ELIMINATION ;;
+            cortex-a8-tune) flags="$flags -mtune=cortex-a8" ;;
+            baseline) ;;
+            *) exit 2 ;;
+          esac
+          make -C linux olddefconfig
+          cp linux/.config kernel-audit/candidate.config
+          diff -u kernel-audit/baseline.config kernel-audit/candidate.config > kernel-audit/config.diff || test "$?" = 1
+          cat kernel-audit/config.diff
+          case "$PROFILE" in
+            thumb2) grep -qx 'CONFIG_THUMB2_KERNEL=y' linux/.config ;;
+            dead-code) grep -qx 'CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y' linux/.config ;;
+          esac
+          bash scripts/configure-megi-kernel.sh --check linux/.config
+          printf '%s\n' "$flags" > kernel-audit/kcflags.txt
+          make -C linux -j"$(nproc)" KCFLAGS="$flags" zImage modules
+          {
+            echo "Profile: $PROFILE"
+            arm-linux-gnueabihf-size linux/vmlinux
+            stat -c '%s bytes %n' linux/arch/arm/boot/zImage
+            find linux -type f -name '*.ko' -printf '%s\n' | awk '{s+=$1;n++} END {print n, "modules,", s, "unstripped bytes"}'
+          } | tee kernel-audit/sizes.txt
+      - name: Upload audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pb626-kernel-audit-${{ matrix.profile }}
+          path: kernel-audit/
+          if-no-files-found: ignore

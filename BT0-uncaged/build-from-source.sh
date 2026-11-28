@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Build an independent source candidate. No devices, no writes, never
-# automatically replace the hash-qualified historical BT0.
+# Build the source bootloader and cold-path comparison images. No device access.
 set -Eeuo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(dirname "$here")
@@ -44,7 +43,7 @@ cp .config "$out/fel.config"
 make -j"$(nproc)" spl/u-boot-spl.bin
 # sunxi-spl.bin contains the eGON header; u-boot-spl.bin does not.
 make -j"$(nproc)" spl/sunxi-spl.bin
-cp spl/sunxi-spl.bin "$out/pb626-fel-spl-candidate.bin"
+cp spl/sunxi-spl.bin "$out/pb626-fel-spl-source.bin"
 "${CROSS_COMPILE}objdump" -d spl/u-boot-spl >"$out/fel-disassembly.txt"
 "${CROSS_COMPILE}nm" -n spl/u-boot-spl >"$out/fel-symbols.txt"
 # Preserve the source for actual DRAM resume review. The upstream
@@ -98,7 +97,7 @@ grep -Fx 'CONFIG_SPL_LEGACY_IMAGE_SUPPORT=y' .config
 grep -Fx 'CONFIG_MMC_SUNXI_SLOT_EXTRA=2' .config
 cp .config "$out/native.config"
 make -j"$(nproc)" spl/u-boot-spl.bin spl/sunxi-spl.bin
-cp spl/sunxi-spl.bin "$out/BT0-uncaged-source-candidate.bin"
+cp spl/sunxi-spl.bin "$out/BT0-uncaged-cold.bin"
 cp spl/u-boot-spl "$out/spl.elf"
 "${CROSS_COMPILE}nm" spl/u-boot-spl | grep -E 'pb626_menu_hook|save_boot_params' >"$out/native-symbols.txt"
 grep -q pb626_menu_hook "$out/native-symbols.txt"
@@ -124,8 +123,8 @@ printf '%s\n' "$rev" >"$out/UBOOT-REV"
 cd "$repo"
 "${CROSS_COMPILE}as" -march=armv7-a "$here/fel-entry.S" -o "$work/entry.o"
 "${CROSS_COMPILE}ld" -Ttext=0x41000000 -e _start "$work/entry.o" -o "$work/entry.elf"
-"${CROSS_COMPILE}objcopy" -O binary -j .text "$work/entry.elf" "$out/direct-entry-candidate.bin"
-(cd "$out" && echo "1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd  direct-entry-candidate.bin" | sha256sum -c -)
+"${CROSS_COMPILE}objcopy" -O binary -j .text "$work/entry.elf" "$out/direct-entry-source.bin"
+(cd "$out" && echo "1a0044b4533ce91bb1f19f5fef9f1356242d3855cadd4087cc1c6a6ac22a21dd  direct-entry-source.bin" | sha256sum -c -)
 git init -q "$work/sunxi-tools"
 toolsrev=0237931bb3d66de17c441a3c94d0e4b39e1308d1
 git -C "$work/sunxi-tools" fetch -q --depth=1 https://github.com/linux-sunxi/sunxi-tools.git "$toolsrev"
@@ -137,15 +136,14 @@ make -C "$work/sunxi-tools" sunxi-fel
 cp "$work/sunxi-tools/sunxi-fel" "$out/"
 printf '%s\n' "$toolsrev" >"$out/SUNXI-TOOLS-REV"
 (cd "$out" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum >SHA256SUMS)
-# Build the experimental deep-resume variant separately. The ordinary
-# source-built candidates and their manifest remain intact if this fails.
+# Build the resume-capable native SPL after the cold-path comparison binary.
 cd "$work/u-boot"
-mkdir -p "$out/deep-resume"
+mkdir -p "$out/resume"
 python3 "$here/prepare-source-resume.py" "$PWD"
 make -j"$(nproc)" spl/u-boot-spl.bin spl/sunxi-spl.bin
-cp spl/sunxi-spl.bin "$out/deep-resume/BT0-uncaged-deep-candidate.bin"
-cp spl/u-boot-spl "$out/deep-resume/spl.elf"
-python3 - "$out/deep-resume/BT0-uncaged-deep-candidate.bin" <<'PY'
+cp spl/sunxi-spl.bin "$out/resume/BT0-uncaged-resume.bin"
+cp spl/u-boot-spl "$out/resume/spl.elf"
+python3 - "$out/resume/BT0-uncaged-resume.bin" <<'PY'
 import pathlib,struct,sys
 p=pathlib.Path(sys.argv[1])
 b=bytearray(p.read_bytes())
@@ -154,13 +152,13 @@ n,want=struct.unpack_from("<II",b,12)[::-1]
 assert n==24576
 struct.pack_into("<I",b,12,0x5f0a6c39)
 assert sum(struct.unpack("<%dI"%(n//4),b))&0xffffffff==want
-print("Verified deep candidate eGON checksum and native slot size:",n)
+print("Verified resume SPL eGON checksum and native slot size:",n)
 PY
-git diff >"$out/deep-resume/uboot-source-changes.patch"
-"${CROSS_COMPILE}nm" spl/u-boot-spl | grep -E 'pb626_menu_hook|save_boot_params|pb626_try_resume|dramc_init' >"$out/deep-resume/symbols.txt"
-"${CROSS_COMPILE}objdump" -d spl/u-boot-spl >"$out/deep-resume/disassembly.txt"
-"${CROSS_COMPILE}nm" -n spl/u-boot-spl >"$out/deep-resume/all-symbols.txt"
-for symbol in pb626_led_boot_start pb626_led_boot_tick pb626_led_error; do grep -Eq " [Tt] $symbol$" "$out/deep-resume/all-symbols.txt"; done
-cp .config "$out/deep-resume/native.config"
-(cd "$out/deep-resume" && sha256sum *.bin *.elf *.patch *.txt *.config >SHA256SUMS)
-echo 'SOURCE CANDIDATES ONLY: no flash approval; no demonstrated deep resume'
+git diff >"$out/resume/uboot-source-changes.patch"
+"${CROSS_COMPILE}nm" spl/u-boot-spl | grep -E 'pb626_menu_hook|save_boot_params|pb626_try_resume|dramc_init' >"$out/resume/symbols.txt"
+"${CROSS_COMPILE}objdump" -d spl/u-boot-spl >"$out/resume/disassembly.txt"
+"${CROSS_COMPILE}nm" -n spl/u-boot-spl >"$out/resume/all-symbols.txt"
+for symbol in pb626_led_boot_start pb626_led_boot_tick pb626_led_error; do grep -Eq " [Tt] $symbol$" "$out/resume/all-symbols.txt"; done
+cp .config "$out/resume/native.config"
+(cd "$out/resume" && sha256sum *.bin *.elf *.patch *.txt *.config >SHA256SUMS)
+echo 'Bootloader images built; hardware acceptance remains separate.'

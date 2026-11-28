@@ -19,6 +19,11 @@ case "$1" in
         test "$#" = 1
         printf 'PB626-NCM-1\n'
         ;;
+    identity)
+        test "$#" = 1
+        test -f /etc/pb626-windows-build
+        cat /etc/pb626-windows-build
+        ;;
     test)
         test "$#" = 2
         work=$(mktemp /run/pb626-net-test.XXXXXX)
@@ -65,7 +70,9 @@ case "$1" in
         case "$1" in
             write) test "$#" = 8 ;;
             file) test "$#" = 6 ;;
-            reset-data|check-data|personalize) test "$#" = 2 ;;
+            native-check|chunk-hash) test "$#" = 5 ;;
+            modules-check) test "$#" = 4 ;;
+            reset-data|check-data|personalize|bootloader-hash|spl-check) test "$#" = 2 ;;
             *) fail 'Invalid direct operation' ;;
         esac
         cid_check "$2"

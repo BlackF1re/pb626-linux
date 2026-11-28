@@ -53,6 +53,20 @@ lock_state() {
     exec 9>"$state/settings.lock"
     flock -x -w 5 9 || { echo "Board settings are busy; retry" >&2; exit 1; }
 }
+# Called under settings.lock. Merge only the validated section's keys;
+# never source EnvironmentFile data or overwrite unrelated preferences.
+desktop_patch() {
+    keys=$1; shift
+    old=
+    if [ -r "$state/desktop.conf" ]; then
+        old=$(awk -F= -v keys="$keys" 'BEGIN {n=split(keys,k," "); for(i=1;i<=n;i++) drop[k[i]]=1} !($1 in drop)' "$state/desktop.conf")
+    fi
+    if [ -n "$old" ]; then
+        atomic_save desktop.conf "$old" "$@"
+    else
+        atomic_save desktop.conf "$@"
+    fi
+}
 valid_governor() {
     case "$1" in ondemand|conservative|powersave|performance|schedutil) return 0 ;; *) return 2 ;; esac
 }
@@ -186,7 +200,7 @@ read_battery() {
 }
 valid_button_action() {
     case "$1" in
-        none|Left|Right|Up|Down|Page_Up|Page_Down|Home|End|Escape|Return|BackSpace|Tab|space|Menu|F[1-9]|F1[012]|keyboard|refresh|light-toggle) return 0 ;;
+        none|Left|Right|Up|Down|Page_Up|Page_Down|Home|End|Escape|Return|BackSpace|Tab|space|Menu|F[1-9]|F1[012]|keyboard|refresh|light-toggle|recent-apps) return 0 ;;
         *) return 2 ;;
     esac
 }
@@ -197,7 +211,7 @@ button_defaults() {
         if grep -qx PB626_HOME_KEY=home "$state/desktop.conf"; then home=Home; fi
         if grep -qx PB626_MENU_KEY=escape "$state/desktop.conf"; then menu=Escape; fi
     fi
-    printf '%s\n' "$left none none $right none none $home none none $menu refresh none"
+    printf '%s\n' "$left none none $right none none $home recent-apps none $menu refresh none"
 }
 case "${1:-}" in
 frontlight|light-level|light-on|light-off|light-toggle)
@@ -312,8 +326,74 @@ desktop-settings)
     fast_mode=${8-du}
     case "$fast_mode" in du|auto|a2|du4) ;; *) exit 2 ;; esac
     lock_state
-    atomic_save desktop.conf "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" \
-        "PB626_MENU_KEY=$4" "PB626_EPD_GRAY_PROFILE=$5" "PB626_XORG_DEPTH=$6" "PB626_IDLE_MINUTES=$7" "PB626_EPD_FAST_MODE=$fast_mode"
+    desktop_patch 'PB626_BUTTONS PB626_HOME_KEY PB626_MENU_KEY PB626_EPD_GRAY_PROFILE PB626_XORG_DEPTH PB626_IDLE_MINUTES PB626_EPD_FAST_MODE' \
+        "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" "PB626_MENU_KEY=$4" "PB626_EPD_GRAY_PROFILE=$5" \
+        "PB626_XORG_DEPTH=$6" "PB626_IDLE_MINUTES=$7" "PB626_EPD_FAST_MODE=$fast_mode"
+    ;;
+desktop-display)
+    [ "$#" -eq 8 ] && valid_desktop arrows keyboard menu "$2" "$3" 0 || exit 2
+    case "$4" in du|auto|a2|du4) ;; *) exit 2 ;; esac
+    case "$5" in srgb|cie-lstar) ;; *) exit 2 ;; esac
+    case "$6" in 0.5|0.6|0.7|0.8|0.9|1.0|1.1|1.2|1.3|1.4|1.5|1.6|1.7|1.8|1.9|2.0) ;; *) exit 2 ;; esac
+    case "$7" in 0|1) ;; *) exit 2 ;; esac
+    case "$8" in 0) ;; 1) [ -f /etc/pb626/mixed-waveform-qualified ] && [ "$7" = 0 ] || exit 2 ;; *) exit 2 ;; esac
+    lock_state
+    desktop_patch 'PB626_EPD_GRAY_PROFILE PB626_XORG_DEPTH PB626_EPD_FAST_MODE PB626_EPD_TONE PB626_EPD_GAMMA PB626_EPD_APPROX_PREVIEW PB626_EPD_MIXED' \
+        "PB626_EPD_GRAY_PROFILE=$2" "PB626_XORG_DEPTH=$3" "PB626_EPD_FAST_MODE=$4" \
+        "PB626_EPD_TONE=$5" "PB626_EPD_GAMMA=$6" "PB626_EPD_APPROX_PREVIEW=$7" "PB626_EPD_MIXED=$8"
+    ;;
+desktop-buttons)
+    [ "$#" -eq 4 ] && valid_desktop "$2" "$3" "$4" balanced 16 0 || exit 2
+    lock_state
+    desktop_patch 'PB626_BUTTONS PB626_HOME_KEY PB626_MENU_KEY' \
+        "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" "PB626_MENU_KEY=$4"
+    ;;
+desktop-taskbar)
+    [ "$#" -eq 3 ] || exit 2
+    case "$2" in 0|1) ;; *) exit 2 ;; esac
+    case "$3" in 32|40|48|56|64|72) ;; *) exit 2 ;; esac
+    lock_state
+    desktop_patch 'PB626_TASKBAR PB626_TASKBAR_SIZE' "PB626_TASKBAR=$2" "PB626_TASKBAR_SIZE=$3"
+    ;;
+desktop-appearance)
+    [ "$#" -eq 3 ] || exit 2
+    case "$2" in 32|40|48|56|64|72) ;; *) exit 2 ;; esac
+    case "$3" in 32|40|48|56|64) ;; *) exit 2 ;; esac
+    lock_state
+    desktop_patch 'PB626_PANEL_SIZE PB626_TITLEBAR_SIZE' "PB626_PANEL_SIZE=$2" "PB626_TITLEBAR_SIZE=$3"
+    ;;
+desktop-dpi)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in auto|96|120|144|168|192|216) ;; *) exit 2 ;; esac
+    lock_state
+    desktop_patch 'PB626_UI_DPI' "PB626_UI_DPI=$2"
+    ;;
+desktop-hold)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in 300|500|750|1000|1500|2000) ;; *) exit 2 ;; esac
+    lock_state
+    desktop_patch 'PB626_BUTTON_HOLD_MS' "PB626_BUTTON_HOLD_MS=$2"
+    ;;
+desktop-idle)
+    [ "$#" -eq 2 ] && valid_desktop arrows keyboard menu balanced 16 "$2" || exit 2
+    lock_state
+    desktop_patch 'PB626_IDLE_MINUTES' "PB626_IDLE_MINUTES=$2"
+    ;;
+timezone)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in ''|-*|*[!a-zA-Z0-9_+/-]*) exit 2 ;; esac
+    timedatectl list-timezones | grep -Fxq -- "$2" || exit 2
+    exec timedatectl set-timezone "$2"
+    ;;
+manual-time)
+    [ "$#" -eq 3 ] || exit 2
+    # Strict local civil timestamp; no arbitrary timedatectl options or
+    # implicit NTP changes. systemd refuses manual time while NTP is on.
+    case "$2" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) exit 2 ;; esac
+    case "$3" in [0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;; *) exit 2 ;; esac
+    normalized=$(date -d "$2 $3" '+%F %T') || exit 2
+    [ "$normalized" = "$2 $3" ] || exit 2
+    exec timedatectl set-time "$2 $3"
     ;;
 restart-desktop)
     [ "$#" -eq 1 ] || exit 2
@@ -321,13 +401,16 @@ restart-desktop)
     ;;
 power-key)
     [ "$#" -eq 2 ] || exit 2
-    case "$2" in ignore|lock|poweroff) ;; s2idle) [ -f /etc/pb626/suspend-qualified ] || exit 2 ;; *) exit 2 ;; esac
+    case "$2" in ignore|lock|poweroff) ;; suspend|s2idle) [ -f /etc/pb626/suspend-qualified ] || exit 2 ;; *) exit 2 ;; esac
     lock_state
-    atomic_save power-key "$2"
+    if [ "$2" = s2idle ]; then atomic_save power-key suspend; else atomic_save power-key "$2"; fi
     ;;
 power-key-status)
     [ "$#" -eq 1 ] || exit 2
-    if [ -r "$state/power-key" ]; then cat "$state/power-key"; else echo lock; fi
+    if [ -r "$state/power-key" ]; then
+        value=$(cat "$state/power-key")
+        if [ "$value" = s2idle ]; then echo suspend; else printf '%s\n' "$value"; fi
+    else echo lock; fi
     ;;
 lock-indicator)
     [ "$#" -eq 2 ] || exit 2
@@ -369,9 +452,31 @@ lock-indicator)
     *) exit 2 ;;
     esac
     ;;
-suspend)
+suspend|suspend-idle)
     [ "$#" -eq 1 ] || exit 2
     [ -f /etc/pb626/suspend-qualified ] || { echo "Suspend not qualified on this board" >&2; exit 1; }
+    if [ "$1" = suspend-idle ]; then
+        # The factory policy checks charging, USB and active networking
+        # before unattended sleep. Use modern kernel state, not BSP IPC.
+        # Unknown power/link state also blocks automatic sleep. Explicit
+        # suspend remains available subject to logind inhibitors.
+        if ! battery_capacity >/dev/null; then
+            echo "Idle suspend skipped: not confirmed on battery" >&2
+            exit 0
+        fi
+        for iface in /sys/class/net/*; do
+            [ -d "$iface" ] || continue
+            [ "${iface##*/}" != lo ] || continue
+            if ! read -r link <"$iface/operstate"; then
+                echo "Idle suspend skipped: unknown link state" >&2
+                exit 0
+            fi
+            case "$link" in
+                down|lowerlayerdown|notpresent) ;;
+                *) echo "Idle suspend skipped: network link ${iface##*/} is $link" >&2; exit 0 ;;
+            esac
+        done
+    fi
     exec systemctl --no-block --check-inhibitors=yes suspend
     ;;
 wifi-on)

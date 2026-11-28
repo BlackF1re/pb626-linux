@@ -38,7 +38,7 @@
 #endif
 
 enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 180000, QUIET_US = 300000,
-       MAX_PENDING_US = 850000,
+       MAX_PENDING_US = 850000, CAPTURE_COALESCE_US = 24000, WINDOW_COALESCE_US = 64000,
        CLEAN_QUIET_US = 1200000, LARGE_CLEAN_QUIET_US = 5000000,
        LARGE_CLEAN_PIXELS = PIXELS / 16, CLEAN_AFTER = 8, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
@@ -108,7 +108,7 @@ static int power_action(const char *action, const char *arg)
 	return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
 }
 
-enum power_policy { POWER_LOCK, POWER_S2IDLE, POWER_IGNORE, POWER_OFF };
+enum power_policy { POWER_LOCK, POWER_SUSPEND, POWER_IGNORE, POWER_OFF };
 static enum power_policy power_policy(void)
 {
 	char value[32];
@@ -119,7 +119,7 @@ static enum power_policy power_policy(void)
 	fclose(file);
 	if (got != 1)
 		return POWER_LOCK;
-	if (!strcmp(value, "s2idle")) return POWER_S2IDLE;
+	if (!strcmp(value, "suspend") || !strcmp(value, "s2idle")) return POWER_SUSPEND;
 	if (!strcmp(value, "ignore")) return POWER_IGNORE;
 	if (!strcmp(value, "poweroff")) return POWER_OFF;
 	return POWER_LOCK;
@@ -149,6 +149,7 @@ static void release_lock(Display *d)
 /* A complete short press/release toggles. Repeats and orphan releases
  * cannot initiate a sleep operation. */
 struct power_input { uint64_t pressed; int dropped; };
+enum sleep_phase { SLEEP_AWAKE, SLEEP_PREPARED, SLEEP_RESUMING };
 
 static int power_press(int fd, struct power_input *state)
 {
@@ -182,12 +183,22 @@ static int power_press(int fd, struct power_input *state)
 	return count;
 }
 
+/* Drop gestures queued during preparation/resume, including an orphan
+ * release from a key held across the physical frame ACK. Preserve the
+ * SYN_DROPPED state until the next SYN_REPORT. */
+static void discard_power_edges(int fd, struct power_input *state)
+{
+	if (fd >= 0)
+		(void)power_press(fd, state);
+	state->pressed = 0;
+}
+
 enum { BUTTON_KEYS = 4, BUTTON_GESTURES = 3, DOUBLE_US = 350000 };
 enum gesture { SHORT_PRESS, LONG_PRESS, DOUBLE_PRESS };
 struct button_binding {
 	char action[BUTTON_GESTURES][24];
-	uint64_t pressed, deadline;
-	int down, second, pending;
+	uint64_t pressed, deadline, hold_due;
+	int down, second, pending, long_fired;
 };
 
 struct controls {
@@ -195,7 +206,7 @@ struct controls {
 	struct button_binding bindings[BUTTON_KEYS];
 	int fallback, vertical, pointer_visible, clean_requested, keyboard_changed;
 	int page_keys, home_key, menu_escape;
-	uint64_t menu_pressed;
+	uint64_t menu_pressed, menu_due, hold_us;
 };
 
 static void keyboard_command(Display *display, Window root, Atom command, long operation)
@@ -255,11 +266,25 @@ static int valid_button_action(const char *name)
 		"none", "Left", "Right", "Up", "Down", "Page_Up", "Page_Down",
 		"Home", "End", "Escape", "Return", "BackSpace", "Tab", "space", "Menu",
 		"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
-		"keyboard", "refresh", "light-toggle",
+		"keyboard", "refresh", "light-toggle", "recent-apps",
 	};
 	for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++)
 		if (!strcmp(name, allowed[i])) return 1;
 	return 0;
+}
+
+static void default_button_bindings(struct controls *controls)
+{
+	const char *actions[BUTTON_KEYS][BUTTON_GESTURES] = {
+		{controls->page_keys ? "Page_Up" : "Left", "none", "none"},
+		{controls->page_keys ? "Page_Down" : "Right", "none", "none"},
+		{controls->home_key ? "Home" : "keyboard", "recent-apps", "none"},
+		{controls->menu_escape ? "Escape" : "Menu", "refresh", "none"},
+	};
+	for (int i = 0; i < BUTTON_KEYS; i++)
+		for (int j = 0; j < BUTTON_GESTURES; j++)
+			snprintf(controls->bindings[i].action[j],
+				 sizeof(controls->bindings[i].action[j]), "%s", actions[i][j]);
 }
 
 static int load_button_bindings(struct controls *controls)
@@ -278,6 +303,14 @@ static int load_button_bindings(struct controls *controls)
 	fclose(f);
 	if (!valid) fprintf(stderr, "pb626: invalid button bindings; using legacy defaults\n");
 	return valid;
+}
+
+static uint64_t button_hold_us(const char *value)
+{
+	static const char *const allowed[] = { "300", "500", "750", "1000", "1500", "2000" };
+	for (size_t i = 0; value && i < sizeof(allowed) / sizeof(allowed[0]); i++)
+		if (!strcmp(value, allowed[i])) return (uint64_t)atoi(value) * 1000;
+	return MENU_HOLD_US;
 }
 
 static int binding_index(unsigned int key)
@@ -302,6 +335,20 @@ static int dispatch_binding(Display *d, Window root, Atom keyboard,
 	if (!strcmp(action, "keyboard")) {
 		keyboard_command(d, root, keyboard, KEYBOARD_TOGGLE);
 		controls->keyboard_changed = 1;
+	} else if (!strcmp(action, "recent-apps")) {
+		/* Debian Matchbox's stock kbdconfig binds Alt+space to taskmenu.
+		 * Reuse the WM's live application list without a resident helper. */
+		KeyCode alt = XKeysymToKeycode(d, XK_Alt_L);
+		KeyCode space = XKeysymToKeycode(d, XK_space);
+		if (alt && space) {
+			char keys[32];
+			XQueryKeymap(d, keys);
+			int alt_down = ((unsigned char)keys[alt / 8] >> (alt % 8)) & 1;
+			if (!alt_down) XTestFakeKeyEvent(d, alt, True, CurrentTime);
+			XTestFakeKeyEvent(d, space, True, CurrentTime);
+			XTestFakeKeyEvent(d, space, False, CurrentTime);
+			if (!alt_down) XTestFakeKeyEvent(d, alt, False, CurrentTime);
+		}
 	} else if (!strcmp(action, "light-toggle")) {
 		(void)power_action("light-toggle", NULL);
 	} else {
@@ -326,7 +373,7 @@ static int binding_event(Display *d, Window root, Atom keyboard,
 	uint64_t stamp = (uint64_t)e->input_event_sec * 1000000 + e->input_event_usec;
 	int changed = 0, has_long = strcmp(b->action[LONG_PRESS], "none") != 0;
 	int has_double = strcmp(b->action[DOUBLE_PRESS], "none") != 0;
-	if (e->value == 1 && b->pending && now >= b->deadline) {
+	if (e->value == 1 && !b->down && b->pending && now >= b->deadline) {
 		changed |= dispatch_binding(d, root, keyboard, controls, b->action[SHORT_PRESS]);
 		b->pending = 0;
 	}
@@ -341,10 +388,16 @@ static int binding_event(Display *d, Window root, Atom keyboard,
 			b->down = 1;
 			b->pressed = stamp;
 			b->second = b->pending;
+			b->long_fired = 0;
+			b->hold_due = has_long ? now + controls->hold_us : 0;
 		}
 	} else if (e->value == 0 && b->down) {
 		b->down = 0;
-		if (has_long && stamp >= b->pressed && stamp - b->pressed >= MENU_HOLD_US) {
+		b->hold_due = 0;
+		if (b->long_fired) {
+			/* The action already ran while the key was held. */
+			b->long_fired = 0;
+		} else if (has_long && stamp >= b->pressed && stamp - b->pressed >= controls->hold_us) {
 			if (b->second)
 				changed |= dispatch_binding(d, root, keyboard, controls, b->action[SHORT_PRESS]);
 			b->pending = 0;
@@ -370,7 +423,15 @@ static int flush_bindings(Display *d, Window root, Atom keyboard,
 	for (int i = 0; i < BUTTON_KEYS; i++) {
 		struct button_binding *b = &controls->bindings[i];
 		if (screen_locked) {
-			b->down = b->pending = b->second = 0;
+			b->down = b->pending = b->second = b->long_fired = 0;
+			b->hold_due = 0;
+		} else if (b->down && b->hold_due && now >= b->hold_due) {
+			if (b->second)
+				changed |= dispatch_binding(d, root, keyboard, controls, b->action[SHORT_PRESS]);
+			b->pending = b->second = 0;
+			b->hold_due = 0;
+			b->long_fired = 1;
+			changed |= dispatch_binding(d, root, keyboard, controls, b->action[LONG_PRESS]);
 		} else if (b->pending && !b->down && now >= b->deadline) {
 			b->pending = 0;
 			changed |= dispatch_binding(d, root, keyboard, controls, b->action[SHORT_PRESS]);
@@ -384,9 +445,34 @@ static uint64_t binding_deadline(const struct controls *controls)
 	if (screen_locked) return deadline;
 	for (int i = 0; i < BUTTON_KEYS; i++) {
 		const struct button_binding *b = &controls->bindings[i];
+		if (b->down && b->hold_due && b->hold_due < deadline) deadline = b->hold_due;
 		if (b->pending && !b->down && b->deadline < deadline) deadline = b->deadline;
 	}
 	return deadline;
+}
+
+/* Legacy Menu (including hardware pointer fallback) uses the same
+ * monotonic timer, without changing its short-press semantics. */
+static int flush_menu(struct controls *controls, uint64_t now)
+{
+	if (screen_locked) {
+		controls->menu_pressed = controls->menu_due = 0;
+	} else if (controls->menu_due && now >= controls->menu_due) {
+		controls->menu_pressed = controls->menu_due = 0;
+		controls->clean_requested = 1;
+		return 1;
+	}
+	return 0;
+}
+
+static void cancel_button_gestures(struct controls *controls)
+{
+	controls->menu_pressed = controls->menu_due = 0;
+	for (int i = 0; i < BUTTON_KEYS; i++) {
+		struct button_binding *b = &controls->bindings[i];
+		b->down = b->pending = b->second = b->long_fired = 0;
+		b->hold_due = 0;
+	}
 }
 
 static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
@@ -409,10 +495,11 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 		if (event.code == KEY_MENU) {
 			uint64_t now = (uint64_t)event.input_event_sec * 1000000 +
 				       event.input_event_usec;
-			if (event.value == 1) {
+			if (event.value == 1 && !controls->menu_due) {
 				controls->menu_pressed = now;
-			} else if (event.value == 0 && controls->menu_pressed) {
-				if (now >= controls->menu_pressed + MENU_HOLD_US) {
+				controls->menu_due = now_us() + controls->hold_us;
+			} else if (event.value == 0 && controls->menu_due) {
+				if (now >= controls->menu_pressed && now - controls->menu_pressed >= controls->hold_us) {
 					controls->clean_requested = 1;
 					changed = 1;
 				} else if (controls->fallback && controls->pointer_visible) {
@@ -425,7 +512,7 @@ static int handle_buttons(Display *display, Window root, Atom keyboard, int fd,
 						XTestFakeKeyEvent(display, menu, False, CurrentTime);
 					}
 				}
-				controls->menu_pressed = 0;
+				controls->menu_pressed = controls->menu_due = 0;
 			}
 			continue;
 		}
@@ -638,7 +725,7 @@ static inline uint8_t quantize_reference(unsigned int value, unsigned int contra
 /* Cache the exact reference mapping in screen phase order. Each position
  * needs one byte lookup, and strong edges retain the nearest gray level.
  */
-static uint8_t quant_table[16][16][256], nearest_level[256];
+static uint8_t quant_table[16 * 16][256], nearest_level[256];
 static int quant_reference;
 
 static void setup_quantization(void)
@@ -647,13 +734,14 @@ static void setup_quantization(void)
 	if (quant_reference)
 		return;
 	int period = gray_profile == GRAY_PHOTO ? 16 : 4;
-	for (int v = 0; v < 256; v++) {
+	for (int v = 0; v < 256; v++)
 		nearest_level[v] = quantize_reference(v, 48, 0, 0);
-		if (gray_profile != GRAY_UI && gray_profile != GRAY_MONO)
-			for (int y = 0; y < period; y++)
-				for (int x = 0; x < period; x++)
-					quant_table[y][x][v] = quantize_reference(v, 0, x, y);
-	}
+	if (gray_profile != GRAY_UI && gray_profile != GRAY_MONO)
+		/* Fill complete phase rows, not one byte per cache line. */
+		for (int y = 0; y < period; y++)
+			for (int x = 0; x < period; x++)
+				for (int v = 0; v < 256; v++)
+					quant_table[y * period + x][v] = quantize_reference(v, 0, x, y);
 }
 
 static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x, int y)
@@ -663,7 +751,7 @@ static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x,
 	if (contrast >= 48 || gray_profile == GRAY_UI || gray_profile == GRAY_MONO)
 		return nearest_level[value];
 	unsigned int mask = gray_profile == GRAY_PHOTO ? 15 : 3;
-	return quant_table[y & mask][x & mask][value];
+	return quant_table[(y & mask) * (mask + 1) + (x & mask)][value];
 }
 
 /* Exact L1 contrast: 4 unsigned byte differences, widened to 16 bits.
@@ -696,13 +784,46 @@ static void contrast_row(const uint8_t *row, const uint8_t *above,
 }
 
 /* Strips have a one-row contrast halo on both sides. */
-enum { CAPTURE_ROWS = 128, CAPTURE_READ_ROWS = CAPTURE_ROWS + 2 };
+#ifndef PB626_CAPTURE_ROWS
+#define PB626_CAPTURE_ROWS 128
+#endif
+_Static_assert(PB626_CAPTURE_ROWS >= 16 && PB626_CAPTURE_ROWS <= 256,
+	       "capture strips must remain bounded");
+enum { CAPTURE_ROWS = PB626_CAPTURE_ROWS, CAPTURE_READ_ROWS = CAPTURE_ROWS + 2 };
+
+/* Exact floor expansion, not bit replication (which changes some colors).
+ * 96 read-only bytes instead of three constant divisions per colored pixel.
+ * Keep the arithmetic build available for Cortex-A8 CPU-time comparison. */
+#ifndef PB626_RGB565_ARITHMETIC
+static const uint8_t expand5[32] = {
+	0, 8, 16, 24, 32, 41, 49, 57,
+	65, 74, 82, 90, 98, 106, 115, 123,
+	131, 139, 148, 156, 164, 172, 180, 189,
+	197, 205, 213, 222, 230, 238, 246, 255,
+};
+static const uint8_t expand6[64] = {
+	0, 4, 8, 12, 16, 20, 24, 28,
+	32, 36, 40, 44, 48, 52, 56, 60,
+	64, 68, 72, 76, 80, 85, 89, 93,
+	97, 101, 105, 109, 113, 117, 121, 125,
+	129, 133, 137, 141, 145, 149, 153, 157,
+	161, 165, 170, 174, 178, 182, 186, 190,
+	194, 198, 202, 206, 210, 214, 218, 222,
+	226, 230, 234, 238, 242, 246, 250, 255,
+};
+#endif
 
 static inline uint8_t rgb565_gray(unsigned int pixel)
 {
+#ifdef PB626_RGB565_ARITHMETIC
 	return gray_value(((pixel >> 11) & 31) * 255 / 31,
 			  ((pixel >> 5) & 63) * 255 / 63,
 			  (pixel & 31) * 255 / 31);
+#else
+	return gray_value(expand5[(pixel >> 11) & 31],
+			  expand6[(pixel >> 5) & 63],
+			  expand5[pixel & 31]);
+#endif
 }
 
 /* In a typical UI many adjacent pixels are pure black/white or neutral.
@@ -910,6 +1031,27 @@ struct capture_stats {
 	unsigned int pixels, changed;
 };
 
+/* Map the first logical pixel of a row and its unit step once.
+ * Keep the dither phase and tile indexes in physical panel coordinates. */
+static inline void capture_row_coordinates(enum pb_rotation rotation, int x, int y,
+					   int *px, int *py, int *dx, int *dy)
+{
+	switch (rotation) {
+	case PB_ROT_90:
+		*px = WIDTH - 1 - y; *py = x; *dx = 0; *dy = 1;
+		break;
+	case PB_ROT_180:
+		*px = WIDTH - 1 - x; *py = HEIGHT - 1 - y; *dx = -1; *dy = 0;
+		break;
+	case PB_ROT_270:
+		*px = y; *py = HEIGHT - 1 - x; *dx = 0; *dy = -1;
+		break;
+	default:
+		*px = x; *py = y; *dx = 1; *dy = 0;
+		break;
+	}
+}
+
 static int capture(Display *display, Window root, int offset, struct rect dirty,
 		   uint8_t *frame, struct rect pointer, int vertical, struct capture_stats *stats,
 		   XShmSegmentInfo *shm)
@@ -971,22 +1113,22 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 					     output_y + 1 < h ? lightness[(output_y + 1) % 3] : row,
 					     contrast, strip.left, strip.right, w);
 			}
-			for (int x = strip.left; x < strip.right; x++) {
+			int px, py, dx, dy;
+			capture_row_coordinates(capture_rotation, strip.left, output_y, &px, &py, &dx, &dy);
+			for (int x = strip.left; x < strip.right; x++, px += dx, py += dy) {
+				size_t i = (size_t)py * WIDTH + px;
 				const uint8_t *pixel = lightness[output_y % 3] + x;
 				unsigned int value = *pixel;
 				uint8_t next = value / 17;
 				if (gray_profile == GRAY_MONO)
 					next = value >= 128 ? WHITE : 0;
-				else if (value != 17u * next) {
-					size_t i = panel_index(capture_rotation, x, output_y);
-					next = quantize(value, uses_contrast ? contrast[x] : 0, (int)(i % WIDTH), (int)(i / WIDTH));
-				}
-				size_t i = panel_index(capture_rotation, x, output_y);
+				else if (value != 17u * next)
+					next = quantize(value, uses_contrast ? contrast[x] : 0, px, py);
 				if (draw_pointer && !screen_locked)
 					next = pointer_level(pointer, vertical, x, output_y, next);
 				if (nibble_get(frame, i) != next) {
 					stats->changed++;
-					dirty_tiles[(i / WIDTH) / TILE][(i % WIDTH) / TILE] = 1;
+					dirty_tiles[py / TILE][px / TILE] = 1;
 					nibble_set(frame, i, next);
 				}
 			}
@@ -1221,8 +1363,12 @@ static int a2_eligible(const struct shared_frame *frame, const uint8_t *panel)
 }
 
 enum fast_profile { FAST_DU, FAST_A2, FAST_DU4, FAST_AUTO };
+/* Bridge-local scheduling command; wire protocol remains GC16/CLEAN. */
+enum { SETTLE_CLEAN = 'S', SETTLE_LOCAL_CLEAN = 'H' };
 
-/* Count completed fast transitions. This budget does not model reflectance. */
+/* Count completed non-scrub transitions, including GL16. A direct
+ * grayscale update must not bypass the bounded ghosting budget.
+ * This conservative budget does not model optical reflectance. */
 static uint8_t fast_changes[PACKED_PIXELS];
 _Static_assert(CLEAN_AFTER <= 15, "ghosting counter fits a nibble");
 static uint16_t cleanup_pixels[TILE_ROWS][TILE_COLS];
@@ -1294,12 +1440,35 @@ static uint64_t cleanup_delay(unsigned int cleanup_count)
 	return cleanup_count >= LARGE_CLEAN_PIXELS ? LARGE_CLEAN_QUIET_US : CLEAN_QUIET_US;
 }
 
+/* XDamageReportNonEmpty emits one notification until Subtract. Use a
+ * bounded window from the first event, not an indefinitely sliding timer. */
+static uint64_t damage_capture_due(uint64_t next_capture, uint64_t now)
+{
+	uint64_t coalesce = now + CAPTURE_COALESCE_US;
+	return next_capture > coalesce ? next_capture : coalesce;
+}
+
+static uint64_t window_capture_due(uint64_t next_capture, uint64_t now, int *coalescing)
+{
+	if (*coalescing)
+		return next_capture;
+	*coalescing = 1;
+	uint64_t due = now + WINDOW_COALESCE_US;
+	return next_capture > due ? next_capture : due;
+}
+
+static int may_retry_capture(int has_frame, int manual, int lock_pending, int retried)
+{
+	return has_frame && !manual && !lock_pending && !retried;
+}
+
 static uint8_t automatic_command(uint64_t idle_us, int capture_pending, int captured,
 				 int different, unsigned int cleanup_count)
 {
 	if (!capture_pending) {
 		if (different && idle_us >= QUIET_US)
-			return SETTLE;
+			return cleanup_count && idle_us >= cleanup_delay(cleanup_count) ?
+				SETTLE_CLEAN : SETTLE;
 		if (!different && cleanup_count && idle_us >= cleanup_delay(cleanup_count))
 			return CLEAN;
 	}
@@ -1352,8 +1521,45 @@ static int exact_du4_candidate(const uint8_t *desired, const uint8_t *panel)
 	return gray;
 }
 
-static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8_t *panel,
-			    struct shared_frame *frame)
+enum { TARGET_GRAY = 1, TARGET_NOT_DU4 = 2, SOURCE_GRAY = 4, SCRUB_NEXT = 8 };
+
+/* A changed pixel that would saturate its budget in this very update.
+ * Use its final shade for the halo, exactly as a subsequent CLEAN would. */
+static int local_scrub_seed(const uint8_t *desired, const uint8_t *panel, size_t i)
+{
+	return nibble_get(fast_changes, i) >= CLEAN_AFTER - 1 &&
+	       nibble_get(desired, i) != nibble_get(panel, i);
+}
+
+static int local_scrub_halo(const uint8_t *desired, const uint8_t *panel, int x, int y)
+{
+	if (!clean_halo)
+		return 0;
+	unsigned int shade = nibble_get(desired, y * WIDTH + x);
+	for (int ny = y ? y - 1 : y; ny <= y + 1 && ny < HEIGHT; ny++)
+		for (int nx = x ? x - 1 : x; nx <= x + 1 && nx < WIDTH; nx++) {
+			size_t i = ny * WIDTH + nx;
+			if (local_scrub_seed(desired, panel, i) && nibble_get(desired, i) == shade)
+				return 1;
+		}
+	return 0;
+}
+
+static int local_dirty_near_tile(int tx, int ty)
+{
+	if (!clean_halo)
+		return dirty_tiles[ty][tx];
+	for (int y = ty ? ty - 1 : ty; y <= ty + 1 && y < TILE_ROWS; y++)
+		for (int x = tx ? tx - 1 : tx; x <= tx + 1 && x < TILE_COLS; x++)
+			if (dirty_tiles[y][x])
+				return 1;
+	return 0;
+}
+
+/* In exact mode classify real transitions while writing the final pixels.
+ * No speculative preview preparation, rollback or second tile walk. */
+static unsigned int prepare_internal(uint8_t command, const uint8_t *desired, const uint8_t *panel,
+			    struct shared_frame *frame, unsigned int *classes)
 {
 	unsigned int changes = 0;
 	if (command == RESET) {
@@ -1363,9 +1569,13 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 		return PIXELS;
 	}
 	memset(frame->tiles, 0, sizeof(frame->tiles));
+	const int cleaning = command == CLEAN || command == SETTLE_CLEAN;
+	const int local = command == SETTLE_LOCAL_CLEAN;
 	for (int ty = 0; ty < TILE_ROWS; ty++)
 		for (int tx = 0; tx < TILE_COLS; tx++) {
-			if (command == CLEAN ? !cleanup_near_tile(tx, ty) : !dirty_tiles[ty][tx])
+			if (!(cleaning && cleanup_near_tile(tx, ty)) &&
+			    !(local && local_dirty_near_tile(tx, ty)) &&
+			    !(command != CLEAN && dirty_tiles[ty][tx]))
 				continue;
 			int right, bottom, differs = 0;
 			tile_bounds(tx, ty, &right, &bottom);
@@ -1373,13 +1583,21 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 				for (int x = tx * TILE; x < right; x++) {
 					size_t i = y * WIDTH + x;
 					uint8_t target = nibble_get(desired, i), old = nibble_get(panel, i);
-					int scrub = command == CLEAN && target == old && needs_scrub(panel, x, y);
+					int scrub = (cleaning && target == old && needs_scrub(panel, x, y)) ||
+						    (command == SETTLE_CLEAN && target != old) ||
+						    (local && (target != old || local_scrub_halo(desired, panel, x, y)));
 					uint8_t level = target;
 					differs |= target != old;
+					if (classes && target != old) {
+						if (target != 0 && target != WHITE) *classes |= TARGET_GRAY;
+						if (target % 5) *classes |= TARGET_NOT_DU4;
+						if (old != 0 && old != WHITE) *classes |= SOURCE_GRAY;
+						if (nibble_get(fast_changes, i) >= CLEAN_AFTER - 1) *classes |= SCRUB_NEXT;
+					}
 					if (command == PREVIEW || command == PREVIEW_A2)
-                        level = abs(target - old) >= 3 ? preview_level(target, old) : old;
-                    else if (command == PREVIEW_DU4)
-                        level = target != old ? preview_level4(target) : old;
+						level = abs(target - old) >= 3 ? preview_level(target, old) : old;
+					else if (command == PREVIEW_DU4)
+						level = target != old ? preview_level4(target) : old;
 					if (scrub || (command != CLEAN && level != old)) {
 						frame->pixels[i] = level | (scrub ? SCRUB : 0);
 						frame->tiles[ty][tx] = 1;
@@ -1392,6 +1610,47 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 				dirty_tiles[ty][tx] = 0;
 		}
 	return changes;
+}
+
+static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8_t *panel,
+			    struct shared_frame *frame)
+{
+	return prepare_internal(command, desired, panel, frame, NULL);
+}
+
+static uint8_t exact_command(enum fast_profile fast, unsigned int classes)
+{
+	if (fast == FAST_DU4)
+		return classes & TARGET_NOT_DU4 ? SETTLE : PREVIEW_DU4;
+	if (classes & TARGET_GRAY)
+		return fast == FAST_AUTO && !(classes & TARGET_NOT_DU4) ? PREVIEW_DU4 : SETTLE;
+	if ((fast == FAST_A2 || fast == FAST_AUTO) && !(classes & SOURCE_GRAY))
+		return PREVIEW_A2;
+	return PREVIEW;
+}
+
+static unsigned int prepare_update(uint8_t *command, const uint8_t *desired,
+				   const uint8_t *panel, struct shared_frame *frame,
+				   int approximate, enum fast_profile fast)
+{
+	if (!*command)
+		return 0;
+	if (!approximate && (*command == PREVIEW || *command == SETTLE)) {
+		unsigned int classes = 0;
+		unsigned int changes = prepare_internal(SETTLE, desired, panel, frame, &classes);
+		if (*command == PREVIEW)
+			*command = exact_command(fast, classes);
+		/* Do not turn a fast binary/DU4 update or a large page turn
+		 * into GC16 just to save a future scrub. For a small frame
+		 * already needing GL16, absorb the imminent local cleanup. */
+		if (*command == SETTLE && (classes & SCRUB_NEXT) &&
+		    changes < LARGE_CLEAN_PIXELS && cleanup_filter == HALO_NONE) {
+			*command = SETTLE_LOCAL_CLEAN;
+			return prepare(*command, desired, panel, frame);
+		}
+		return changes;
+	}
+	return prepare(*command, desired, panel, frame);
 }
 
 static void acknowledge(uint8_t command, const struct shared_frame *frame,
@@ -1426,7 +1685,8 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 							cleanup_pixels[ty][tx]--;
 						nibble_set(fast_changes, i, 0);
 					} else if ((command == PREVIEW || command == PREVIEW_A2 ||
-                             command == PREVIEW_DU4) && nibble_get(panel, i) != level &&
+                             command == PREVIEW_DU4 || command == SETTLE) &&
+                             nibble_get(panel, i) != level &&
                              nibble_get(fast_changes, i) < CLEAN_AFTER) {
 						nibble_set(fast_changes, i, nibble_get(fast_changes, i) + 1);
 						if (nibble_get(fast_changes, i) == CLEAN_AFTER)
@@ -1436,7 +1696,7 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 				}
 			dirty_tiles[ty][tx] = differs;
 		}
-	if (command == CLEAN && cleanup_filter == HALO_SHADOW)
+	if ((command == CLEAN || command == SETTLE_CLEAN) && cleanup_filter == HALO_SHADOW)
 		shadow_stage = (shadow_stage + 1) & 3;
 }
 
@@ -1576,6 +1836,8 @@ int main(int argc, char **argv)
             return EXIT_FAILURE;
         }
     }
+	const char *approx = getenv("PB626_EPD_APPROX_PREVIEW");
+	const int approximate = approx && !strcmp(approx, "1");
 	/* Native startup overlaps INIT with Xorg. The session marker is
 	 * a generic handoff, not a GUI/application readiness condition. */
 	int lock_fd = open("/run/pb626-epd.lock", O_CREAT | O_RDWR, 0600);
@@ -1620,7 +1882,7 @@ int main(int argc, char **argv)
 	}
 	enum pb_rotation panel_rotation = capture_rotation;
 	XSetErrorHandler(handle_x_error);
-	XSelectInput(display, root, PropertyChangeMask | StructureNotifyMask);
+	XSelectInput(display, root, PropertyChangeMask | StructureNotifyMask | SubstructureNotifyMask);
 	int randr_event, randr_error;
 	int randr = XRRQueryExtension(display, &randr_event, &randr_error);
 	if (randr)
@@ -1646,8 +1908,14 @@ int main(int argc, char **argv)
 		.page_keys = keys && !strcmp(keys, "pages"),
 		.home_key = home && !strcmp(home, "home"),
 		.menu_escape = menu && !strcmp(menu, "escape"),
+		.hold_us = button_hold_us(getenv("PB626_BUTTON_HOLD_MS")),
 	};
 	controls.custom_buttons = load_button_bindings(&controls);
+	if (!controls.custom_buttons && !controls.fallback &&
+	    getenv("PB626_SYSTEM_SLEEP")) {
+		default_button_bindings(&controls);
+		controls.custom_buttons = 1;
+	}
 	struct pollfd sources[8] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
 	nfds_t source_count = 1;
 	const char *devices = getenv("PB626_BUTTON_DEVICES");
@@ -1669,7 +1937,8 @@ int main(int argc, char **argv)
 		}
 	}
 	struct power_input power_pressed = {0};
-	int lock_pending = 0, system_sleep = 0;
+	int lock_pending = 0;
+	enum sleep_phase system_sleep = SLEEP_AWAKE;
 	int sleep_fd = -1, geometry_changed = 0;
 	nfds_t sleep_index = 0;
 	if (getenv("PB626_SYSTEM_SLEEP")) {
@@ -1710,12 +1979,13 @@ int main(int argc, char **argv)
 			return EXIT_FAILURE;
 	}
 	if (profile)
-		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f fast=%s\n",
+		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f fast=%s preview=%s\n",
                 ddx_fb ? "DDX-map (with XGetImage fallback)" :
                 shm.shmaddr ? "MIT-SHM" : "XGetImage", profiles[selected],
                 lightness ? "cie-lstar" : "srgb", gamma,
                 fast_mode == FAST_A2 ? "a2" : fast_mode == FAST_DU4 ? "du4" :
-                fast_mode == FAST_AUTO ? "auto" : "du");
+                fast_mode == FAST_AUTO ? "auto" : "du",
+                approximate ? "approximate" : "exact");
 	/* Reallocation under memory pressure needs physical qualification.
 	 * No new polling timer when this experiment is disabled. */
 	const int release_idle = access("/etc/pb626/dma-release-qualified", F_OK) == 0;
@@ -1727,6 +1997,7 @@ int main(int argc, char **argv)
 	unsigned int cleanup_count = 0;
 	uint64_t last_damage = 0, pending_since = 0, next_capture = 0, layout_until = 0;
 	uint64_t damage_seen = 0;
+	int capture_retry = 0, window_coalescing = 0;
 
 	for (;;) {
 		XEvent event;
@@ -1735,8 +2006,22 @@ int main(int argc, char **argv)
 			if (damage && event.type == damage_event + XDamageNotify) {
 				if (profile && !damage_seen)
 					damage_seen = now_us();
-				if (!screen_locked || lock_pending) dirty = 1;
-			} else if (event.type == ConfigureNotify ||
+				if (!screen_locked || lock_pending) {
+					if (!dirty && may_retry_capture(has_frame, controls.clean_requested,
+								 lock_pending, capture_retry))
+						next_capture = damage_capture_due(next_capture, now_us());
+					dirty = 1;
+				}
+			} else if (event.type == MapNotify || event.type == UnmapNotify) {
+				/* Root child windows (menus, dialogs, clients) may be
+				 * mapped before their first paint, or unmapped before
+				 * the uncovered window has repainted. Coalesce once. */
+				if (damage && !screen_locked &&
+				    may_retry_capture(has_frame, controls.clean_requested, lock_pending, capture_retry)) {
+					next_capture = window_capture_due(next_capture, now_us(), &window_coalescing);
+					dirty = 1;
+				}
+			} else if ((event.type == ConfigureNotify && event.xconfigure.window == root) ||
 				   (randr && (event.type == randr_event + RRScreenChangeNotify ||
 					      event.type == randr_event + RRNotify))) {
 				if (randr && event.type == randr_event + RRScreenChangeNotify)
@@ -1759,18 +2044,16 @@ int main(int argc, char **argv)
 			if (client >= 0) {
 				if (sleep_fd >= 0) {
 					sleep_reply(&client, 0);
-				} else if (request == 'P' && has_frame &&
+				} else if (request == 'P' && system_sleep != SLEEP_RESUMING && has_frame &&
 					   (screen_locked || !grab_lock(display, root))) {
-					system_sleep = 1;
+					system_sleep = SLEEP_PREPARED;
 					/* Consume button edges preceding the system transaction.
 					 * A release after wake without a new press cannot toggle. */
-					if (power_index && sources[power_index].fd >= 0)
-						(void)power_press(sources[power_index].fd, &power_pressed);
-					power_pressed.pressed = 0;
+					discard_power_edges(power_index ? sources[power_index].fd : -1, &power_pressed);
 					if (!screen_locked) {
 						screen_locked = 1;
 						lock_pending = 1;
-						controls.menu_pressed = 0;
+						cancel_button_gestures(&controls);
 					}
 					if (lock_pending)
 						sleep_fd = client;
@@ -1786,13 +2069,11 @@ int main(int argc, char **argv)
 					}
 				} else if (request == 'R') {
 					if (system_sleep) {
-						system_sleep = 0;
+						system_sleep = SLEEP_RESUMING;
 						screen_locked = 0;
 						release_lock(display);
 						XResetScreenSaver(display);
-						if (power_index && sources[power_index].fd >= 0)
-							(void)power_press(sources[power_index].fd, &power_pressed);
-						power_pressed.pressed = 0;
+						discard_power_edges(power_index ? sources[power_index].fd : -1, &power_pressed);
 						focus_changed = 1;
 						lock_pending = dirty = 1;
 						geometry_changed = 1;
@@ -1819,14 +2100,14 @@ int main(int argc, char **argv)
 					lock_pending = dirty = 1;
 				} else if (policy == POWER_OFF) {
 					(void)power_action("poweroff", NULL);
-				} else if (policy == POWER_S2IDLE) {
+				} else if (policy == POWER_SUSPEND) {
 					/* systemd's required prepare unit owns the lock/filter
 					 * transaction. A refused request does not lock X11. */
 					if (power_action("suspend", NULL))
 						fprintf(stderr, "pb626: system suspend request refused\n");
 				} else if (policy == POWER_LOCK && !grab_lock(display, root)) {
 					screen_locked = 1;
-					controls.menu_pressed = 0;
+					cancel_button_gestures(&controls);
 					lock_pending = dirty = 1;
 				}
 				if (lock_pending)
@@ -1839,6 +2120,8 @@ int main(int argc, char **argv)
 				pointer_changed |= handle_buttons(display, root, keyboard, sources[i].fd, &controls);
 		if (controls.custom_buttons && !controls.fallback)
 			pointer_changed |= flush_bindings(display, root, keyboard, &controls, now_us());
+		else
+			pointer_changed |= flush_menu(&controls, now_us());
 		if (screen_locked && lock_pending && has_frame) {
 			/* Filter the last acknowledged physical frame, not X11.
 			 * One GC16 update; RESET would run INIT. */
@@ -1926,13 +2209,31 @@ int main(int argc, char **argv)
 			for (int i = 0; i < count; i++)
 				if (capture(display, root, offset, areas[i], frame, pointer, controls.vertical, &stats, &shm))
 					goto failed;
-			captured = count != 0;
+			/* A deferred capture already changed the logical frame even
+			 * if its retry has no remaining rectangles. */
+			captured = count != 0 || capture_retry;
 			if (damage_seen)
 				damage_wait = capture_start - damage_seen;
 			damage_seen = 0;
 			dirty = 0;
 			now = now_us();
 			next_capture = now + (damage ? 16000 : 250000);
+			if (stats.changed)
+				last_damage = now;
+			/* X can repaint while we read separate strips. If damage
+			 * arrived during this capture, prefer one fresh snapshot
+			 * over sending a visibly stale intermediate frame.
+			 * One retry only: continuous animation must make progress. */
+			if (damage && may_retry_capture(has_frame, controls.clean_requested,
+						       lock_pending, capture_retry) &&
+			    XCheckTypedEvent(display, damage_event + XDamageNotify, &event)) {
+				dirty = capture_retry = 1;
+				if (profile)
+					damage_seen = now;
+				continue;
+			}
+			capture_retry = 0;
+			window_coalescing = 0;
 		}
 
 		if (!has_frame && !captured)
@@ -1944,8 +2245,6 @@ int main(int argc, char **argv)
 				different |= dirty_tiles[y][x];
 				cleanup_count += cleanup_pixels[y][x];
 			}
-		if (stats.changed)
-			last_damage = now;
 		if (different) {
 			if (!pending)
 				pending_since = now;
@@ -1957,21 +2256,21 @@ int main(int argc, char **argv)
 		uint8_t command = captured && (!has_frame || controls.clean_requested || lock_pending) ? RESET :
             automatic_command(now - last_damage, dirty || now < layout_until,
                               captured, different, cleanup_count);
-        if (command == PREVIEW &&
+        if (approximate && command == PREVIEW &&
             (fast_mode == FAST_DU4 ||
              (fast_mode == FAST_AUTO && exact_du4_candidate(frame, previous))))
             command = PREVIEW_DU4;
 
 		command = bound_preview(command, pending ? now - pending_since : 0);
 		uint64_t prepare_start = now_us();
-		unsigned int changes = command ? prepare(command, frame, previous, worker.frame) : 0;
+		unsigned int changes = prepare_update(&command, frame, previous, worker.frame, approximate, fast_mode);
 		/* A2 only when every changed pixel is an exact binary transition. */
-        if (changes && command == PREVIEW && (fast_mode == FAST_A2 || fast_mode == FAST_AUTO) &&
+        if (approximate && changes && command == PREVIEW && (fast_mode == FAST_A2 || fast_mode == FAST_AUTO) &&
             a2_eligible(worker.frame, previous))
             command = PREVIEW_A2;
         uint64_t submit_start = now_us();
 		if (changes) {
-			uint8_t wire = command;
+			uint8_t wire = (command == SETTLE_CLEAN || command == SETTLE_LOCAL_CLEAN) ? CLEAN : command;
 			if (lock_pending && has_frame && command == RESET && !controls.clean_requested) {
 				/* Rebuild actual X11 frame using known sleep history. */
 				wire = CLEAN;
@@ -2027,6 +2326,10 @@ int main(int argc, char **argv)
 		if (lock_pending && captured && command == RESET && !screen_locked) {
 			lock_pending = 0;
 			int indicator_error = power_action("lock-indicator", "awake");
+			if (system_sleep == SLEEP_RESUMING) {
+				discard_power_edges(power_index ? sources[power_index].fd : -1, &power_pressed);
+				system_sleep = SLEEP_AWAKE;
+			}
 			sleep_reply(&sleep_fd, indicator_error ? 0 : 'R');
 		}
 		if (profile && (captured || changes))
@@ -2038,7 +2341,7 @@ int main(int argc, char **argv)
 				(unsigned long long)(now_us() - capture_start),
 				(unsigned long long)capture_start, (unsigned long long)damage_wait,
 				(unsigned long long)ack);
-		if (changes || command == SETTLE)
+		if (changes || command == SETTLE || command == SETTLE_CLEAN || command == SETTLE_LOCAL_CLEAN)
 			continue; /* Discard intermediate frames and consume accumulated damage. */
 
 wait_input:
@@ -2069,6 +2372,8 @@ wait_input:
 		if (controls.custom_buttons && !controls.fallback) {
 			uint64_t keys_due = binding_deadline(&controls);
 			if (keys_due < deadline) deadline = keys_due;
+		} else if (!screen_locked && controls.menu_due && controls.menu_due < deadline) {
+			deadline = controls.menu_due;
 		}
 		XFlush(display);
 		if (XPending(display))
@@ -2085,6 +2390,8 @@ wait_input:
 			goto failed;
 		for (nfds_t i = 1; i < source_count; i++) {
 			if (sources[i].revents & disconnected) {
+				if (i != power_index && i != sleep_index)
+					cancel_button_gestures(&controls);
 				close(sources[i].fd);
 				sources[i].fd = -1;
 			}

@@ -71,6 +71,7 @@ class Board:
                      PIO_GATE: 0x10, PE_CFG: 0xa5a5a5af, PE_DATA: 0xffffffff,
                      RTC_MAGIC: rtc, TIMER0: 0xffffffff}
         self.writes = []
+        self.timer_step = 0
         self.unsupported = None
         self.hit = None
         self.targets = {}
@@ -101,6 +102,8 @@ class Board:
             return
         if access == UC_MEM_READ:
             val = self.regs[address]
+            if address == TIMER0:
+                self.regs[address] = (val - self.timer_step) & 0xffffffff
             if address == ADC+8:
                 val = (int(self.index < len(self.samples)) | self.events) if self.converting else 0
             elif address == ADC+12:
@@ -155,8 +158,13 @@ def scenarios():
 
 def menu_cases(image, save, report):
     result = {}
-    for name, samples, events, fel, expected in scenarios():
-        board = Board(image, samples, events, fel)
+    # An armed deep resume must not change the first-stage Menu decision.
+    for name, samples, events, fel, expected, rtc in (
+        (name + suffix, samples, events, fel, expected, rtc)
+        for name, samples, events, fel, expected in scenarios()
+        for suffix, rtc in (("", 0), ("-resume-armed", 0x53555350))
+    ):
+        board = Board(image, samples, events, fel, rtc=rtc)
         initial = [board.uc.reg_read(r) for r in KEEP]
         cpsr = board.uc.reg_read(UC_ARM_REG_CPSR) & 0xff
         stop = board.run(0, {save & ~1: "native", 0x20: "rom-low",
@@ -174,34 +182,61 @@ def menu_cases(image, save, report):
             require(stop == "fel-thunk", name+": FEL return")
         if expected == 1:
             require(board.uc.reg_read(UC_ARM_REG_LR) == (0xa2c0 if fel else 0xffff1234), name+": LR")
-        require(not any(a in (PE_CFG,PE_DATA,PIO_GATE) for a,_ in board.writes), name+": early GPIO interference")
+        require(not any(a in (PE_CFG,PE_DATA,PIO_GATE,RTC_MAGIC) for a,_ in board.writes),
+                name+": early GPIO or RTC interference")
+        require(board.regs[RTC_MAGIC] == rtc, name+": RTC marker changed before FEL decision")
         result[name] = {"target": stop, "reason": words[1], "samples": list(words[3:3+words[2]])}
     return result
 
 def led_cases(image, sym):
-    for mode, rtc in ((False,0),(True,0),(False,0x53555350)):
+    def states(board):
+        return [int(not(v & 0x100)) for a,v in board.writes if a == PE_DATA]
+
+    start = sym["pb626_led_boot_start"]
+    tick = sym["pb626_led_boot_tick"]
+    handoff = sym["spl_board_prepare_for_boot"]
+    for mode, rtc in ((True,0),(False,0x53555350)):
         board = Board(image, fel=mode, rtc=rtc)
-        origin = 0xffff0000
-        board.call(sym["pb626_led_boot_start"], origin)
-        if mode or rtc:
-            require(not board.writes, "LED touched FEL or retained DRAM")
-            continue
-        def states():
-            return [int(not(v & 0x100)) for a,v in board.writes if a == PE_DATA]
-        require(states() == [1], "initial LED")
-        for i, ms in enumerate((30,80,110,140)):
-            board.call(sym["pb626_led_boot_tick"], (origin+ms*24000-1)&0xffffffff)
-            require(len(states()) == i+1, "premature edge")
-            board.call(sym["pb626_led_boot_tick"], (origin+ms*24000)&0xffffffff)
-            require(states() == [1,0,1,0,1][:i+2], "edge timing")
-        require(board.regs[PE_CFG] == 0xa5a5a5a1, "neighbor mux altered")
-        require(board.regs[PE_DATA] == 0xfffffeff, "neighbor output altered")
-        require(board.regs[PIO_GATE] == 0x30, "neighbor clock altered")
-        board.call(sym["spl_board_prepare_for_boot"])
-        require(states()[-1] == 1, "handoff LED")
-        board.call(sym["pb626_led_boot_tick"], 0)
-        require(states()[-1] == 1, "timer interfered after handoff")
-    return "passed: real ARM instructions, 30/50/30/30 ms thresholds, wrap, FEL/resume isolation"
+        board.call(start, 0)
+        board.call(handoff)
+        require(not board.writes, "LED touched FEL or retained DRAM")
+
+    board = Board(image)
+    origin = 0xffff0000
+    board.call(start, origin)
+    require(states(board) == [1], "initial LED")
+    for i, ms in enumerate((100,200,300,400)):
+        board.call(tick, (origin+ms*24000-1)&0xffffffff)
+        require(len(states(board)) == i+1, "premature edge")
+        board.call(tick, (origin+ms*24000)&0xffffffff)
+        require(states(board) == [1,0,1,0,1][:i+2], "edge timing")
+    require(board.regs[PE_CFG] == 0xa5a5a5a1, "neighbor mux altered")
+    require(board.regs[PE_DATA] == 0xfffffeff, "neighbor output altered")
+    require(board.regs[PIO_GATE] == 0x30, "neighbor clock altered")
+    board.call(handoff)
+    require(states(board) == [1,0,1,0,1], "handoff changed completed animation")
+    board.call(tick, 0)
+    require(states(board) == [1,0,1,0,1], "timer interfered after handoff")
+
+    # Execute the actual handoff and U-Boot delay/timer routines. The
+    # modeled downcounter advances 1 ms per read; no timing assertion
+    # here claims to measure the optical hardware.
+    for sparse in (False, True):
+        board = Board(image)
+        board.call(start, 0)
+        elapsed = 12000000 if sparse else 0
+        if sparse:
+            board.call(tick, elapsed)
+            require(states(board) == [1,0], "sparse poll skipped a pulse")
+            board.call(tick, elapsed)
+            require(states(board) == [1,0], "replayed missed edge")
+        board.regs[TIMER0] = (~elapsed) & 0xffffffff
+        board.timer_step = 24000
+        board.call(handoff)
+        require(states(board) == [1,0,1,0,1], "handoff failed to finish two pulses")
+        board.call(tick, elapsed+48000000)
+        require(states(board) == [1,0,1,0,1], "post-handoff edge")
+    return "passed: real ARM LED edges and handoff, sparse polls, wrap, FEL/resume isolation"
 
 def config_number(path, key):
     for line in path.read_text().splitlines():
@@ -210,8 +245,8 @@ def config_number(path, key):
     raise AssertionError("missing "+key)
 
 def candidate(directory, deep, baseline):
-    prefix = directory/"deep-resume" if deep else directory
-    image = (prefix/("BT0-uncaged-deep-candidate.bin" if deep else "BT0-uncaged-source-candidate.bin")).read_bytes()
+    prefix = directory/"resume" if deep else directory
+    image = (prefix/("BT0-uncaged-resume.bin" if deep else "BT0-uncaged-cold.bin")).read_bytes()
     check_header(image)
     sym = symbols(prefix/("spl.elf"))
     result = {"sha256": hashlib.sha256(image).hexdigest()}
@@ -220,6 +255,14 @@ def candidate(directory, deep, baseline):
         require(result["menu"] == baseline["menu"], "Menu/FEL behavior differs from reference")
     board = Board(image)
     result["boot_device"] = board.call(sym["spl_boot_device"])
+    # U-Boot's non-OMAP ARM enum: MMC2=2, BOARD=12. The .FEL
+    # signature must bypass forced native MMC2 in the source candidates.
+    # The historical native reference is not the separate FEL upload SPL.
+    require(result["boot_device"] == 2, "wrong native boot device")
+    for rtc in (0, 0x53555350):
+        require(Board(image, fel=True, rtc=rtc).call(sym["spl_boot_device"]) == 12,
+                "FEL upload selected a native storage loader")
+    result["fel_upload_dispatch"] = "BOOT_DEVICE_BOARD (with and without SUSP marker)"
     cfg = prefix/"native.config"
     raw = config_number(cfg,"CONFIG_SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR")
     offset = config_number(cfg,"CONFIG_SYS_MMCSD_RAW_MODE_U_BOOT_DATA_PART_OFFSET")
@@ -258,7 +301,7 @@ def main():
             report["reference"] = "NOT CONFIGURED"
         if args.candidates:
             report["native"] = candidate(args.candidates,False,base)
-            report["deep_cold_path"] = candidate(args.candidates,True,base)
+            report["resume_cold_path"] = candidate(args.candidates,True,base)
         require(not args.require_reference or base is not None,
                 "Configure PB626_REFERENCE_SPL_B64 to enable mandatory differential validation")
         report["result"] = "tested contract passed" if base else "candidate-only; no differential validation"

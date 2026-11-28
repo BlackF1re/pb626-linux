@@ -93,3 +93,83 @@ diff --git a/drivers/mfd/axp20x-i2c.c b/drivers/mfd/axp20x-i2c.c
  
  static void axp20x_i2c_remove(struct i2c_client *i2c)
  {
+diff --git a/drivers/power/supply/axp20x_usb_power.c b/drivers/power/supply/axp20x_usb_power.c
+--- a/drivers/power/supply/axp20x_usb_power.c
++++ b/drivers/power/supply/axp20x_usb_power.c
+@@ -94,6 +94,7 @@
+ 	int max_input_cur;
+ 	unsigned int old_status;
+ 	unsigned int online;
++	bool vbus_irq_wake;
+ 	unsigned int num_irqs;
+ 	unsigned int irqs[] __counted_by(num_irqs);
+ };
+@@ -864,8 +865,17 @@
+ 	 * As nested threaded IRQs are not automatically disabled during
+ 	 * suspend, we must explicitly disable the remainder of the IRQs.
+ 	 */
+-	if (device_may_wakeup(&power->supply->dev))
+-		enable_irq_wake(power->irqs[i++]);
++	power->vbus_irq_wake = false;
++	if (device_may_wakeup(&power->supply->dev) && power->num_irqs) {
++		int ret = enable_irq_wake(power->irqs[0]);
++
++		if (!ret) {
++			power->vbus_irq_wake = true;
++			i++;
++		} else {
++			dev_warn(dev, "VBUS wake unavailable: %d\n", ret);
++		}
++	}
+ 	while (i < power->num_irqs)
+ 		disable_irq(power->irqs[i++]);
+ 
+@@ -877,8 +887,10 @@
+ 	struct axp20x_usb_power *power = dev_get_drvdata(dev);
+ 	int i = 0;
+ 
+-	if (device_may_wakeup(&power->supply->dev))
++	if (power->vbus_irq_wake) {
+ 		disable_irq_wake(power->irqs[i++]);
++		power->vbus_irq_wake = false;
++	}
+ 	while (i < power->num_irqs)
+ 		enable_irq(power->irqs[i++]);
+ 
+diff --git a/drivers/irqchip/irq-sun4i.c b/drivers/irqchip/irq-sun4i.c
+--- a/drivers/irqchip/irq-sun4i.c
++++ b/drivers/irqchip/irq-sun4i.c
+@@ -91,9 +91,29 @@
+ };
+ 
+-static int sun4i_irq_map(struct irq_domain *d, unsigned int virq,
+-			 irq_hw_number_t hw)
+-{
+-	irq_set_chip_and_handler(virq, &sun4i_irq_chip, handle_fasteoi_irq);
++/*
++ * A13's external NMI is the normal PMIC interrupt on PocketBook.
++ * There is no separate INTC wake-enable register for this input.
++ * Let generic IRQ PM keep it armed for s2idle; platform deep suspend
++ * and power-on wake are handled independently by the PMIC.
++ */
++static struct irq_chip sun5i_a13_enmi_irq_chip = {
++	.name		= "sun4i_irq",
++	.irq_eoi	= sun4i_irq_ack,
++	.irq_mask	= sun4i_irq_mask,
++	.irq_unmask	= sun4i_irq_unmask,
++	.flags		= IRQCHIP_EOI_THREADED | IRQCHIP_EOI_IF_HANDLED |
++			  IRQCHIP_SKIP_SET_WAKE,
++};
++
++static int sun4i_irq_map(struct irq_domain *d, unsigned int virq,
++			 irq_hw_number_t hw)
++{
++	struct irq_chip *chip = &sun4i_irq_chip;
++
++	if (hw == 0 && of_machine_is_compatible("allwinner,sun5i-a13"))
++		chip = &sun5i_a13_enmi_irq_chip;
++
++	irq_set_chip_and_handler(virq, chip, handle_fasteoi_irq);
+ 	irq_set_probe(virq);
+ 
+ 	return 0;

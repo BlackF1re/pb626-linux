@@ -38,7 +38,7 @@ root="$work/root"
 sudo install -d "$root"/{bin,sbin,usr/bin,usr/sbin,usr/libexec,dev,proc,sys,run,root,tmp,etc,sys/kernel/config}
 sudo install -m 755 "$busybox" "$root/bin/busybox"
 applets=$(sudo qemu-arm "$root/bin/busybox" --list)
-for applet in sh ash awk base64 basename blockdev cat chmod cp dd grep gzip head ip ln mkdir mktemp mount mv readlink rm seq setsid sha256sum sleep stty sync timeout touch tr wc; do
+for applet in sh ash awk base64 basename blockdev cat chmod cp dd find grep gzip head ip ln mkdir mktemp mount mv readlink rm seq setsid sha256sum sleep sort stty sync timeout touch tr wc xargs; do
     grep -Fxq "$applet" <<<"$applets"
     sudo ln -s busybox "$root/bin/$applet"
 done
@@ -66,6 +66,15 @@ sudo qemu-arm "$root/bin/busybox" sh -n "$root/usr/libexec/pb626-restore-fast.sh
 printf 'PB626 fsync check' >"$work/dd-input"
 sudo qemu-arm "$root/bin/busybox" dd if="$work/dd-input" of="$work/dd-output" bs=512 conv=notrunc,fsync status=none
 sudo cmp "$work/dd-input" "$work/dd-output"
+# Compare the exact manifest recipe against the target ARM BusyBox.
+mkdir "$work/module-fixture"
+printf one >"$work/module-fixture/a.ko"
+printf two >"$work/module-fixture/z.ko"
+(cd "$work/module-fixture" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) >"$work/host-module-hashes"
+(cd "$work/module-fixture" && sudo qemu-arm "$root/bin/busybox" find . -type f -print0 |
+    sudo qemu-arm "$root/bin/busybox" sort -z |
+    xargs -0 sudo qemu-arm "$root/bin/busybox" sha256sum) >"$work/arm-module-hashes"
+cmp "$work/host-module-hashes" "$work/arm-module-hashes"
 mkdir -p "$out"/{recovery,tools,source}
 cp "$kernel/pb626-megi-zImage" "$out/recovery/"
 printf '\0\0\0\0' >> "$out/recovery/pb626-megi-zImage"
@@ -74,6 +83,12 @@ dtb="$out/recovery/pb626-elan-emmc-backup.dtb"
 fdtget "$dtb" /chosen pb626,emmc-backup >/dev/null
 test "$(fdtget -t s "$dtb" /soc/mmc@1c11000 status)" = okay
 test "$(fdtget -t s "$dtb" /soc/mmc@1c0f000 status)" = disabled
+# Windows 10 inbox RNDIS driver; Windows 11 and Linux use the original NCM DTB.
+windows_dtb="$out/recovery/pb626-elan-emmc-windows-rndis.dtb"
+cp "$dtb" "$windows_dtb"
+fdtput "$windows_dtb" /chosen pb626,windows-rndis
+fdtget "$windows_dtb" /chosen pb626,emmc-backup >/dev/null
+test "$(fdtget -t s "$windows_dtb" /soc/mmc@1c0f000 status)" = disabled
 # Keep the validated eMMC-only DTB untouched. The separate opt-in SD
 # profile uses the same conservative parameters as native SD experiments.
 sd_dtb="$out/recovery/pb626-elan-emmc-sd-backup.dtb"

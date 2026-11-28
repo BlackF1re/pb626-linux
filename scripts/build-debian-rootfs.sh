@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a real Debian 13 armhf root on eMMC, independent of the Alpine RAM image.
+# Build a real Debian 13 armhf root on eMMC, with the paired kernel and modules.
 # Run on a Linux x86_64 host with ARM binfmt, mmdebstrap and Debian archive keys.
 set -Eeuo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -58,7 +58,7 @@ else
     bash scripts/compile-debian-native.sh "$build" "$kernel" "$work"
     mkdir -p "$compiled_cache"
     sudo tar --numeric-owner -C "$build/tmp/pb626-build" -czf "$compiled_cache/compiled.tar.gz" \
-        pb626-epd pb626-x11-epd pb626-charge \
+        pb626-epd pb626-x11-epd pb626-charge pb626-taskbar \
         xserver-xorg-video-dummy-0.4.0/src/.libs/dummy_drv.so \
         xserver-xorg-video-dummy-0.4.0/debian/copyright \
         xserver-xorg-video-dummy-0.4.0/COPYING \
@@ -68,7 +68,7 @@ else
     (cd "$compiled_cache" && sha256sum compiled.tar.gz >SHA256SUMS)
 fi
 built="$build/tmp/pb626-build"
-sudo install -m 755 "$built"/{pb626-epd,pb626-x11-epd} "$pkg/usr/bin/"
+sudo install -m 755 "$built"/{pb626-epd,pb626-x11-epd,pb626-taskbar} "$pkg/usr/bin/"
 sudo install -D -m 755 "$built/pb626-charge" "$pkg/usr/libexec/pb626-charge"
 sudo install -D -m 644 "$built/xserver-xorg-video-dummy-0.4.0/src/.libs/dummy_drv.so" "$pkg/usr/lib/pb626/xorg/drivers/dummy_drv.so"
 sudo install -D -m 644 "$built/xserver-xorg-video-dummy-0.4.0/debian/copyright" "$pkg/usr/share/doc/pb626-runtime/xorg-dummy-copyright"
@@ -95,6 +95,7 @@ sudo install -m 755 display/pb626-open-document display/pb626-shutdown-picker "$
 sed '1s|^#!/bin/sh$|#!/bin/bash|' display/pb626-desktop | sudo tee "$pkg/usr/bin/pb626-desktop" >/dev/null
 sudo chmod 755 "$pkg/usr/bin/pb626-desktop"
 sudo install -m 755 display/pb626-debian-settings "$pkg/usr/bin/pb626-control-center"
+sudo install -D -m 644 display/native/pb626-settings.xpm "$pkg/usr/share/pixmaps/pb626-settings.xpm"
 # Debian /bin/sh is dash; the existing X11 session uses wait -n.
 sed '1s|^#!/bin/sh$|#!/bin/bash|' display/pb626-xsession | sudo tee "$pkg/usr/bin/pb626-xsession" >/dev/null
 sudo chmod 755 "$pkg/usr/bin/pb626-xsession"
@@ -106,6 +107,11 @@ sudo install -D -m 644 display/eink-fonts.conf "$pkg/etc/fonts/conf.d/99-pb626-e
 sudo install -D -m 644 display/no-color.sh "$pkg/etc/profile.d/pb626-no-color.sh"
 sudo install -d "$pkg/usr/share/themes/PB626/matchbox" "$pkg/usr/share/applications"
 sudo install -m 644 display/matchbox/PB626/* "$pkg/usr/share/themes/PB626/matchbox/"
+python3 scripts/build-matchbox-themes.py "$work/themes"
+for height in 32 48 56 64; do
+    sudo install -d "$pkg/usr/share/themes/PB626-$height/matchbox"
+    sudo install -m 644 "$work/themes/PB626-$height/matchbox/"* "$pkg/usr/share/themes/PB626-$height/matchbox/"
+done
 sudo install -m 644 display/matchbox/{pb626-calculator,pb626-editor,pb626-files}.desktop "$pkg/usr/share/applications/"
 sudo install -m 644 display/native/*.desktop "$pkg/usr/share/applications/"
 sudo install -m 644 display/matchbox/htop.desktop "$pkg/usr/share/applications/pb626-monitor.desktop"
@@ -121,7 +127,7 @@ Package: pb626-runtime
 Version: $version
 Architecture: armhf
 Maintainer: BlackF1re <55582873+BlackF1re@users.noreply.github.com>
-Depends: libc6, bash, evtest, iputils-ping, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, libxrandr2, tk, python3-tk, python3-pil.imagetk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
+Depends: libc6, bash, evtest, iputils-ping, systemd, dbus, opendoas, util-linux, xinit, xauth, x11-xserver-utils, x11-utils, xinput, xserver-xorg-core, xserver-xorg-video-dummy, xserver-xorg-input-evdev, matchbox-window-manager, matchbox-desktop, matchbox-keyboard, matchbox-panel, matchbox-common, libmatchbox1, libx11-6, libxext6, libxtst6, libxdamage1, libxfixes3, libxrandr2, tk, python3-tk, python3-pil.imagetk, mupdf, xterm, htop, mc, nedit, x11-apps, iwd, iwgtk, rfkill, xidle
 Description: PocketBook 626 native E Ink desktop and hardware integration
  Includes the scanout worker, X11 bridge, patched Matchbox clients and
  board-specific systemd services. Uses the paired PB626 kernel and DTB.
@@ -129,6 +135,11 @@ CONTROL
 (cd "$pkg" && sudo find etc -type f -printf '/%p\n' | LC_ALL=C sort) | sudo tee "$pkg/DEBIAN/conffiles" >/dev/null
 sudo install -d "$pkg/usr/share/doc/pb626-runtime"
 sudo install -m 644 LICENSE "$pkg/usr/share/doc/pb626-runtime/copyright"
+# Match Debian package conventions: non-conffile payload hashes are
+# recorded by the package, and conffiles have their own dpkg metadata.
+(cd "$pkg" && sudo find usr -type f -print0 | LC_ALL=C sort -z | sudo xargs -0 -r md5sum) |
+    sudo tee "$pkg/DEBIAN/md5sums" >/dev/null
+test -s "$pkg/DEBIAN/md5sums"
 sudo dpkg-deb --root-owner-group --build "$pkg" "$work/pb626-runtime.deb"
 sudo install -m 644 "$work/pb626-runtime.deb" "$root/tmp/pb626-runtime.deb"
 in_root dpkg -i /tmp/pb626-runtime.deb
@@ -203,10 +214,15 @@ test "$(sudo stat -c '%a:%u:%g' "$root/usr/bin/doas")" = 4755:0:0
 
 # ARM-side checks verify real target loader, package state and privilege
 # metadata rather than accidentally resolving host paths.
-in_root /bin/bash -euc '
+in_root /bin/bash -euo pipefail -c '
   test "$(dpkg --print-architecture)" = armhf
   dpkg -s pb626-runtime | grep -qx "Status: install ok installed"
-  test -z "$(dpkg --audit)"
+  audit=$(dpkg --audit)
+  test -z "$audit" || { printf "%s\n" "$audit" >&2; exit 1; }
+  test -s /var/lib/dpkg/info/pb626-runtime.md5sums
+  verify=$(dpkg --verify pb626-runtime)
+  test -z "$verify" || { printf "%s\n" "$verify" >&2; exit 1; }
+  apt-get -o Dir::Cache::pkgcache="" -o Dir::Cache::srcpkgcache="" check
   test -x /sbin/init
   test "$(readlink -f /sbin/init)" = /usr/lib/systemd/systemd
   test "$(id -u reader)" = 1000
@@ -221,7 +237,7 @@ in_root /bin/bash -euc '
   sh -n /usr/sbin/pb626-admin
   sh -n /usr/sbin/pb626-diagnostics
   /usr/sbin/pb626-diag-clock resolution
-  for exe in /usr/bin/pb626-epd /usr/bin/pb626-x11-epd /usr/libexec/pb626/bin/* /usr/lib/pb626/xorg/drivers/dummy_drv.so; do
+  for exe in /usr/bin/pb626-epd /usr/bin/pb626-x11-epd /usr/bin/pb626-taskbar /usr/libexec/pb626/bin/* /usr/lib/pb626/xorg/drivers/dummy_drv.so; do
     ldd "$exe" > /tmp/pb626-ldd
     cat /tmp/pb626-ldd
     if grep -q "not found" /tmp/pb626-ldd; then
@@ -231,7 +247,7 @@ in_root /bin/bash -euc '
   done
   rm /tmp/pb626-ldd
   test -x /usr/lib/xorg/Xorg || test -x /usr/bin/Xorg
-  for exe in iwgtk iwctl systemctl systemd-run wish mupdf xterm matchbox-desktop xrestop xidle; do command -v "$exe"; done
+  for exe in iwgtk iwctl systemctl systemd-run wish mupdf xterm matchbox-desktop xrestop xidle xinput; do command -v "$exe"; done
   for unexpected in apk gcc; do
     if command -v "$unexpected" >/dev/null; then
       echo "Unexpected executable in Debian rootfs: $unexpected" >&2
@@ -264,6 +280,8 @@ sudo install -m 644 tests/check-control-center.tcl "$root/tmp/pb626-check-tk.tcl
 in_root tclsh /tmp/pb626-check-tk.tcl /usr/bin/pb626-control-center /usr/bin/pb626-open-document
 sudo rm "$root/tmp/pb626-check-tk.tcl"
 
+grep -Fxq 'MemorySleepMode=deep' "$root/etc/systemd/sleep.conf.d/60-pb626.conf"
+test ! -e "$root/etc/pb626/suspend-qualified"
 mkdir -p "$out"
 in_root dpkg-query -W -f='${Package}\t${Version}\n' | LC_ALL=C sort > "$out/DEBIAN-PACKAGES.txt"
 sudo tar --numeric-owner -C "$root" -czf "$out/pb626-native-rootfs.tar.gz" .

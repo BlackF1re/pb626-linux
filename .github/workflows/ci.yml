@@ -1,29 +1,10 @@
 name: CI
 
 on:
-  push:
-    branches: [main, enhance/native-reliability]
-    paths:
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/megi-fel.yml'
-      - '.github/workflows/restore.yml'
-      - 'BT0-uncaged/**'
-      - 'boot/**'
-      - 'board/**'
-      - 'display/**'
-      - 'patches/**'
-      - 'scripts/**'
-      - 'tests/**'
-      - 'diagnostics/**'
-      - '.github/workflows/source-bootloader.yml'
-      - '.github/workflows/request-firmware.yml'
-      - '!**/*.md'
   pull_request:
     branches: [main]
     paths:
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/megi-fel.yml'
-      - '.github/workflows/restore.yml'
+      - '.github/workflows/**'
       - 'BT0-uncaged/**'
       - 'boot/**'
       - 'board/**'
@@ -32,11 +13,19 @@ on:
       - 'scripts/**'
       - 'tests/**'
       - 'diagnostics/**'
-      - '.github/workflows/source-bootloader.yml'
-      - '.github/workflows/request-firmware.yml'
       - '!**/*.md'
   workflow_dispatch:
+    inputs:
+      compiler_audit:
+        description: Compare non-production ARMhf compiler profiles
+        type: boolean
+        default: false
   workflow_call:
+    inputs:
+      compiler_audit:
+        description: Compare non-production ARMhf compiler profiles
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -47,20 +36,20 @@ permissions:
 
 jobs:
   probe:
-    name: Host-side script and installer checks
+    name: Scripts
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Ensure shellcheck is available
+      - name: Install ShellCheck
         run: |
           if ! command -v shellcheck >/dev/null 2>&1; then
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends shellcheck
           fi
           shellcheck --version
-      - name: Validate shell syntax
+      - name: Scripts and host tests
         run: |
           sh -n scripts/probe-device.sh
           sh -n tests/probe-smoke.sh
@@ -68,14 +57,20 @@ jobs:
           sh -n scripts/pb626-network.sh
           sh -n boot/init-megi
           for f in boot/pb626-native-{desktop,console} boot/native/init.d/* boot/native/pb626-* display/pb626-{desktop,xsession}; do sh -n "$f"; done
-          bash -n scripts/build-native-rootfs.sh
           bash -n scripts/build-debian-rootfs.sh
           bash -n scripts/build-debian-base.sh
           bash -n scripts/compile-debian-native.sh
+          bash -n scripts/audit-armhf-compiler.sh
           bash -n scripts/build-megi-kernel.sh
           bash -n BT0-uncaged/build-from-source.sh
           bash -n BT0-uncaged/build-fel-host.sh
           python3 -m py_compile scripts/prepare-fel-inputs.py
+          python3 scripts/build-matchbox-themes.py /tmp/pb626-test-themes
+          for size in 32 48 56 64; do
+            test -s /tmp/pb626-test-themes/PB626-$size/matchbox/theme.xml
+            test -s /tmp/pb626-test-themes/PB626-$size/matchbox/close.png
+            test -s /tmp/pb626-test-themes/PB626-$size/matchbox/menu.png
+          done
           python3 -m py_compile BT0-uncaged/prepare-source-resume.py BT0-uncaged/prepare-source-hook.py
           gcc -O2 -Wall -Wextra -Werror diagnostics/pb626-diag-clock.c -o /tmp/pb626-diag-clock
           /tmp/pb626-diag-clock resolution
@@ -98,44 +93,51 @@ jobs:
           sh -n scripts/restore/pb626-net-dispatch.sh
           python3 -m py_compile scripts/installer/dump-network.py scripts/build-rootfs-bmap.py
           python3 tests/test-network-install.py
+          python3 -m py_compile scripts/windows/windows-fel.py
+          bash -n scripts/windows/build-host.sh scripts/windows/assemble-kit.sh
+          python3 tests/test-windows-flasher.py
           sh -n boot/recovery/init
           sh -n scripts/installer/pb626.sh
           gcc -O2 -Wall -Wextra -Werror boot/debian/pb626-charge.c -o /tmp/test-pb626-charge
           /tmp/test-pb626-charge --self-test
           sh -n boot/debian/pb626-admin
           sh -n boot/debian/pb626-user-session
-          sh tests/test-native-services.sh
-          sh tests/test-debian-settings.sh
+          if ! sh -x tests/test-native-services.sh >/tmp/pb626-native-test.log 2>&1; then
+            cat /tmp/pb626-native-test.log >&2
+            exit 1
+          fi
+          tail -n 1 /tmp/pb626-native-test.log
+          if ! sh -x tests/test-debian-settings.sh >/tmp/pb626-settings-test.log 2>&1; then
+            cat /tmp/pb626-settings-test.log >&2
+            exit 1
+          fi
+          tail -n 5 /tmp/pb626-settings-test.log
           if ! command -v tclsh >/dev/null; then sudo apt-get update; sudo apt-get install -y --no-install-recommends tcl; fi
           tclsh tests/check-control-center.tcl display/pb626-control-center display/pb626-debian-settings display/pb626-open-document
           bash -n scripts/fel-boot.sh
           bash -n scripts/configure-megi-kernel.sh
-          bash -n scripts/build-alpine-rootfs.sh
-          bash -n scripts/build-desktop-base.sh
-          bash -n scripts/build-megi-desktop.sh
           sh -n display/pb626-settings
           bash -n display/pb626-xsession
           bash -n scripts/build-megi-variants.sh
-          bash -n scripts/assemble-megi-ram.sh
           shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh scripts/pb626-network.sh
           shellcheck -s bash scripts/fel-boot.sh
-      - name: Parse Windows FEL launchers
+      - name: Parse PowerShell
         run: |
           pwsh -NoProfile -Command '
-            foreach ($file in @("scripts/Start-PB626.ps1", "scripts/Start-PB626Desktop.ps1", "scripts/installer/PB626.ps1", "scripts/restore/Backup-PB626Fast.ps1", "scripts/restore/Restore-PB626Fast.ps1")) {
+            foreach ($file in @("scripts/Start-PB626.ps1", "scripts/Start-PB626Desktop.ps1", "scripts/installer/PB626.ps1", "scripts/windows/PB626.ps1", "scripts/restore/Backup-PB626Fast.ps1", "scripts/restore/Restore-PB626Fast.ps1")) {
               $tokens = $errors = $null
               [void][System.Management.Automation.Language.Parser]::ParseFile(
                 "$PWD/$file", [ref]$tokens, [ref]$errors)
               if ($errors) { $errors; exit 1 }
             }
           '
-      - name: Test hardware inventory
+      - name: Inventory test
         run: sh tests/probe-smoke.sh
-      - name: Test offline firmware image builder
+      - name: Image builder test
         run: python3 tests/test-native-image.py
 
   bt0-hook:
-    name: BT0-uncaged hook build and model tests (no base SPL)
+    name: BT0 hook
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -154,44 +156,85 @@ jobs:
           python3 BT0-uncaged/test_recover_base.py
           cc -std=c99 -O2 -Wall -Wextra -Werror BT0-uncaged/test-led-morse.c -o /tmp/test-led-morse
           /tmp/test-led-morse
+          cc -std=c99 -O2 -Wall -Wextra -Werror BT0-uncaged/test-resume-contract.c -o /tmp/test-resume-contract
+          /tmp/test-resume-contract
           cc -std=c99 -O2 -Wall -Wextra -Werror -I BT0-uncaged/test-stubs -I BT0-uncaged BT0-uncaged/test-led-runtime.c -o /tmp/test-led-runtime
           /tmp/test-led-runtime
           python3 -m py_compile BT0-uncaged/prepare-source-led.py
           python3 tests/test-source-led.py
           python3 -m py_compile BT0-uncaged/build.py BT0-uncaged/pack-kernel.py
   renderer:
-    name: Host-side E Ink renderer tests
+    name: E Ink renderer
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install X11 test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth tk \
-            libfakekey-dev libxft-dev libexpat1-dev libpng-dev libxrender-dev fonts-dejavu-core x11-utils \
-            xserver-xorg-dev xutils-dev libpciaccess-dev autoconf automake libtool pkg-config
-      - name: Fetch pinned kernel source files without raw-content rate limits
+          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth
+      - name: Select kernel files
+        id: kernel-paths
+        run: |
+          set -euo pipefail
+          {
+            for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch patches/suspend/{sun5i-pm-twi-read,sun5i-pm-sram-abort,sun5i-pm-prepare-rollback,sun5i-pm-watchdog}.patch; do
+              sed -n 's|^--- a/||p' "$patch"
+            done
+            printf '%s\n' include/uapi/linux/sun5i-eink.h
+          } | sort -u > /tmp/pb626-kernel-paths
+          echo "fingerprint=$(sha256sum /tmp/pb626-kernel-paths | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Restore kernel sources
+        id: kernel-source
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/pb626-pinned-kernel
+          key: pb626-ci-kernel-files-v2-facc87117511221-${{ steps.kernel-paths.outputs.fingerprint }}
+      - name: Fetch pinned kernel files
+        if: steps.kernel-source.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           root=/tmp/pb626-pinned-kernel
           pin=facc87117511221bb61410e3f92ad8579697f736
           rm -rf "$root"
-          git init -q "$root"
-          git -C "$root" -c protocol.version=2 fetch --depth=1 --filter=blob:none https://github.com/Arnavion/linux.git "$pin"
-          test "$(git -C "$root" rev-parse FETCH_HEAD)" = "$pin"
-          mkdir -p "$root/.git/info"
-          {
-            for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
-              sed -n 's|^--- a/||p' "$patch"
-            done
-            printf '%s\n' include/uapi/linux/sun5i-eink.h
-          } | sort -u | sed 's|^|/|' > "$root/.git/info/sparse-checkout"
-          git -C "$root" config core.sparseCheckout true
-          git -C "$root" checkout --detach FETCH_HEAD
+          mkdir -p "$root"
+          # Fetch only the exact blobs required for the patch and UAPI checks.
+          # A shallow partial clone still downloads the entire Linux tree metadata.
+          metadata=$(mktemp)
+          trap 'rm -f "$metadata"' EXIT
+          while IFS= read -r path; do
+            mkdir -p "$root/$(dirname "$path")"
+            curl --fail --silent --show-error --retry 3 --retry-all-errors \
+              --connect-timeout 15 --max-time 90 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/Arnavion/linux/contents/$path?ref=$pin" -o "$metadata"
+            jq -e '.encoding == "base64" and .type == "file"' "$metadata" >/dev/null
+            jq -er '.content' "$metadata" | base64 -d > "$root/$path"
+            test "$(git hash-object "$root/$path")" = "$(jq -er '.sha' "$metadata")"
+          done < /tmp/pb626-kernel-paths
+          (cd "$root" && xargs -d '\n' sha256sum < /tmp/pb626-kernel-paths > SHA256SUMS)
+      - name: Verify kernel sources
+        run: |
+          set -euo pipefail
+          root=/tmp/pb626-pinned-kernel
+          (cd "$root" && sha256sum -c SHA256SUMS)
+          diff -u /tmp/pb626-kernel-paths <(cut -c67- "$root/SHA256SUMS")
+      - name: Cache kernel sources
+        if: steps.kernel-source.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/pb626-pinned-kernel
+          key: ${{ steps.kernel-source.outputs.cache-primary-key }}
+      - name: Prepare E Ink UAPI
+        run: |
+          set -euo pipefail
+          root=/tmp/pb626-pinned-kernel
           mkdir -p /tmp/pb626-uapi/linux
           cp "$root/include/uapi/linux/sun5i-eink.h" /tmp/pb626-uapi/linux/sun5i-eink.h
-          for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
+          for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch patches/suspend/{sun5i-pm-twi-read,sun5i-pm-sram-abort,sun5i-pm-prepare-rollback,sun5i-pm-watchdog}.patch; do
             git -C "$root" apply --check "$GITHUB_WORKSPACE/$patch"
             git -C "$root" apply "$GITHUB_WORKSPACE/$patch"
           done
@@ -205,8 +248,46 @@ jobs:
           /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-x11-epd
           PB626_TEST_X11=1 xvfb-run -a -s '-screen 0 760x1024x24' /tmp/test-pb626-x11-epd
+          # Alternate strip heights must preserve exact pixel output.
+          for rows in 32 64 256; do
+            gcc -O2 -Wall -Wextra -Werror -DPB626_CAPTURE_ROWS="$rows" display/test-pb626-x11-epd.c -o /tmp/test-pb626-strip -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
+            for depth in 16 24; do
+              PB626_TEST_X11=1 xvfb-run -a -s "-screen 0 760x1024x$depth" /tmp/test-pb626-strip
+            done
+          done
+          gcc -O2 -Wall -Wextra -Werror -DPB626_PACKED_TRANSITIONS -I /tmp/pb626-uapi display/test-pb626-epd.c -o /tmp/test-pb626-packed
+          /tmp/test-pb626-packed
+
+  desktop-ui:
+    name: Desktop UI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libx11-dev libxtst-dev xvfb xauth tk fonts-dejavu-core
+      - name: Test taskbar and settings
+        run: |
+          set -euo pipefail
+          gcc -O2 -Wall -Wextra -Werror display/pb626-taskbar.c -o /tmp/pb626-taskbar -lX11
+          gcc -O2 -Wall -Wextra -Werror display/test-pb626-taskbar.c -o /tmp/test-pb626-taskbar -lX11 -lXtst
+          xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-taskbar /tmp/pb626-taskbar
           xvfb-run -a -s '-screen 0 760x1024x16' wish tests/test-debian-settings.tcl
-      - name: Smoke-test pinned Matchbox Keyboard with the PB626 flat layout
+          xvfb-run -a -s '-screen 0 760x1024x16 -dpi 216' wish tests/test-debian-settings.tcl
+
+  keyboard:
+    name: Keyboard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libfakekey-dev libxft-dev libexpat1-dev libpng-dev libxrender-dev fonts-dejavu-core xvfb xauth x11-utils autoconf automake libtool pkg-config
+      - name: Test keyboard
         run: |
           set -euo pipefail
           src=/tmp/pb626-matchbox-keyboard
@@ -233,7 +314,18 @@ jobs:
               xwininfo -root -tree | grep -F '"Keyboard"'
               kill -0 "$pid"
             '
-      - name: Compile the optional shared DDX against host Xorg headers
+
+  shared-ddx:
+    name: Shared DDX
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xserver-xorg-dev xutils-dev libpciaccess-dev autoconf automake libtool pkg-config
+      - name: Build shared DDX
         run: |
           set -euo pipefail
           git init -q /tmp/pb626-ddx
@@ -248,3 +340,54 @@ jobs:
           make -j2
           test -s src/.libs/dummy_drv.so
           # Compilation only: this runner need not have a real Xorg VT.
+
+  # Release ARM binaries are compiled and tested in the native build.
+  # Experimental profiles are useful only when explicitly comparing them.
+  compiler-audit:
+    if: ${{ inputs.compiler_audit }}
+    name: 'Compiler: ${{ matrix.program }}'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        program: [pb626-epd, pb626-x11-epd, pb626-charge]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Obtain the pinned E Ink UAPI
+        run: |
+          set -euo pipefail
+          root=/tmp/pb626-audit-kernel
+          pin=facc87117511221bb61410e3f92ad8579697f736
+          git init -q "$root"
+          git -C "$root" fetch --depth=1 --filter=blob:none https://github.com/Arnavion/linux.git "$pin"
+          test "$(git -C "$root" rev-parse FETCH_HEAD)" = "$pin"
+          mkdir -p /tmp/pb626-uapi/linux
+          git -C "$root" show FETCH_HEAD:include/uapi/linux/sun5i-eink.h > /tmp/pb626-uapi/linux/sun5i-eink.h
+      - name: Install ARM emulation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static binfmt-support
+          sudo update-binfmts --enable qemu-arm
+      - name: Compare compilers
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pb626-compiler-audit"
+          docker run --rm --platform linux/arm/v7 \
+            -e AUDIT_PROGRAM="${{ matrix.program }}" \
+            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v /tmp/pb626-uapi:/uapi:ro \
+            -v "$RUNNER_TEMP/pb626-compiler-audit:/audit" \
+            debian:trixie-slim bash -euc '
+              apt-get update
+              apt-get install -y --no-install-recommends build-essential dpkg-dev libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev
+              echo "Dependencies installed; starting $AUDIT_PROGRAM compiler audit"
+              bash /repo/scripts/audit-armhf-compiler.sh /uapi /audit "$AUDIT_PROGRAM"
+            '
+      - name: Upload compiler comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pb626-armhf-compiler-audit-${{ matrix.program }}
+          path: ${{ runner.temp }}/pb626-compiler-audit
+          if-no-files-found: ignore

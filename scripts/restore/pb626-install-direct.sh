@@ -62,11 +62,10 @@ receive() {
     test "$(wc -c <"$work/payload")" = "$bytes"
 }
 check_hash() { printf '%s  %s\n' "$2" "$1" | sha256sum -c -; }
-case "$operation" in
-    write)
-        kind=$1; idx=$2; format=$3; bytes=$4; expected=$5; length=$6
-        number "$idx"; number "$length"
-        test "$length" -gt 0 && test "$length" -le 4194304 && test $((length%512)) = 0 || fail "Invalid write length"
+# The exact same bounds are used for read-only comparison and writes.
+extent() {
+    number "$idx"; number "$length"
+    test "$length" -gt 0 && test "$length" -le 4194304 && test $((length%512)) = 0 || fail "Invalid extent length"
         case "$kind" in
             rootfs) dev=$P; bs=4194304; seek=$idx; count=1
                 test "$idx" -lt 1741
@@ -74,10 +73,91 @@ case "$operation" in
             kernel) dev=$D; bs=512; seek=$((80+idx*8192)); count=$((length/512))
                 test "$idx" -le 2; test $((seek+count)) -le 16465
                 if test "$idx" = 2; then test "$length" = 512; fi ;;
-            spl) dev=$D; bs=512; seek=16; count=48
+            spl|spl-candidate) dev=$D; bs=512; seek=16; count=48
                 test "$idx" = 0 && test "$length" = 24576 || fail "Invalid BT0 extent"
-                test "$expected" = 1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6 ;;
+                ;;
             *) fail "Invalid write region";;
+        esac
+
+}
+case "$operation" in
+    chunk-hash)
+        kind=$1; idx=$2; length=$3
+        extent
+        work=$(mktemp -d /run/pb626-install.XXXXXX)
+        blockdev --flushbufs "$dev"
+        dd if="$dev" of="$work/chunk" bs="$bs" skip="$seek" count="$count" status=none
+        test "$(wc -c <"$work/chunk")" = "$length"
+        digest=$(sha256sum "$work/chunk")
+        printf 'BLOCK %s %s\n' "$idx" "${digest%% *}"
+        ;;
+    bootloader-hash)
+        work=$(mktemp -d /run/pb626-install.XXXXXX)
+        dd if="$D" of="$work/current-spl" bs=512 skip=16 count=48 status=none
+        test "$(wc -c <"$work/current-spl")" = 24576
+        sha256sum "$work/current-spl" | awk '{print $1}'
+        ;;
+    spl-check)
+        test -f /etc/pb626-spl-candidate.sha256
+        cat /etc/pb626-spl-candidate.sha256
+        ;;
+    modules-check)
+        release=$1; expected=$2
+        case "$release" in ''|*[!A-Za-z0-9_.+-]*) fail "Invalid kernel release";; esac
+        case "$expected" in *[!0-9a-f]*) fail "Invalid module hash";; esac
+        test "${#expected}" = 64
+        work=$(mktemp -d /run/pb626-install.XXXXXX)
+        mkdir -p "$mnt"
+        mount -t ext4 -o ro,noload "$P" "$mnt"; mounted=1
+        grep -qx pb626-native-debian13-armhf-v1 "$mnt/etc/pb626-image-id"
+        test -s "$mnt/usr/lib/modules/$release/modules.dep"
+        test -s "$mnt/lib/firmware/pb626/default.wbf"
+        # Paths in the kernel module tree are fixed by the build.
+        (set -o pipefail; cd "$mnt/usr/lib/modules"; export LC_ALL=C
+            find . -type f -print0 | sort -z | xargs -0 sha256sum) >"$work/modules.manifest"
+        test -s "$work/modules.manifest"
+        check_hash "$work/modules.manifest" "$expected" >/dev/null
+        busybox umount "$mnt"; mounted=0
+        identity
+        echo PB626_MODULES_VERIFIED
+        ;;
+    native-check)
+        # BT0-only updates must not turn a stock or incompatible native
+        # installation into an unbootable machine. No eMMC write here.
+        length=$1; expected=$2; release=$3
+        number "$length"
+        test "$length" -ge 512 && test "$length" -le 8389120 && test $((length%512)) = 0
+        case "$expected" in *[!0-9a-f]*) fail "Invalid kernel hash";; esac
+        test "${#expected}" = 64
+        case "$release" in ''|*[!A-Za-z0-9_.+-]*) fail "Invalid kernel release";; esac
+        work=$(mktemp -d /run/pb626-install.XXXXXX)
+        dd if="$D" of="$work/kernel" bs=512 skip=80 count=$((length/512)) status=none
+        test "$(wc -c <"$work/kernel")" = "$length"
+        check_hash "$work/kernel" "$expected"
+        mkdir -p "$mnt"
+        mount -t ext4 -o ro,noload "$P" "$mnt"; mounted=1
+        grep -qx pb626-native-debian13-armhf-v1 "$mnt/etc/pb626-image-id"
+        test -s "$mnt/usr/lib/modules/$release/modules.dep"
+        test -s "$mnt/lib/firmware/pb626/default.wbf"
+        busybox umount "$mnt"; mounted=0
+        identity
+        echo PB626_NATIVE_VERIFIED
+        ;;
+    write)
+        kind=$1; idx=$2; format=$3; bytes=$4; expected=$5; length=$6
+        extent
+        case "$kind" in
+            spl|spl-candidate)
+                if test "$kind" = spl; then
+                    test "$expected" = 1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6
+                else
+                    # Only the Windows-specific RAM recovery assembly can
+                    # supply this immutable same-run digest. No peer command
+                    # can alter the authorization file or write another SPL.
+                    test -f /etc/pb626-spl-candidate.sha256
+                    test "$expected" = "$(cat /etc/pb626-spl-candidate.sha256)"
+                fi
+                ;;
         esac
         receive "$bytes" "$expected"
         case "$format" in

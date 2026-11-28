@@ -1,19 +1,55 @@
 #!/usr/bin/wish
 # On-demand, touch-oriented control centre. No resident settings daemon.
+# Keep the recovery path for display preferences usable even at high Xorg DPI.
+# Other clients retain their configured DPI; only this compact settings UI caps
+# point scaling when the screen is too small for its navigation and dialogs.
+if {[winfo screenwidth .] <= 1024 && [tk scaling] > 1.65} {tk scaling 1.65}
 tk_setPalette background white foreground black activeBackground #cccccc \
     activeForeground black selectBackground black selectForeground white
 option add *Font {{Liberation Sans} 15}
-option add *Button.padY 9
-option add *Button.padX 12
+option add *Button.padY 10
+option add *Button.padX 14
+option add *Button.anchor w
+option add *Button.relief solid
+option add *Button.borderWidth 1
+option add *Button.activeBackground black
+option add *Button.activeForeground white
+option add *Menubutton.relief solid
+option add *Menubutton.borderWidth 1
+option add *Menu.activeBackground black
+option add *Menu.activeForeground white
+option add *Menu.tearOff 0
 option add *Scale.sliderLength 40
 option add *highlightColor black
 ttk::style theme use clam
-ttk::style configure TNotebook -background white -borderwidth 2
-ttk::style configure TNotebook.Tab -padding {12 14} -font {{Liberation Sans} 15 bold} -foreground black -background white
-ttk::style map TNotebook.Tab -background {selected black} -foreground {selected white}
+ttk::style configure TNotebook -background white -borderwidth 0
+ttk::style configure TNotebook.Tab -padding {10 12} -font {{Liberation Sans} 14 bold} -foreground black -background white -borderwidth 1
+ttk::style map TNotebook.Tab -background {selected black active #eeeeee} -foreground {selected white}
 wm title . "PocketBook Settings"
 wm geometry . 700x840
 
+proc section {parent name title {description ""}} {
+    frame $parent.$name -background white
+    frame $parent.$name.line -height 1 -background black
+    label $parent.$name.title -text $title -anchor w -font {{Liberation Sans} 19 bold}
+    pack $parent.$name.line -fill x -pady {12 7}
+    pack $parent.$name.title -fill x
+    if {$description ne ""} {
+        label $parent.$name.description -text $description -anchor w -justify left -wraplength 540 -font {{Liberation Sans} 12}
+        pack $parent.$name.description -fill x -pady {2 4}
+    }
+    pack $parent.$name -fill x -padx 16 -pady {3 6}
+}
+proc gear {canvas} {
+    set points {}
+    for {set i 0} {$i < 32} {incr i} {
+        set radius [expr {$i % 4 in {1 2} ? 19.0 : 15.0}]
+        set angle [expr {$i * 2.0 * acos(-1) / 32}]
+        lappend points [expr {22 + $radius*cos($angle)}] [expr {22 + $radius*sin($angle)}]
+    }
+    $canvas create polygon $points -fill black -outline black
+    $canvas create oval 13 13 31 31 -fill white -outline white
+}
 proc readfile {path} {
     if {[catch {set fd [open $path r]}]} {return ""}
     set failed [catch {set value [string trim [read $fd]]}]
@@ -38,12 +74,12 @@ proc term {title args} {
 }
 proc choose {parent name caption variable choices} {
     frame $parent.$name
-    label $parent.$name.label -text $caption -anchor w
+    label $parent.$name.label -text $caption -anchor w -justify left -wraplength 540
     tk_optionMenu $parent.$name.select $variable {*}$choices
-    $parent.$name.select configure -width 13 -anchor center -padx 8 -pady 9
-    pack $parent.$name.label -side left -fill x -expand 1
-    pack $parent.$name.select -side right
-    pack $parent.$name -fill x -padx 12 -pady 6
+    $parent.$name.select configure -width 13 -anchor w -padx 12 -pady 9
+    pack $parent.$name.label -fill x -pady {0 3}
+    pack $parent.$name.select -fill x
+    pack $parent.$name -fill x -padx 16 -pady 5
 }
 proc lightRefresh {} {
     global level lightState lightText
@@ -59,54 +95,127 @@ proc lightApply {} {
 proc lightSwitch {action} {
     if {[act $action]} {lightRefresh}
 }
+proc networkStatus {} {
+    set up 0
+    set networks {}
+    foreach p [glob -nocomplain /sys/class/net/*] {
+        if {![file isdirectory $p/wireless] && ![file exists $p/phy80211]} {continue}
+        set state [readfile $p/operstate]
+        if {$state eq "up"} {set up 1}
+        lappend networks "[file tail $p]: $state"
+    }
+    if {![llength $networks]} {
+        set ::networkText "No wireless interface detected."
+    } else {
+        set ::networkText "[expr {$up ? "Connected / link up" : "Not connected"}] — [join $networks {, }]"
+    }
+}
 proc wifi {} {
     if {[act wifi-on]} {
+        networkStatus
         if {[catch {exec /usr/bin/iwgtk -N &} err]} {
             tk_messageBox -icon error -message $err
         }
     }
 }
+# Read XI2 capabilities without opening evdev or grabbing touch events.
+proc touchCapability {data} {
+    set direct 0
+    set maximum 0
+    set found 0
+    foreach line [split $data "\n"] {
+        if {[regexp {^\s*Touch mode:\s*(\S+)} $line -> mode]} {
+            set direct [expr {$mode eq "direct"}]
+            if {$direct} {set found 1}
+        } elseif {$direct && [regexp {^\s*Max number of touches:\s*([0-9]+)} $line -> n]} {
+            if {$n > $maximum} {set maximum $n}
+            set direct 0
+        }
+    }
+    if {!$found} {return "X11 reports no direct touch class. Check ELAN detection and evdev configuration."}
+    if {!$maximum} {return "Direct touch detected. Maximum contact count is not reported."}
+    return "Direct touch detected. X11 reports up to $maximum simultaneous contacts."
+}
+proc touchStatus {} {
+    if {[catch {exec /usr/bin/timeout -k 1s 3s env LC_ALL=C /usr/bin/xinput list --long} data]} {
+        set ::touchText "Cannot query X11 input capabilities: $data"
+    } else {
+        set ::touchText [touchCapability $data]
+    }
+}
+proc bindingsSelect {} {
+    set key [lsearch -exact {Left Right Home Menu} $::bindingKey]
+    if {$key < 0} {return}
+    foreach {gesture offset} {short 0 long 1 double 2} {
+        set i [expr {3*$key+$offset}]
+        .bindings.$gesture.select configure -textvariable ::bindAction($i)
+        set m .bindings.$gesture.select.menu
+        $m delete 0 end
+        foreach action $::bindingActions {
+            $m add radiobutton -label $action -variable ::bindAction($i) -value $action
+        }
+    }
+}
+proc bindingsSave {} {
+    set values {}
+    for {set i 0} {$i < 12} {incr i} {lappend values $::bindAction($i)}
+    if {[act button-bindings {*}$values]} {
+        destroy .bindings
+        set ::restartNeeded 1
+        set ::feedback "Bindings saved. Restart desktop to apply."
+    }
+}
 proc buttonSettings {} {
     if {[winfo exists .bindings]} {raise .bindings; return}
     if {[catch {query button-bindings-status} data] || [llength $data] != 12} {return}
+    set ::bindingActions {none Left Right Up Down Page_Up Page_Down Home End Escape Return BackSpace Tab space Menu F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 keyboard refresh light-toggle recent-apps}
+    for {set i 0} {$i < 12} {incr i} {set ::bindAction($i) [lindex $data $i]}
+    set ::bindingKey Left
     toplevel .bindings
     wm title .bindings "Physical button bindings"
-    set actions {none Left Right Up Down Page_Up Page_Down Home End Escape Return BackSpace Tab space Menu F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 keyboard refresh light-toggle}
-    label .bindings.note -text "Send ordinary X11 keys or system actions.\nDouble click delays single click only when assigned." -justify left
-    grid .bindings.note -row 0 -columnspan 4 -pady 8
-    set col 1
-    foreach title {Short Long Double} {
-        label .bindings.h$col -text $title
-        grid .bindings.h$col -row 1 -column $col
-        incr col
-    }
-    set i 0
-    set row 2
+    wm transient .bindings .
+    label .bindings.note -text "Choose a button, then set each gesture. Double-click delays the single press only when assigned." -anchor w -justify left -wraplength 450
+    pack .bindings.note -fill x -padx 16 -pady 8
+    choose .bindings key "Physical button" bindingKey {Left Right Home Menu}
+    .bindings.key.select.menu delete 0 end
     foreach key {Left Right Home Menu} {
-        label .bindings.key$row -text $key
-        grid .bindings.key$row -row $row -column 0 -padx 4 -pady 12
-        for {set col 1} {$col <= 3} {incr col} {
-            set ::bindAction($i) [lindex $data $i]
-            tk_optionMenu .bindings.a$i ::bindAction($i) {*}$actions
-            .bindings.a$i configure -width 10 -pady 8
-            grid .bindings.a$i -row $row -column $col -padx 2
-            incr i
-        }
-        incr row
+        .bindings.key.select.menu add command -label $key -command [list setBindingKey $key]
     }
-    button .bindings.save -text "Save bindings" -command {
-        set values {}
-        for {set i 0} {$i < 12} {incr i} {lappend values $::bindAction($i)}
-        if {[act button-bindings {*}$values]} {
-            destroy .bindings
-            tk_messageBox -message "Saved. Restart desktop to apply."
-        }
+    foreach {gesture caption index} {short "Short press" 0 long "Long press" 1 double "Double press" 2} {
+        choose .bindings $gesture $caption ::bindAction($index) $::bindingActions
     }
+    button .bindings.save -text "Save all bindings" -command bindingsSave
     button .bindings.reset -text "Restore defaults" -command {
-        if {[act button-bindings-reset]} {destroy .bindings; tk_messageBox -message "Restart desktop to apply."}
+        if {[tk_messageBox -parent .bindings -type yesno -message "Restore default bindings for all four buttons?"] eq "yes" &&
+            [act button-bindings-reset]} {
+            destroy .bindings
+            set ::restartNeeded 1
+            set ::feedback "Defaults restored. Restart desktop to apply."
+        }
     }
-    grid .bindings.save -row $row -columnspan 4 -sticky ew -padx 8 -pady 5
-    grid .bindings.reset -row [expr {$row+1}] -columnspan 4 -sticky ew -padx 8 -pady 5
+    button .bindings.cancel -text "Cancel" -command {destroy .bindings}
+    pack .bindings.save .bindings.reset .bindings.cancel -fill x -padx 16 -pady 4
+    bindingsSelect
+}
+proc setBindingKey {key} {
+    set ::bindingKey $key
+    bindingsSelect
+}
+proc batterySummary {} {
+    set value "Battery telemetry unavailable."
+    foreach p [glob -nocomplain /sys/class/power_supply/*] {
+        if {[readfile $p/type] ne "Battery"} {continue}
+        set capacity [readfile $p/capacity]
+        set status [readfile $p/status]
+        if {[string is integer -strict $capacity] && $capacity >= 0 && $capacity <= 100} {
+            set value "$capacity% — $status"
+        }
+        break
+    }
+    set ::batteryText $value
+}
+proc storageSummary {} {
+    if {![catch {query sd-status} result]} {set ::storageText $result}
 }
 proc batterySettings {} {
     if {[winfo exists .battery]} {raise .battery; return}
@@ -116,12 +225,22 @@ proc batterySettings {} {
     wm title .battery "Battery policy"
     label .battery.note -text "Warning and shutdown while discharging only.\nShutdown requires two confirmed low samples." -justify left
     pack .battery.note -pady 8
-    choose .battery warn "Warn at (%)" batteryWarn {5 7 10 15 20 25 30}
-    choose .battery critical "Shut down at (%)" batteryCritical {2 3 4 5 7 10}
-    button .battery.save -text "Save" -command {
-        if {[act battery-settings $::batteryWarn $::batteryCritical]} {destroy .battery}
+    set warnings {}
+    for {set i 5} {$i <= 30} {incr i} {lappend warnings $i}
+    choose .battery warn "Warn at (%)" batteryWarn $warnings
+    choose .battery critical "Shut down at (%)" batteryCritical {2 3 4 5 6 7 8 9 10}
+    set ::batteryMessage "Warning must be higher than shutdown."
+    label .battery.message -textvariable ::batteryMessage -anchor w -justify left -wraplength 420
+    button .battery.save -text "Save battery policy" -command {
+        if {$::batteryWarn <= $::batteryCritical} {
+            set ::batteryMessage "Choose a warning threshold above shutdown."
+        } elseif {[act battery-settings $::batteryWarn $::batteryCritical]} {
+            destroy .battery
+            set ::feedback "Battery policy saved."
+        }
     }
-    pack .battery.save -fill x -padx 12 -pady 8
+    button .battery.cancel -text "Cancel" -command {destroy .battery}
+    pack .battery.message .battery.save .battery.cancel -fill x -padx 12 -pady 4
 }
 proc shutdownPicker {} {
     if {[catch {exec /usr/bin/pb626-shutdown-picker &} err]} {
@@ -161,13 +280,114 @@ proc updateStatus {} {
     .tabs.system.canvas.body.info configure -state normal
     .tabs.system.canvas.body.info delete 1.0 end
     .tabs.system.canvas.body.info insert end $data
-    .tabs.system.canvas.body.info configure -state disabled
+    set lines [expr {[llength [split $data "\n"]] + 2}]
+    .tabs.system.canvas.body.info configure -state disabled -height [expr {max(12, $lines)}]
 }
-proc desktopApply {} {
-    global buttons home menu gray depth idle fast
-    if {[act desktop-settings $buttons $home $menu $gray $depth $idle $fast]} {
-        tk_messageBox -title "Saved" -message "Settings saved. Restart the desktop or reboot to apply. Save open documents first."
+proc desktopApply {section} {
+    global buttons home menu gray depth idle fast tone gamma preview mixed holdMs uiDpi panelSize titlebarSize taskbarEnabled taskbarSize feedback restartNeeded
+    switch -- $section {
+        display {
+            if {$preview && $mixed} {
+                set feedback "Choose either exact mixed rendering or approximate preview."
+                return
+            }
+            set ok [act desktop-display $gray $depth $fast $tone $gamma $preview $mixed]
+        }
+        keys {set ok [act desktop-buttons $buttons $home $menu]}
+        idle {set ok [act desktop-idle $idle]}
+        hold {set ok [act desktop-hold $holdMs]}
+        dpi {set ok [act desktop-dpi $uiDpi]}
+        appearance {set ok [act desktop-appearance $panelSize $titlebarSize]}
+        taskbar {set ok [act desktop-taskbar $taskbarEnabled $taskbarSize]}
+        default {error "Unknown settings section"}
     }
+    if {$ok} {
+        set restartNeeded 1
+        set feedback "Saved. Restart desktop to apply."
+    }
+}
+proc timeSummary {} {
+    set stamp [clock format [clock seconds] -format "%Y-%m-%d %H:%M"]
+    set zone [readfile /etc/timezone]
+    if {$zone eq "" && ![catch {exec /usr/bin/timeout -k 1s 3s timedatectl show -p Timezone --value} result]} {
+        set zone [string trim $result]
+    }
+    set ntpState unknown
+    if {![catch {exec /usr/bin/timeout -k 1s 3s timedatectl show -p NTP --value} result]} {
+        if {$result eq "yes"} {set ntpState on}
+        if {$result eq "no"} {set ntpState off}
+    }
+    set ::timeText "$stamp   $zone\nAutomatic time: $ntpState"
+}
+proc manualTime {} {
+    if {[winfo exists .manualtime]} {raise .manualtime; return}
+    set ::manualDate [clock format [clock seconds] -format "%Y-%m-%d"]
+    set ::manualClock [clock format [clock seconds] -format "%H:%M:%S"]
+    toplevel .manualtime
+    wm title .manualtime "Set date and time"
+    wm transient .manualtime .
+    label .manualtime.note -text "Turn automatic time off before setting the clock manually." -anchor w -justify left -wraplength 450
+    label .manualtime.dlabel -text "Date (YYYY-MM-DD)" -anchor w
+    entry .manualtime.date -textvariable ::manualDate
+    label .manualtime.tlabel -text "Local time (HH:MM:SS)" -anchor w
+    entry .manualtime.time -textvariable ::manualClock
+    button .manualtime.save -text "Save date and time" -command {
+        if {[act manual-time $::manualDate $::manualClock]} {
+            destroy .manualtime
+            timeSummary
+            set ::feedback "Date and time saved."
+        }
+    }
+    button .manualtime.cancel -text "Cancel" -command {destroy .manualtime}
+    pack .manualtime.note .manualtime.dlabel .manualtime.date .manualtime.tlabel .manualtime.time .manualtime.save .manualtime.cancel -fill x -padx 16 -pady 4
+}
+proc timezoneFilter {} {
+    if {![winfo exists .timezone.list]} {return}
+    .timezone.list delete 0 end
+    foreach z $::zones {
+        if {[string first [string tolower $::zoneFilter] [string tolower $z]] >= 0} {
+            .timezone.list insert end $z
+        }
+    }
+}
+proc timezoneSave {} {
+    set chosen [.timezone.list curselection]
+    if {![llength $chosen]} {set ::zoneMessage "Select a time zone first."; return}
+    set z [.timezone.list get [lindex $chosen 0]]
+    if {[act timezone $z]} {
+        destroy .timezone
+        set ::feedback "Time zone saved: $z"
+        timeSummary
+    }
+}
+proc timezoneDialog {} {
+    if {[winfo exists .timezone]} {raise .timezone; return}
+    if {[catch {exec /usr/bin/timeout -k 1s 5s timedatectl list-timezones} result]} {
+        set ::feedback "Cannot read available time zones."
+        return
+    }
+    set ::zones [split [string trim $result] "\n"]
+    set ::zoneFilter ""
+    set ::zoneMessage "Select the local time zone."
+    toplevel .timezone
+    wm title .timezone "Time zone"
+    label .timezone.h -text "Find your time zone" -anchor w -font {{Liberation Sans} 18 bold}
+    entry .timezone.search -textvariable ::zoneFilter
+    bind .timezone.search <KeyRelease> {timezoneFilter}
+    frame .timezone.results
+    listbox .timezone.list -height 8 -exportselection 0 -yscrollcommand {.timezone.results.scroll set}
+    # Keep the list a child of the dialog for simple testable bindings.
+    scrollbar .timezone.results.scroll -width 32 -command {.timezone.list yview}
+    pack .timezone.results.scroll -side right -fill y
+    pack .timezone.list -in .timezone.results -side left -fill both -expand 1
+    label .timezone.message -textvariable ::zoneMessage -anchor w
+    button .timezone.save -text "Save time zone" -command timezoneSave
+    button .timezone.cancel -text "Cancel" -command {destroy .timezone}
+    pack .timezone.h .timezone.search -fill x -padx 12 -pady 5
+    pack .timezone.results -fill both -expand 1 -padx 12 -pady 5
+    pack .timezone.message .timezone.save .timezone.cancel -fill x -padx 12 -pady 4
+    timezoneFilter
+    focus .timezone.search
 }
 proc desktopRestart {} {
     if {[tk_messageBox -type yesno -icon question -message "Close all graphical applications and restart the desktop?"] eq "yes"} {
@@ -175,27 +395,51 @@ proc desktopRestart {} {
     }
 }
 set buttons arrows
+set holdMs 1000
+set uiDpi auto
+set panelSize 48
+set titlebarSize 40
+set taskbarEnabled 0
+set taskbarSize 48
 set home keyboard
 set menu menu
 set gray balanced
 set fast du
 set depth 16
 set idle 0
+set tone srgb
+set gamma 1.0
+set preview 0
+set mixed 0
+set restartNeeded 0
+set feedback "Changes apply only when saved."
 if {![catch {query desktop-status} data]} {
     foreach line [split $data "\n"] {
-        if {![regexp {^([A-Z0-9_]+)=([a-z0-9]+)$} $line -> key value]} {continue}
+        if {![regexp {^([A-Z0-9_]+)=([a-z0-9.-]+)$} $line -> key value]} {continue}
         switch -- $key {
             PB626_BUTTONS {set buttons $value}
+            PB626_TASKBAR {if {$value in {0 1}} {set taskbarEnabled $value}}
+            PB626_TASKBAR_SIZE {if {$value in {32 40 48 56 64 72}} {set taskbarSize $value}}
+            PB626_PANEL_SIZE {if {$value in {32 40 48 56 64 72}} {set panelSize $value}}
+            PB626_TITLEBAR_SIZE {if {$value in {32 40 48 56 64}} {set titlebarSize $value}}
+            PB626_UI_DPI {if {$value in {auto 96 120 144 168 192 216}} {set uiDpi $value}}
+            PB626_BUTTON_HOLD_MS {if {$value in {300 500 750 1000 1500 2000}} {set holdMs $value}}
             PB626_HOME_KEY {set home $value}
             PB626_MENU_KEY {set menu $value}
             PB626_EPD_GRAY_PROFILE {set gray $value}
             PB626_EPD_FAST_MODE {set fast $value}
             PB626_XORG_DEPTH {set depth $value}
             PB626_IDLE_MINUTES {set idle $value}
+            PB626_EPD_TONE {set tone $value}
+            PB626_EPD_GAMMA {set gamma $value}
+            PB626_EPD_APPROX_PREVIEW {if {$value in {0 1}} {set preview $value}}
+            PB626_EPD_MIXED {if {$value in {0 1}} {set mixed $value}}
         }
     }
 }
 set qualified [file isfile /etc/pb626/suspend-qualified]
+set mixedQualified [file isfile /etc/pb626/mixed-waveform-qualified]
+if {!$mixedQualified} {set mixed 0}
 set level 50
 set lightState 0
 set lightText "Frontlight off"
@@ -217,8 +461,16 @@ set host [info hostname]
 set powerKey lock
 if {![catch {query power-key-status} value]} {set powerKey $value}
 
-label .heading -text "PocketBook settings" -font {{Liberation Sans} 22 bold}
-pack .heading -pady 12
+frame .header -background white
+canvas .header.icon -width 44 -height 44 -background white -borderwidth 0 -highlightthickness 0
+gear .header.icon
+frame .header.text -background white
+label .header.text.title -text "Settings" -font {{Liberation Sans} 24 bold} -anchor w
+label .header.text.subtitle -text "PocketBook 626 Plus / Debian — drag on labels to scroll" -font {{Liberation Sans} 12} -anchor w
+pack .header.text.title .header.text.subtitle -fill x
+pack .header.icon -side left -padx {0 10}
+pack .header.text -side left -fill x -expand 1
+pack .header -fill x -padx 16 -pady {10 8}
 ttk::notebook .tabs
 # Fixed-size portrait layouts clip controls when the keyboard is visible
 # or the screen is rotated. Each page has an independent touch-sized
@@ -226,15 +478,24 @@ ttk::notebook .tabs
 proc tabRegion {canvas} {
     $canvas configure -scrollregion [$canvas bbox all]
 }
+proc wrapLabels {parent width} {
+    foreach w [winfo children $parent] {
+        if {[winfo class $w] eq "Label" && [$w cget -wraplength] > 0} {
+            $w configure -wraplength [expr {max(120, $width-36)}]
+        }
+        if {[winfo class $w] eq "Frame"} {wrapLabels $w $width}
+    }
+}
 proc tabWidth {canvas item width} {
     $canvas itemconfigure $item -width $width
+    wrapLabels $canvas.body $width
     tabRegion $canvas
 }
 foreach {tab title} {display Display keys Buttons net Network power Power system System} {
     set page .tabs.$tab
     frame $page -background white
     canvas $page.canvas -background white -highlightthickness 0 -borderwidth 0 -yscrollcommand [list $page.vscroll set] -yscrollincrement 20
-    scrollbar $page.vscroll -orient vertical -width 36 -command [list $page.canvas yview]
+    scrollbar $page.vscroll -orient vertical -width 32 -background black -activebackground black -troughcolor white -command [list $page.canvas yview]
     frame $page.canvas.body -background white
     set item [$page.canvas create window 0 0 -window $page.canvas.body -anchor nw]
     bind $page.canvas.body <Configure> [list tabRegion $page.canvas]
@@ -243,10 +504,16 @@ foreach {tab title} {display Display keys Buttons net Network power Power system
     pack $page.canvas -side left -fill both -expand 1
     .tabs add $page -text $title
 }
-pack .tabs -fill both -expand 1 -padx 8 -pady 4
+proc scrollPage {units} {
+    set page [.tabs select]
+    if {$page ne ""} {$page.canvas yview scroll $units units}
+}
+bind . <Button-4> {scrollPage -3}
+bind . <Button-5> {scrollPage 3}
 set p .tabs.display.canvas.body
-label $p.state -textvariable lightText -font {{Liberation Sans} 19 bold}
-pack $p.state -pady 8
+section $p light "Frontlight" "Brightness and power are saved independently."
+label $p.state -textvariable lightText -font {{Liberation Sans} 15 bold} -anchor w
+pack $p.state -fill x -padx 16 -pady 3
 scale $p.brightness -from 1 -to 100 -orient horizontal -variable level -resolution 1 -length 500 \
     -label "Brightness (%)" -width 36 -troughcolor #aaaaaa
 pack $p.brightness -fill x -padx 16 -pady 8
@@ -259,38 +526,79 @@ button $p.switch.on -text "Turn on" -command {lightSwitch light-on}
 button $p.switch.off -text "Turn off" -command {lightSwitch light-off}
 pack $p.switch.on $p.switch.off -side left -expand 1 -fill x -padx 3
 pack $p.switch -fill x -padx 12 -pady 4
+section $p rendering "E Ink rendering" "Exact rendering is recommended for reading. Fast modes retain their factory transition limits."
 choose $p gray "Grayscale profile" gray {balanced ui photo legacy mono}
 choose $p fast "Fast waveform" fast {du auto a2 du4}
 choose $p depth "X11 color depth" depth {16 24}
-label $p.note -text "Mono uses black and white only. Other profiles retain 16 gray levels.\nDisplay profile changes apply after restart." -justify left -wraplength 560
-pack $p.note -pady 6
-button $p.save -text "Save display / desktop settings" -command desktopApply
+label $p.note -text "Mono uses black and white only. Other profiles retain 16 gray levels.\nDisplay profile changes apply after restart." -anchor w -justify left -wraplength 560
+pack $p.note -fill x -padx 16 -pady 6
+choose $p tone "Tone curve" tone {srgb cie-lstar}
+choose $p gamma "Gamma" gamma {0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0}
+checkbutton $p.preview -text "Approximate motion preview" -variable preview -anchor w -command {if {$preview} {set mixed 0}}
+pack $p.preview -fill x -padx 12 -pady 4
+if {$mixedQualified} {
+    checkbutton $p.mixed -text "Simultaneous mixed waveforms" -variable mixed -anchor w -command {if {$mixed} {set preview 0}}
+    pack $p.mixed -fill x -padx 12 -pady 4
+} else {
+    label $p.mixednote -text "Mixed waveforms: awaiting panel qualification." -anchor w -justify left -wraplength 520
+    pack $p.mixednote -fill x -padx 12 -pady 4
+}
+button $p.save -text "Save display settings" -command {desktopApply display}
 pack $p.save -fill x -padx 12 -pady 5
+section $p scaleui "Application scaling" "DPI changes text and controls in DPI-aware applications. Fixed-pixel applications and panels may not scale. Native resolution stays unchanged."
+choose $p dpi "Application DPI (auto = system default)" uiDpi {auto 96 120 144 168 192 216}
+button $p.dpisave -text "Save application DPI" -command {desktopApply dpi}
+pack $p.dpisave -fill x -padx 12 -pady 5
+section $p panels "Panels and window controls" "Adjust the bottom panel and title bars independently of application DPI."
+choose $p panelsize "Bottom panel height (px)" panelSize {32 40 48 56 64 72}
+choose $p titlesize "Window title bar height (px)" titlebarSize {32 40 48 56 64}
+button $p.panelsave -text "Save panel and title bar sizes" -command {desktopApply appearance}
+pack $p.panelsave -fill x -padx 12 -pady 5
+section $p tasks "Running applications (experimental)" "Top tabs show running windows. Tap to switch; hold a tab to request normal window closure. More pages appear if needed."
+checkbutton $p.taskenable -text "Show running application tabs" -variable taskbarEnabled -anchor w
+pack $p.taskenable -fill x -padx 12 -pady 4
+choose $p tasksize "Top task panel height (px)" taskbarSize {32 40 48 56 64 72}
+button $p.tasksave -text "Save running application panel" -command {desktopApply taskbar}
+pack $p.tasksave -fill x -padx 12 -pady 5
+section $p appearance "Power-off appearance"
 button $p.offimage -text "Power-off image…" -command shutdownPicker
 pack $p.offimage -fill x -padx 12 -pady 4
-button $p.restart -text "Restart desktop" -command desktopRestart
-pack $p.restart -fill x -padx 12 -pady 5
-
 set p .tabs.keys.canvas.body
+section $p basic "Physical buttons" "Choose short-press defaults or configure individual gestures below."
 choose $p arrows "Left / Right" buttons {arrows pages}
 choose $p home "Home button" home {keyboard home}
 choose $p menu "Menu short press" menu {menu escape}
-label $p.note -text "Advanced bindings override these defaults.\nWithout touch, hardware pointer controls remain available." -justify left -wraplength 560
-pack $p.note -pady 10
+label $p.note -text "Advanced bindings override these defaults. By default, hold Home for running apps and Menu for a full refresh.\nWithout touch, hardware pointer controls remain available." -anchor w -justify left -wraplength 560
+pack $p.note -fill x -padx 16 -pady 10
+choose $p hold "Long press duration (ms)" holdMs {300 500 750 1000 1500 2000}
+button $p.holdsave -text "Save hold duration" -command {desktopApply hold}
+pack $p.holdsave -fill x -padx 12 -pady 5
 button $p.bindings -text "Advanced button bindings…" -command buttonSettings
 pack $p.bindings -fill x -padx 12 -pady 5
-button $p.save -text "Save button settings" -command desktopApply
-button $p.restart -text "Restart desktop" -command desktopRestart
-pack $p.save $p.restart -fill x -padx 12 -pady 5
+button $p.save -text "Save button settings" -command {desktopApply keys}
+pack $p.save -fill x -padx 12 -pady 5
+section $p touchSection "Touchscreen" "Check the capabilities reported by X11. Contact count is not a test of two-finger gestures in applications."
+set touchText "Touch capabilities not yet checked."
+label $p.touchStatus -textvariable touchText -anchor w -justify left -wraplength 520
+button $p.touchCheck -text "Check touchscreen capabilities" -command touchStatus
+pack $p.touchStatus -fill x -padx 16 -pady 4
+pack $p.touchCheck -fill x -padx 12 -pady 4
 
 set p .tabs.net.canvas.body
+section $p wireless "Wireless network" "Turn Wi-Fi on and connect to a saved or new network."
+set networkText "Wireless status not yet checked."
+label $p.status -textvariable networkText -anchor w -justify left -wraplength 520
+pack $p.status -fill x -padx 16 -pady 5
+button $p.refresh -text "Refresh connection status" -command networkStatus
+pack $p.refresh -fill x -padx 12 -pady 4
 button $p.on -text "Wi-Fi networks (iwgtk)" -command wifi
-button $p.off -text "Turn Wi-Fi off" -command {act wifi-off}
+button $p.off -text "Turn Wi-Fi off" -command {if {[act wifi-off]} {networkStatus; set feedback "Wi-Fi disabled."}}
 button $p.cli -text "Wi-Fi terminal (iwctl)" -command {if {[act wifi-on]} {term "Wi-Fi" iwctl}}
 button $p.dns -text "Network and DNS status" -command {term "Network status" sh -c {ip address; ip route; resolvectl status; read -r x}}
 foreach w {on off cli dns} {pack $p.$w -fill x -padx 12 -pady 7}
 
 set p .tabs.power.canvas.body
+section $p energy "Energy and performance" "Manage the indicator and CPU frequency policy."
 if {$ledMode ne "unavailable"} {
     choose $p led "Power indicator" ledMode {heartbeat on off}
     button $p.ledapply -text "Save indicator state" -command {act led $ledMode}
@@ -302,61 +610,119 @@ if {[llength $governors]} {
     pack $p.cpuapply -fill x -padx 12 -pady 4
     if {[string is integer -strict $cpuMin] && [string is integer -strict $cpuMax]} {
         label $p.cpufreq -text "Allowed range: [expr {$cpuMin / 1000}]–[expr {$cpuMax / 1000}] MHz"
-        pack $p.cpufreq -pady 2
+        pack $p.cpufreq -fill x -padx 16 -pady 2
     }
 }
+section $p sleepSection "Power button and sleep"
 set keyChoices {lock ignore poweroff}
-if {$qualified} {lappend keyChoices s2idle}
+if {$qualified} {lappend keyChoices suspend}
 choose $p powerkey "Power key action" powerKey $keyChoices
 button $p.keyapply -text "Save power key action" -command {if {[act power-key $powerKey]} {tk_messageBox -message "Saved; applies to the next short press."}}
 pack $p.keyapply -fill x -padx 12 -pady 4
 if {$qualified} {
     choose $p idle "Sleep after minutes (0 = never)" idle {0 5 10 15 30 60}
-    button $p.idleapply -text "Save idle policy" -command desktopApply
+    label $p.idlenote -text "Automatic sleep only on battery with no active network link. Manual suspend still honors application inhibitors." -anchor w -wraplength 560 -justify left
+    pack $p.idlenote -fill x -padx 16 -pady 4
+    button $p.idleapply -text "Save idle policy" -command {desktopApply idle}
     button $p.sleep -text "Suspend now" -command {power suspend}
     pack $p.idleapply $p.sleep -fill x -padx 12 -pady 4
 } else {
     set idle 0
-    label $p.sleepnote -text "Lock is available now. Real s2idle is disabled until wakeup is qualified; deep sleep needs a resume-aware SPL." -wraplength 560 -justify left
-    pack $p.sleepnote -padx 12 -pady 10
+    label $p.sleepnote -text "Lock is available now. Suspend is disabled until hardware wakeup is qualified." -anchor w -wraplength 560 -justify left
+    pack $p.sleepnote -fill x -padx 16 -pady 10
 }
+section $p batterySection "Battery protection"
+set batteryText "Battery status not yet checked."
+label $p.batteryStatus -textvariable batteryText -anchor w -justify left
+pack $p.batteryStatus -fill x -padx 16 -pady 4
+button $p.batteryRefresh -text "Refresh battery status" -command batterySummary
+pack $p.batteryRefresh -fill x -padx 12 -pady 4
 button $p.battery -text "Battery warning / shutdown…" -command batterySettings
 pack $p.battery -fill x -padx 12 -pady 4
+section $p shutdownSection "Restart and shut down" "Save open documents before restarting."
 button $p.reboot -text "Restart reader" -command {power reboot}
 button $p.off -text "Shut down" -command {power poweroff}
 pack $p.reboot $p.off -fill x -padx 12 -pady 4
 
 set p .tabs.system.canvas.body
+section $p storageSection "Storage"
+set storageText "SD status not yet checked."
+label $p.storageStatus -textvariable storageText -anchor w -justify left -wraplength 520
+pack $p.storageStatus -fill x -padx 16 -pady 4
 frame $p.storage
-button $p.storage.mount -text "Mount SD" -command {if {[act sd-mount]} {term "External SD" mc -b /media/sdcard}}
-button $p.storage.unmount -text "Eject SD" -command {if {[act sd-unmount]} {tk_messageBox -message "SD card can be removed."}}
-button $p.storage.status -text "SD status" -command {if {![catch {query sd-status} s]} {tk_messageBox -message $s}}
-pack $p.storage.mount $p.storage.unmount $p.storage.status -side left -expand 1 -fill x -padx 2
-pack $p.storage -fill x -padx 8 -pady 4
+button $p.storage.mount -text "Mount SD and open files" -command {if {[act sd-mount]} {storageSummary; term "External SD" mc -b /media/sdcard}}
+button $p.storage.unmount -text "Eject SD safely" -command {if {[act sd-unmount]} {storageSummary; set feedback "SD card can be removed."}}
+button $p.storage.status -text "Refresh SD status" -command storageSummary
+pack $p.storage.mount $p.storage.unmount $p.storage.status -fill x -pady 3
+pack $p.storage -fill x -padx 12 -pady 4
+section $p identity "Device identity"
 frame $p.host
-label $p.host.label -text "Hostname"
+label $p.host.label -text "Hostname" -anchor w
 entry $p.host.entry -textvariable host -width 18
-button $p.host.apply -text "Save" -command {act hostname $host}
-pack $p.host.label $p.host.entry $p.host.apply -side left -padx 4
-pack $p.host -fill x -padx 8 -pady 4
+button $p.host.apply -text "Save hostname" -command {if {[act hostname $host]} {set feedback "Hostname saved."}}
+pack $p.host.label $p.host.entry $p.host.apply -fill x -pady 3
+pack $p.host -fill x -padx 16 -pady 4
+section $p timeSection "Date and time"
+set timeText "Time status not yet checked."
+label $p.clock -textvariable timeText -anchor w -justify left -wraplength 520
+pack $p.clock -fill x -padx 16 -pady 4
 frame $p.ntp
-button $p.ntp.on -text "Automatic time on" -command {act ntp true; updateStatus}
-button $p.ntp.off -text "Automatic time off" -command {act ntp false; updateStatus}
+button $p.ntp.on -text "Automatic time on" -command {if {[act ntp true]} {timeSummary}}
+button $p.ntp.off -text "Automatic time off" -command {if {[act ntp false]} {timeSummary}}
 pack $p.ntp.on $p.ntp.off -side left -fill x -expand 1 -padx 3
 pack $p.ntp -fill x -padx 8 -pady 4
-frame $p.actions
-button $p.actions.time -text "Time zone" -command {term "Time zone (root password)" su -c {dpkg-reconfigure tzdata}}
-button $p.actions.admin -text "Administrator" -command {term "Administrator login" su -}
-button $p.actions.refresh -text "Refresh" -command updateStatus
-pack $p.actions.time $p.actions.admin $p.actions.refresh -side left -expand 1 -fill x -padx 2
-pack $p.actions -fill x -padx 8 -pady 5
-frame $p.details
-# Keep the widget path stable for updateStatus; no polling in this panel.
-text $p.info -height 15 -wrap word -font {{Liberation Mono} 12} -background white -foreground black -yscrollcommand [list $p.scroll set]
-scrollbar $p.scroll -orient vertical -width 40 -command [list $p.info yview]
-pack $p.scroll -side right -fill y
-pack $p.info -fill both -expand 1 -padx 8 -pady 5
-button .close -text "Close settings" -command {destroy .}
-pack .close -fill x -padx 12 -pady 8
+button $p.timezone -text "Choose time zone…" -command timezoneDialog
+button $p.manualtime -text "Set date and time…" -command manualTime
+pack $p.timezone $p.manualtime -fill x -padx 12 -pady 4
+section $p administration "Administration"
+button $p.admin -text "Administrator terminal" -command {term "Administrator login" su -}
+button $p.refresh -text "Refresh system diagnostics" -command {timeSummary; updateStatus}
+pack $p.admin $p.refresh -fill x -padx 12 -pady 4
+section $p diagnostics "System diagnostics" "A read-only snapshot. Refresh when needed."
+text $p.info -height 16 -wrap word -font {{Liberation Mono} 11} -background white -foreground black -state disabled -relief solid -borderwidth 1
+pack $p.info -fill x -padx 16 -pady 5
+label .feedback -textvariable feedback -anchor w -justify left -wraplength 620
+frame .footer
+button .footer.restart -text "Restart desktop" -command desktopRestart
+button .footer.close -text "Close settings" -command {destroy .}
+pack .footer.restart .footer.close -side left -expand 1 -fill x -padx 3
+# Reserve the global actions and status before allocating the scrollable pages.
+pack .footer -side bottom -fill x -padx 9 -pady 8
+pack .feedback -side bottom -fill x -padx 16 -pady 4
+pack .tabs -fill both -expand 1 -padx 8 -pady 4
+# Drag on headings, explanatory text and empty page areas. Do not
+# intercept controls (brightness slider, menus, buttons, entries, scrollbar).
+proc swipeStart {canvas y} {
+    set ::swipeCanvas $canvas
+    set ::swipeY $y
+}
+proc swipeMove {canvas y} {
+    if {![info exists ::swipeCanvas] || $::swipeCanvas ne $canvas} {return}
+    set units [expr {int(($::swipeY - $y) / 20.0)}]
+    if {$units != 0} {
+        $canvas yview scroll $units units
+        set ::swipeY [expr {$::swipeY - 20*$units}]
+    }
+}
+proc swipeEnd {} {unset -nocomplain ::swipeCanvas ::swipeY}
+proc bindSwipe {w canvas} {
+    if {[winfo class $w] in {Frame Label Canvas}} {
+        bind $w <ButtonPress-1> [list swipeStart $canvas %Y]
+        bind $w <B1-Motion> [list swipeMove $canvas %Y]
+        bind $w <ButtonRelease-1> swipeEnd
+    }
+    foreach child [winfo children $w] {bindSwipe $child $canvas}
+}
+foreach page [.tabs tabs] {bindSwipe $page.canvas $page.canvas}
 lightRefresh
-updateStatus
+# No expensive status subprocesses on initial display. Refresh on demand
+# or on first entering the System page.
+set statusLoaded 0
+bind .tabs <<NotebookTabChanged>> {
+    if {[.tabs select] eq ".tabs.net"} {networkStatus}
+    if {[.tabs select] eq ".tabs.power"} {batterySummary}
+    if {[.tabs select] eq ".tabs.system" && !$::statusLoaded} {
+        set ::statusLoaded 1
+        after idle {storageSummary; timeSummary; updateStatus}
+    }
+}

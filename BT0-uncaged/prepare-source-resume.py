@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
-"""Experimental retained-DRAM SPL path for the pinned Megi U-Boot tree.
+"""Retained-DRAM SPL path for the pinned Megi U-Boot tree.
 
 References: the matching Megi Linux pm-sun5i.c/sleep-sun5i.S RTC ABI and
 Allwinner boot0 super-standby sequence. Never use this to patch the existing
-hash-qualified binary. Only a separately compiled candidate is produced.
+hash-qualified binary. The resume SPL is compiled from source.
 """
 from pathlib import Path
 import sys
 
-p = Path(sys.argv[1]) / "arch/arm/mach-sunxi/dram_sun4i.c"
+tree = Path(sys.argv[1])
+p = tree / "arch/arm/mach-sunxi/dram_sun4i.c"
 s = p.read_text()
+contract = (Path(__file__).resolve().parent / "pb626-resume-contract.h").read_text()
+destination = tree / "include/pb626-resume-contract.h"
+if destination.exists() and destination.read_text() != contract:
+    raise SystemExit("Refusing to overwrite a different resume contract")
+destination.write_text(contract)
 
 if "#include <pb626-led.h>" not in s:
     if s.count("#include <common.h>") != 1:
         raise SystemExit("Unknown DRAM include context")
     s = s.replace("#include <common.h>", "#include <common.h>\n#include <pb626-led.h>")
+s = s.replace("#include <pb626-led.h>", "#include <pb626-led.h>\n#include <pb626-resume-contract.h>")
 
 def change(old, new):
     global s
@@ -63,7 +70,7 @@ change("\treturn get_ram_size((long *)PHYS_SDRAM_0, PHYS_SDRAM_0_SIZE);",
        "\treturn get_ram_size((long *)PHYS_SDRAM_0, PHYS_SDRAM_0_SIZE);")
 change("unsigned long dramc_init(struct dram_para *para)\n{", r'''
 /* PB626/Megi Linux RTC ABI. These registers survive the PMIC power cut.
- * This candidate is only for the 256 MiB A13 board and matching kernel.
+ * This SPL is only for the 256 MiB A13 board and matching kernel.
  * Menu/FEL runs in the earlier assembly hook; FEL uploads never resume. */
 #define PB626_RTC_GP(n) ((void *)(0x01c20d20U + 4U * (n)))
 #define PB626_WDOG_CTL ((void *)0x01c20c90U)
@@ -86,7 +93,7 @@ static void __attribute__((noreturn)) pb626_resume_failed(unsigned int code)
 static void pb626_try_resume(struct dram_para *para)
 {
 	struct sunxi_dram_reg *dram = (void *)SUNXI_DRAMC_BASE;
-	u32 addr, dcr, zq, density, io, bus, sctlr;
+	u32 addr, dcr, zq, sctlr;
 
 	if (readl(PB626_RTC_GP(2)) != PB626_SUSP_MAGIC)
 		return;
@@ -103,27 +110,14 @@ static void pb626_try_resume(struct dram_para *para)
 	if (readl((void *)4) != 0x4e4f4765U ||
 	    readl((void *)8) != 0x3054422eU)
 		return;
-	if (addr < 0x40008000U || addr >= 0x50000000U || (addr & 3))
+	if (!pb626_resume_metadata_valid(addr, dcr, zq))
 		return;
-	if (!(dcr & 1) || ((dcr >> 10) & 3))
-		return;
-	/* The pinned helper encodes para->io_width >> 3 directly. */
-	io = ((dcr >> 1) & 3) * 8U;
-	if (io != 8 && io != 16)
-		return;
-	density = (dcr >> 3) & 7;
-	if (density > 5)
-		return;
-	density = 256U << density;
-	bus = 8U * (1U + ((dcr >> 6) & 7));
-	if ((bus != 16 && bus != 32) || bus < io ||
-	    density * (bus / io) / 8 != 256)
-		return;
-	/* Validate the geometry before touching the DRAM clock/pads. */
+	/* Validate the exact observed geometry and the pinned helper's
+	 * command/mode bits before touching the DRAM clock or pads. */
 	if (dcr != (DRAM_DCR_TYPE_DDR3 |
-		    DRAM_DCR_IO_WIDTH(io >> 3) |
-		    DRAM_DCR_CHIP_DENSITY((readl(PB626_RTC_GP(3)) >> 3) & 7) |
-		    DRAM_DCR_BUS_WIDTH((bus >> 3) - 1) |
+		    DRAM_DCR_IO_WIDTH(PB626_DRAM_IO_WIDTH >> 3) |
+		    DRAM_DCR_CHIP_DENSITY(3) |
+		    DRAM_DCR_BUS_WIDTH((PB626_DRAM_BUS_WIDTH >> 3) - 1) |
 		    DRAM_DCR_CMD_RANK_ALL |
 		    DRAM_DCR_MODE(DRAM_DCR_MODE_INTERLEAVE)))
 		return;
@@ -138,10 +132,10 @@ static void pb626_try_resume(struct dram_para *para)
 	}
 
 	/* No relocation or RAM size probing after this point. */
-	para->io_width = io;
-	para->bus_width = bus;
-	para->density = density;
-	if (dramc_init_helper(para, true, dcr, zq) != (256UL << 20))
+	para->io_width = PB626_DRAM_IO_WIDTH;
+	para->bus_width = PB626_DRAM_BUS_WIDTH;
+	para->density = PB626_DRAM_DENSITY;
+	if (dramc_init_helper(para, true, dcr, zq) != PB626_DRAM_BYTES)
 		pb626_resume_failed(PB626_ERR_RESUME_DRAM);
 
 	asm volatile("mrc p15, 0, %0, c1, c0, 0" : "=r"(sctlr));

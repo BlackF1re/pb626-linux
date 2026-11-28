@@ -1,4 +1,4 @@
-Full qualification request: Windows PowerShell 5.1 installer compatibility
-Source branch: enhance/native-reliability
-Source head before request: e253cc0e56be5f43719591a501635e2ecf099b0f
-Scope: full firmware build graph, Windows PowerShell 5.1 parser/package-validation smoke test, paired Debian flash kit and full build report.
+Firmware qualification: unified Debian installer and suspend-to-RAM
+Source head: 5df98df78c88c8776104f7fa4350d99d0f132609
+Scope: one kernel, Debian native firmware, resume bootloader, RAM recovery, Windows installer and all required tests.
+No merge. Physical qualification remains separate.

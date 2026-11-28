@@ -2,7 +2,10 @@
 set -eu
 grep -Fxq '::sysinit:/sbin/openrc sysinit' boot/pb626-native.inittab
 grep -Fxq '::shutdown:/sbin/openrc shutdown' boot/pb626-native.inittab
-! grep -q 'respawn:' boot/pb626-native.inittab
+if grep -q 'respawn:' boot/pb626-native.inittab; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 grep -Fxq 'supervisor=supervise-daemon' boot/native/init.d/pb626-desktop
 grep -Fxq 'supervisor=supervise-daemon' boot/native/init.d/pb626-console
 grep -Fq 'exec /sbin/getty' boot/pb626-native-console
@@ -19,11 +22,26 @@ sleep_unit=boot/debian/rootfs/usr/lib/systemd/system/pb626-sleep.service
 grep -Fxq "AssertPathExists=/etc/pb626/suspend-qualified" "$sleep_unit"
 grep -Fxq "Requisite=pb626-desktop.service" "$sleep_unit"
 grep -Fxq "Requires=pb626-sleep.service" boot/debian/rootfs/usr/lib/systemd/system/systemd-suspend.service.d/pb626.conf
+grep -Fxq "After=pb626-sleep.service" boot/debian/rootfs/usr/lib/systemd/system/systemd-suspend.service.d/pb626.conf
+for contract in 'After=pb626-desktop.service' 'Before=sleep.target systemd-suspend.service' \
+    'StopWhenUnneeded=yes' 'Type=oneshot' 'RemainAfterExit=yes' \
+    'ExecStart=/usr/bin/pb626-x11-epd --sleep-prepare' \
+    'ExecStopPost=/usr/bin/pb626-x11-epd --sleep-resume'; do
+    grep -Fxq "$contract" "$sleep_unit"
+done
+sleep_conf=boot/debian/rootfs/etc/systemd/sleep.conf.d/60-pb626.conf
+for contract in 'MemorySleepMode=deep' 'SuspendState=mem' \
+    'AllowHibernation=no' 'AllowHybridSleep=no' 'AllowSuspendThenHibernate=no'; do
+    grep -Fxq "$contract" "$sleep_conf"
+done
 # Renderer isolation must not protect the entire app service by accident.
 unitdir=boot/debian/rootfs/usr/lib/systemd/system
 grep -Fxq 'Slice=pb626.slice' "$unitdir/pb626-desktop.service"
 grep -Fxq 'MemoryLow=16M' "$unitdir/pb626.slice"
-! grep -q '^MemoryLow=' "$unitdir/pb626-desktop.service"
+if grep -q '^MemoryLow=' "$unitdir/pb626-desktop.service"; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 grep -Fq -- '--property=CPUWeight=200 --property=MemoryLow=16M' display/pb626-desktop
 grep -Fq -- '--property=BindsTo=pb626-desktop.service' display/pb626-desktop
 grep -Fq -- '--property=After=pb626-desktop.service' display/pb626-desktop
@@ -43,7 +61,10 @@ grep -Fq -- 'patch --fuzz=0 -p1 < ../xorg-dummy-pb626-shared.patch' scripts/comp
 grep -Fq 'Wants=pb626-board.service dev-input-pb626_touch.device' "$unitdir/pb626-desktop.service"
 grep -Fxq 'JobTimeoutSec=5s' "$unitdir/dev-input-pb626_touch.device.d/60-pb626.conf"
 grep -Fq 'ENV{SYSTEMD_ALIAS}+="/dev/input/pb626_touch"' boot/debian/rootfs/usr/lib/udev/rules.d/73-pb626-touch.rules
-! grep -q '^ExecStartPost=/bin/sleep' "$unitdir/pb626-poweroff-screen.service"
+if grep -q '^ExecStartPost=/bin/sleep' "$unitdir/pb626-poweroff-screen.service"; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 grep -Fq 'systemd-analyze --man=no --generators=no --recursive-errors=one verify' scripts/build-debian-rootfs.sh
 # Udev-activated native services must wait for the boot-mode decision.
 for unit in pb626-board.service pb626-desktop.service pb626-battery.service pb626-battery-warning.service pb626-usb.service; do
@@ -63,12 +84,24 @@ grep -Fq '    supervise_client matchbox-desktop --bg col-solid:white' display/pb
 # A broken X client must not terminate the X session; only X server loss or the legacy local renderer is fatal.
 grep -Fxq '    export MB_KBD_CONFIG=/usr/share/pb626/matchbox-keyboard/keyboard-us.xml' display/pb626-xsession
 grep -Fxq '    supervise_client matchbox-keyboard --daemon &' display/pb626-xsession
-grep -Fxq 'supervise_client matchbox-window-manager -theme PB626 -use_titlebar yes &' display/pb626-xsession
+grep -Fxq 'wm_theme=PB626' display/pb626-xsession
+grep -Fxq 'supervise_client matchbox-window-manager -theme "$wm_theme" -use_titlebar yes &' display/pb626-xsession
 grep -Fxq 'if [ -n "$screen" ]; then' display/pb626-xsession
-grep -Fxq '    while xset q >/dev/null 2>&1; do' display/pb626-xsession
-! grep -q '^wait -n ' display/pb626-xsession
+grep -Fxq '    xprop -root -spy _NET_SUPPORTING_WM_CHECK >/dev/null 2>&1 &' display/pb626-xsession
+grep -Fxq '    wait "$watcher" || :' display/pb626-xsession
+if grep -Fq 'while xset q' display/pb626-xsession; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
+if grep -q '^wait -n ' display/pb626-xsession; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 grep -Fq 'while :; do' display/pb626-xsession
-! grep -Fq 'restart budget exhausted' display/pb626-xsession
+if grep -Fq 'restart budget exhausted' display/pb626-xsession; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 grep -Fq 'display/keyboard-us.xml' scripts/build-debian-rootfs.sh
 python3 tests/test-matchbox-keyboard-layout.py
 # The launcher uses a non-layout-affecting monochrome focus outline.
@@ -78,11 +111,20 @@ grep -Fq 'display/gtk.css' scripts/apply-live-desktop-fixes.sh
 grep -Fxq '    box-shadow: inset 0 0 0 2px #000000;' display/gtk.css
 grep -Fxq '    -gtk-icon-effect: none;' display/gtk.css
 grep -Fxq '    opacity: 1;' display/gtk.css
-! grep -Fq '    border: 2px solid' display/gtk.css
+if grep -Fq '    border: 2px solid' display/gtk.css; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 # The physical PE8 power LED is the DTS node named "led"; ignore USB LEDs.
 grep -Fq 'led=/sys/class/leds/led' boot/debian/pb626-admin
 grep -Fq 'power_led=/sys/class/leds/led' boot/init-megi
 grep -Fq 'power_led=/sys/class/leds/led' boot/native/init.d/pb626-board
-! grep -Fq 'for led in /sys/class/leds/*' boot/init-megi
-! grep -Fq 'for led in /sys/class/leds/*' boot/native/init.d/pb626-board
+if grep -Fq 'for led in /sys/class/leds/*' boot/init-megi; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
+if grep -Fq 'for led in /sys/class/leds/*' boot/native/init.d/pb626-board; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 echo "Native service contracts passed"

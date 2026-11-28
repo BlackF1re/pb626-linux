@@ -1,5 +1,7 @@
 # Debian 13 armhf native system
 
+> **Migration history. Debian is now the sole actively built distribution. The current installer is [pb626-windows-installer](WINDOWS-FLASH.md), with a shared suspend-enabled kernel and paired resume bootloader. References below to the parallel Alpine build describe the earlier migration period.**
+
 The first migration candidate is built independently from the paired
 Megi kernel-stage artifact by `scripts/build-debian-rootfs.sh`. It
 uses mmdebstrap minbase and Debian trixie, updates and security repositories.
@@ -335,3 +337,142 @@ with only a short action retain repeat. The old defaults and no-touch
 pointer fallback remain, and the power key retains its separate
 qualified suspend policy. Keyboard toggle uses the existing Matchbox
 protocol; alternative sessions can bind a normal key instead.
+
+## Native compiler qualification
+
+The ARMhf compiler audit runs in the Debian 13 target userspace under QEMU
+and checks each candidate against the existing renderer and charger tests.
+It reports stripped file sizes, GNU size columns, ELF attributes and load
+segments. It does not measure Cortex-A8 timing, physical display behavior
+or resident memory.
+
+Baseline audit (GCC 14.2.0-19, CI run 46083018733, 36 passing candidates):
+
+| Profile | E Ink worker text | X11 bridge text | Charger text |
+| --- | ---: | ---: | ---: |
+| Baseline | 24089 | 34642 | 10920 |
+| Cortex-A8 tuned | 24081 | 34698 | 10904 |
+| Cortex-A8 -O3 | 28453 | 47994 | 11836 |
+| Cortex-A8 -Os | 16016 | 28949 | 9996 |
+| Cortex-A8 -Os with section GC | 15720 | 28711 | 9668 |
+| Debian hardening | 24852 | 36017 | 11904 |
+
+Values are GNU size's text column in bytes, not measured PSS. Debian's
+compiler already defaults to ARMv7-A hard-float and Thumb-2. Cortex-A8
+tuning and LTO do not demonstrate a general advantage here. Keep the worker
+at -O3 and the bridge at -O2 with NEON until on-device timing is available.
+The charger is predominantly event-driven and can prioritize code size.
+The native build uses Debian's CPPFLAGS/CFLAGS/LDFLAGS, with the selected
+optimization level overriding the distribution default; tests use matching
+release flags. The exact combined compact charger profile is a required
+CI candidate, not a hardware qualification.
+
+Full qualification run 46084101571 confirmed the 4 KiB linker alignment
+for all three native executables under ARMhf QEMU. The production build now
+uses -Wl,-z,max-page-size=4096 and checks the PT_LOAD alignment, non-executable
+GNU_STACK and GNU_RELRO. This is specific to the PB626 4 KiB kernel; the
+ordinary Debian packages and Xorg DDX retain their distribution alignment.
+The stripped sizes fell from 201984 to 83200 bytes in total (58.8%).
+This is a file-size reduction, not a measured PSS saving.
+
+For physical comparison, run identical full and partial updates and input
+workloads at equal temperature, CPU governor, visual depth and waveform.
+Record CPU time, preparation latency, PSS, and the first-update latency
+after idle. Do not use elapsed QEMU compilation or test time as evidence of
+Cortex-A8 performance.
+
+### Remaining physical qualification
+
+The patched Matchbox clients use the same 4 KiB linker alignment while
+retaining their -O2 production compiler setting. The ARM build chroot
+includes Xvfb only for smoke tests; it is not added to the shipped rootfs.
+The compact -Os/section-GC alternatives are built and smoke-tested
+separately. Their text reductions in run 46084101571 were 3151 bytes
+(keyboard), 1905 bytes (panel), and 260 bytes (battery applet), before
+changing alignment. Their input latency and PSS are not yet measured.
+
+The compiler audit artifacts contain the actual ARM test executables for
+both the release and candidate builds. Run only the following CPU-only
+benchmarks on the reader as an ordinary user, with the same CPU governor,
+temperature and load. Do not use the X11 capture regression against the
+live desktop; that regression paints its test pattern on a virtual root.
+
+- Set PB626_BENCH_TRANSITIONS=1 when executing the test binary from
+  release/pb626-epd and packed-transitions/pb626-epd. Compare the reported
+  renderer size and ns/frame for identical patterns and render styles.
+  The optional nine-bit representation removes 679168 bytes of transition
+  storage (663.25 KiB), without changing the shared frame protocol.
+  Retain the 16-bit release representation until scan preparation latency
+  is measured and actual panel updates are qualified.
+- Set PB626_BENCH_RGB565=1 when executing the X11 bridge release test.
+  Compare the current conversion and the candidate 64 KiB LUT on binary,
+  gray and color data. Only select the LUT if the measured gain is
+  worth the additional memory.
+- The 32/64/256-row capture alternatives are checked against full-frame
+  references in both 16- and 24-bit Xvfb visuals. Compare real bridge
+  preparation times with the same X11 workload before selecting a
+  different strip size; the production setting remains 128.
+- Record pb626-profile-memory with the same services, frontlight,
+  documents, temperature and idle interval. Record PSS, MemAvailable,
+  CmaFree, reclaim/PSI and zram counters; use xrestop to separate server
+  pixmaps. Compare with both a cold and warmed-up desktop.
+- DMA release and the shared DDX remain qualification-gated. Verify
+  repeated first updates after idle under memory pressure, scanout
+  stability, both display depths, rotation, input and recovery before
+  enabling them. Do not shrink CMA or the eight-buffer queue or change
+  panel timing to chase a smaller memory figure.
+- Compare governor, runtime PM delay, zram policy and allocator settings
+  individually on hardware. Keep existing defaults absent measurements.
+  Preserve user-session D-Bus, the keyboard daemon and independent client
+  restart behavior unless profiling demonstrates a meaningful advantage.
+
+The full firmware qualification and compiler experiments do not replace
+physical A13 boot, E Ink and power/recovery checks.
+
+### Follow-up compiler and RGB565 audit
+
+The RGB565 scalar path uses exact 5-bit and 6-bit channel expansion tables
+(96 read-only bytes total), preserving the NEON binary-pixel fast path and
+all color/tone/gamma semantics. The arithmetic path remains available as
+`PB626_RGB565_ARITHMETIC` for comparison; the compiler audit produces a
+`rgb565-arithmetic/pb626-x11-epd/test` alongside the normal release test.
+Run both with `PB626_BENCH_RGB565=1` on the reader. The full 64 KiB LUT is
+still experimental; do not select it from emulator timings. The quantization
+table is initialized phase-by-phase, avoiding strided stores without changing
+its contents. Exhaustive RGB565 tests compare all 65536 values against the
+independent channel reference for every profile, two tones and two gammas.
+
+The compiler audit also builds release-tune and release-lto with the exact
+release hardening and 4 KiB alignment. The private Matchbox clients and their
+compact alternatives inherit Debian's CPPFLAGS, CFLAGS and LDFLAGS; they
+retain their existing release optimization levels. Requalify the ARM X11
+smoke and full firmware after changing these flags. No target speedup is
+claimed without physical measurements.
+
+### Build-time scope of compiler experiments
+
+The release firmware still requires host renderer/installer tests, target
+ARM compilation and self-tests, patched Matchbox ARM X11 smoke, the real
+kernel/DTBs, recovery and same-run flash-kit verification. Experimental
+compiler matrices never feed these artifacts. Normal CI and qualification
+pushes therefore skip the repeated comparison builds. Use Actions > CI >
+Run workflow with compiler_audit enabled for the ARMhf matrix, and Full
+firmware qualification > Run workflow with kernel_audit enabled for the
+isolated kernel matrix. To compare Matchbox size alternatives, run
+scripts/compile-debian-native.sh with PB626_AUDIT_MATCHBOX=1 in a fresh
+disposable build chroot. A regular cached firmware build need not rerun
+these comparisons. In run 46124456613 the four kernel experiments used
+about 29 runner-minutes and the three compiler jobs about 21 runner-minutes;
+parallel wall time savings depend on the production critical path and cache.
+
+### Independent control-centre preferences
+
+Display, button defaults and idle policy are saved in separate validated
+transactions under the same root-owned settings lock. An older full
+settings command preserves unrelated EnvironmentFile keys. Display now
+exposes the renderer's tone curve, gamma and exact/approximate policy.
+Mixed waveform selection appears only after physical qualification;
+approximate preview and mixed are mutually exclusive. Time zones can be
+searched and applied directly using the validated timedatectl interface.
+The System diagnostics snapshot is loaded on demand, not at GUI startup.
+No additional resident service or GUI runtime is introduced.

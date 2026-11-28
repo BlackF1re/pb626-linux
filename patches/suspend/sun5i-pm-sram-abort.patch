@@ -1,0 +1,81 @@
+diff --git a/arch/arm/mach-sunxi/sleep-sun5i.S b/arch/arm/mach-sunxi/sleep-sun5i.S
+--- a/arch/arm/mach-sunxi/sleep-sun5i.S
++++ b/arch/arm/mach-sunxi/sleep-sun5i.S
+@@ -37,5 +37,6 @@
+ 
+ ENTRY(sun5i_standby_blob)
+-	mov	r11, lr
++	/* Save the caller's callee-saved registers before touching DRAM. */
++	push	{r4-r11, r12, lr}
+ 
+ 	/* preload the TLB with the two device mappings */
+@@ -43,12 +44,17 @@
+ 	ldr	r3, [r1]
+ 
+-	/* disable all DRAM host ports */
+-	add	r3, r0, #SDR_HPCR
+-	mov	r4, #31
+-1:	ldr	r5, [r3]
+-	bic	r5, r5, #1
+-	str	r5, [r3], #4
+-	subs	r4, r4, #1
+-	bne	1b
++	/* Keep the original port-enable mask in registers for abort. */
++	add	r3, r0, #SDR_HPCR
++	mov	r4, #31
++	mov	r8, #0
++	mov	r9, #1
++1:	ldr	r5, [r3]
++	tst	r5, #1
++	orrne	r8, r8, r9
++	lsl	r9, r9, #1
++	bic	r5, r5, #1
++	str	r5, [r3], #4
++	subs	r4, r4, #1
++	bne	1b
+ 
+ 	/* precharge all, then enter self-refresh */
+@@ -92,6 +98,12 @@
+ 	b	2b
+ 
+-abort:
+-	/* release the pads, exit self-refresh, refresh, ports back on */
++abort:
++	/* Terminate the failed bus transaction before restoring DRAM. */
++	ldr	r5, [r1, #TWI_CNTR]
++	and	r5, r5, #0xc0
++	orr	r5, r5, #0x10
++	str	r5, [r1, #TWI_CNTR]
++
++	/* release the pads, exit self-refresh, refresh, restore ports */
+ 	mov	r5, #0
+ 	str	r5, [r0, #SDR_DPCR]
+@@ -104,14 +116,18 @@
+ 	bl	dcr_command
+ 
+-	add	r3, r0, #SDR_HPCR
+-	mov	r4, #31
+-3:	ldr	r5, [r3]
+-	orr	r5, r5, #1
+-	str	r5, [r3], #4
+-	subs	r4, r4, #1
+-	bne	3b
+-
+-	mov	r0, #1
+-	bx	r11
++	add	r3, r0, #SDR_HPCR
++	mov	r4, #31
++3:	ldr	r5, [r3]
++	bic	r5, r5, #1
++	and	r9, r8, #1
++	orr	r5, r5, r9
++	lsr	r8, r8, #1
++	str	r5, [r3], #4
++	subs	r4, r4, #1
++	bne	3b
++
++	dsb
++	mov	r0, #1
++	pop	{r4-r11, r12, pc}
+ 
+ 	/* execute a DRAM controller command (r6) and wait for completion */

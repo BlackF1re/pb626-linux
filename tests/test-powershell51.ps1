@@ -10,7 +10,8 @@ $installer = Join-Path $repoRoot 'scripts\installer\PB626.ps1'
 $launcher = Join-Path $repoRoot 'scripts\Start-PB626.ps1'
 $cmdFile = Join-Path $repoRoot 'scripts\installer\PB626.cmd'
 
-foreach ($path in @($installer, $launcher)) {
+$winFlasher=Join-Path $repoRoot 'scripts\windows\PB626.ps1'
+foreach ($path in @($installer, $launcher, $winFlasher)) {
     $tokens = $null
     $parseErrors = $null
     [void][System.Management.Automation.Language.Parser]::ParseFile(
@@ -111,3 +112,25 @@ try {
 }
 
 Write-Host 'WINDOWS POWERSHELL 5.1 COMPATIBILITY PASS' -ForegroundColor Green
+
+# Execute actual console script in a child Windows PowerShell 5.1 process:
+# missing files and invalid profile must fail without requesting UAC.
+$temp=Join-Path ([IO.Path]::GetTempPath()) ('pb626-menu-'+[guid]::NewGuid().ToString('N'))
+try {
+    $null=New-Item -ItemType Directory -Path $temp
+    Copy-Item -LiteralPath $winFlasher -Destination (Join-Path $temp 'PB626.ps1')
+    $scriptPath=Join-Path $temp 'PB626.ps1'
+    $engine=Join-Path $PSHOME 'powershell.exe'
+    $output=@(& $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -Action Validate)
+    if ($LASTEXITCODE -eq 0 -or ($output -join ' ') -notmatch 'ERROR') { throw 'Missing profile was not rejected' }
+    Set-Content -LiteralPath (Join-Path $temp 'PROFILE') -Value 'standard' -Encoding ASCII
+    $output=@(& $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -Action Bootloader)
+    if ($LASTEXITCODE -eq 0 -or ($output -join ' ') -notmatch 'Use Install to update the paired') { throw 'Paired firmware allowed isolated BT0 update' }
+    Set-Content -LiteralPath (Join-Path $temp 'PROFILE') -Value 'invalid' -Encoding ASCII
+    $output=@(& $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -Action Validate)
+    if ($LASTEXITCODE -eq 0 -or ($output -join ' ') -notmatch 'Unknown firmware profile') { throw 'Invalid profile allowed' }
+} finally { Remove-Item -LiteralPath $temp -Recurse -Force }
+Write-Host 'WINDOWS CONSOLE OFFLINE FAILURE PATHS PASS' -ForegroundColor Green
+
+# Expected negative child exits have already been asserted above.
+exit 0

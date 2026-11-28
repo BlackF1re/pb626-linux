@@ -12,14 +12,17 @@ corresponding source/license status is resolved.
 For local use, with Python 3 and the pinned dependencies:
 
     python -m pip install -r BT0-uncaged/emulator/requirements.txt
-    python BT0-uncaged/emulator/validate.py --reference BT0-uncaged.bin --candidates source-boot-candidates --report emulation.json --require-reference
+    python BT0-uncaged/emulator/validate.py --reference BT0-uncaged.bin --candidates bootloader-stage --report emulation.json --require-reference
 
 The same Unicorn Cortex-A8 engine executes machine code from each
 eGON image, starting at address zero for the Menu hook. SRAM, LRADC,
 GPIO PE8, clock gate, RTC magic and timer register are explicit models.
 The normal path and deep candidate cold path must match the reference
-Menu/FEL decisions and preserved registers. The raw-sector function is
-executed, with the configured user-area offset accounted for separately.
+Menu/FEL decisions and preserved registers, also with the RTC SUSP
+marker armed. Candidate .FEL upload dispatch must select
+BOOT_DEVICE_BOARD, not the forced native MMC2 path. The raw-sector
+function is executed, with the configured user-area offset accounted for
+separately.
 The startup LED functions execute actual ARM instructions with exact
 virtual timer counts, including wraparound and FEL/retained-state skip.
 
@@ -32,10 +35,13 @@ The candidate artifact is uploaded before emulation, so the report can
 diagnose failures. Missing reference fails differential validation
 after candidate-only checks; no false green reference result.
 
-Startup is cooperative: existing timer reads service the 30/50/30/30 ms
-thresholds, with no artificial wait. If a long operation does not read
-the timer, an edge can be late or skipped. Exact independent hardware
-timing would require a qualified interrupt-driven implementation.
+Startup is cooperative: existing timer reads advance one edge after at
+least 100 ms, measured from the actual previous edge. Sparse polling
+stretches pulses but cannot skip them. A native cold handoff completes
+any outstanding edges using the existing timer (up to four 100 ms
+waits); FEL and retained-DRAM paths do not wait or touch PE8. The
+actual handoff runs in the model with an advancing timer. Optical timing
+and hardware recovery still require physical qualification.
 
 The dependency-free instruction interpreter also runs 5249 Menu cases
 per actual binary (timeout loop shortened in that model only). Both

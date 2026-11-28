@@ -1,4 +1,4 @@
-name: Source-built PocketBook bootloader candidates
+name: Bootloader
 on:
   workflow_dispatch:
   workflow_call:
@@ -9,6 +9,7 @@ permissions:
   contents: read
 jobs:
   source:
+    name: Build SPL
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -32,23 +33,23 @@ jobs:
       - uses: actions/cache@v4
         id: cache
         with:
-          path: source-boot-candidates
-          key: pb626-source-spl-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/build-from-source.sh', 'BT0-uncaged/prepare-source-hook.py', 'BT0-uncaged/prepare-source-led.py', 'BT0-uncaged/pb626-led.c', 'BT0-uncaged/pb626-led.h', 'BT0-uncaged/led-morse.h', 'BT0-uncaged/prepare-source-resume.py', 'BT0-uncaged/early-menu.S', 'BT0-uncaged/fel-entry.S', 'patches/sunxi-fel-keep-mmu-off.patch') }}
-      - name: Build independently from pinned source
+          path: bootloader-stage
+          key: pb626-source-spl-v4-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/build-from-source.sh', 'BT0-uncaged/prepare-source-hook.py', 'BT0-uncaged/prepare-source-led.py', 'BT0-uncaged/pb626-led.c', 'BT0-uncaged/pb626-led.h', 'BT0-uncaged/led-morse.h', 'BT0-uncaged/prepare-source-resume.py', 'BT0-uncaged/pb626-resume-contract.h', 'BT0-uncaged/early-menu.S', 'BT0-uncaged/fel-entry.S', 'patches/sunxi-fel-keep-mmu-off.patch') }}
+      - name: Build bootloader
         if: steps.cache.outputs.cache-hit != 'true'
-        run: bash BT0-uncaged/build-from-source.sh source-boot-candidates
-      - name: Verify both candidate manifests
+        run: bash BT0-uncaged/build-from-source.sh bootloader-stage
+      - name: Verify bootloader
         run: |
-          (cd source-boot-candidates && sha256sum -c SHA256SUMS)
-          (cd source-boot-candidates/deep-resume && sha256sum -c SHA256SUMS)
+          (cd bootloader-stage && sha256sum -c SHA256SUMS)
+          (cd bootloader-stage/resume && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: pb626-source-boot-candidates-NOT-FOR-FLASH
-          path: source-boot-candidates/
+          name: pb626-bootloader-stage
+          path: bootloader-stage/
           if-no-files-found: error
 
   emulate:
-    name: Cortex-A8 differential boot contract (not full board)
+    name: Cortex-A8 model
     needs: source
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -56,19 +57,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: pb626-source-boot-candidates-NOT-FOR-FLASH
-          path: source-boot-candidates
+          name: pb626-bootloader-stage
+          path: bootloader-stage
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: BT0-uncaged/emulator/requirements.txt
       - run: python -m pip install -r BT0-uncaged/emulator/requirements.txt
-      - name: Exhaustive actual-binary Menu regression
+      - name: Test Menu hook
         run: |
-          python BT0-uncaged/test_hook.py --candidate source-boot-candidates/BT0-uncaged-source-candidate.bin source-boot-candidates/native-all-symbols.txt
-          python BT0-uncaged/test_hook.py --candidate source-boot-candidates/deep-resume/BT0-uncaged-deep-candidate.bin source-boot-candidates/deep-resume/all-symbols.txt
-      - name: Execute reference and candidates on the same Cortex-A8 model
+          python BT0-uncaged/test_hook.py --candidate bootloader-stage/BT0-uncaged-cold.bin bootloader-stage/native-all-symbols.txt
+          python BT0-uncaged/test_hook.py --candidate bootloader-stage/resume/BT0-uncaged-resume.bin bootloader-stage/resume/all-symbols.txt
+      - name: Compare SPL binaries
         env:
           PB626_REFERENCE_SPL_B64: ${{ secrets.PB626_REFERENCE_SPL_B64 }}
         run: |
@@ -82,7 +83,7 @@ jobs:
             args+=(--reference "$RUNNER_TEMP/reference-spl.bin")
           fi
           unset PB626_REFERENCE_SPL_B64
-          python BT0-uncaged/emulator/validate.py "${args[@]}" --candidates source-boot-candidates --report emulation.json --require-reference
+          python BT0-uncaged/emulator/validate.py "${args[@]}" --candidates bootloader-stage --report emulation.json --require-reference
       - uses: actions/upload-artifact@v4
         if: always()
         with:

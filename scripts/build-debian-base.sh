@@ -27,7 +27,7 @@ runtime=(
   kmod procps psmisc util-linux util-linux-extra e2fsprogs usbutils i2c-tools
   lm-sensors v4l-utils curl openssh-server nano htop mc xidle evtest iputils-ping
   xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-evdev
-  xinit xauth x11-xserver-utils x11-utils x11-apps x11-xkb-utils xkb-data xrestop
+  xinit xauth x11-xserver-utils x11-utils xinput x11-apps x11-xkb-utils xkb-data xrestop
   xfonts-base xfonts-utils xbitmaps fonts-liberation xdotool xterm nedit
   matchbox-window-manager matchbox-desktop matchbox-keyboard matchbox-panel
   matchbox-common libmatchbox1 tk python3-tk python3-pil.imagetk mupdf
@@ -95,7 +95,7 @@ in_build env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-reco
   libx11-dev libxext-dev libxft-dev libxrender-dev libxcursor-dev libxfixes-dev \
   libxtst-dev libxdamage-dev libxrandr-dev libpng-dev libjpeg-dev libexpat1-dev libfakekey-dev \
   libmatchbox-dev libstartup-notification0-dev libcairo2-dev \
-  xserver-xorg-dev xutils-dev libpciaccess-dev
+  xserver-xorg-dev xutils-dev libpciaccess-dev xvfb
 
 # Save numeric owners, hardlinks, ACLs and xattrs in a host-owned archive.
 # No project code, kernel, credentials or machine identity enters the cache.

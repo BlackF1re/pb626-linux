@@ -10,21 +10,22 @@ identity with the privately built 24 KiB lab SPL.
 
 The stock archive README explicitly says allocated files only, not raw
 partition images. Its boot.axf and script.bin are not the primary BT0.
+The separate first-68-MiB raw dump supplied later contains genuine factory
+BT0/BT1; see [factory suspend evidence](../docs/FACTORY-SUSPEND.md).
+This vendor bootloader is not the historical lab U-Boot SPL.
 The new source build uses the historical Megi board defconfig, recreates
 the FEL entry contract in assembly, builds patched sunxi-tools, and
 links the Menu algorithm against save_boot_params rather than assuming
 the old address 0xd70. The native configuration requests raw legacy
 uImage at sector 80. It must be reviewed against the actual source and
-validated on hardware. The workflow emits a separate candidate artifact,
-never the qualified install image.
+validated on hardware. The workflow builds both a cold-path comparison image and the resume SPL;
+the Windows installer includes the matched resume SPL after model checks.
 
-No old private input is needed to attempt this source build. Preserve
-the exact existing installer gates and the working SPL. The Codeberg
-tree was not accessible from the chat environment; CI is the first
-compilation check. The audit output records any existing DRAM resume
-implementation; if absent, the missing retention path must be ported
-and tested separately before CONFIG_SUN5I_PM can be enabled. The
-old fixed-address binary hook tests do not certify a newly linked SPL.
+The source build uses public inputs; the mandatory differential model
+still needs the private historical reference. The normal kernel enables
+SUN5I_PM and the installer verifies the exact paired SPL. Old fixed-address
+binary tests do not certify a newly linked SPL; verify hardware wake and
+cold recovery before enabling unattended suspend.
 
 ## Recovered original lab build (archive inspection)
 

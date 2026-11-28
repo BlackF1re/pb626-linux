@@ -34,6 +34,7 @@ export PB626_TEST_SYSTEMCTL_LOG="$tmp/systemctl.log"
 : >"$PB626_TEST_SYSTEMCTL_LOG"
 sed -e "s|export PATH=/sbin:/bin:/usr/sbin:/usr/bin|export PATH=$tmp/bin:/sbin:/bin:/usr/sbin:/usr/bin|" \
     -e "s|/sys/class/power_supply|$tmp/power_supply|g" \
+    -e "s|/sys/class/net|$tmp/net|g" \
     -e "s|/proc/uptime|$tmp/uptime|g" \
     -e "s|/run/pb626-battery-|$tmp/run/pb626-battery-|g" \
     -e "s|/run/pb626-desktop/ready|$tmp/run/pb626-desktop/ready|g" \
@@ -43,6 +44,7 @@ sed -e "s|export PATH=/sbin:/bin:/usr/sbin:/usr/bin|export PATH=$tmp/bin:/sbin:/
     -e "s|/sys/devices/system/cpu/cpufreq|$tmp/cpufreq|g" \
     -e "s|/run/pb626-lock-indicator|$tmp/indicator|g" \
     -e "s|/etc/pb626/suspend-qualified|$tmp/qualified|g" \
+    -e "s|/etc/pb626/mixed-waveform-qualified|$tmp/mixed-qualified|g" \
     boot/debian/pb626-admin >"$tmp/admin"
 admin() { sh "$tmp/admin" "$@"; }
 test "$(admin light-status)" = '0 50'
@@ -103,16 +105,58 @@ admin desktop-status | grep -qx PB626_EPD_FAST_MODE=du
 admin desktop-settings pages keyboard escape mono 16 0 auto
 admin desktop-status | grep -qx PB626_EPD_GRAY_PROFILE=mono
 admin desktop-status | grep -qx PB626_EPD_FAST_MODE=auto
+admin desktop-display photo 24 auto cie-lstar 1.2 0 0
+admin desktop-buttons arrows home menu
+admin desktop-status | grep -qx PB626_EPD_GAMMA=1.2
+admin desktop-status | grep -qx PB626_EPD_TONE=cie-lstar
+admin desktop-status | grep -qx PB626_BUTTONS=arrows
+admin desktop-status | grep -qx PB626_XORG_DEPTH=24
+if admin desktop-display photo 24 auto srgb 1.0 0 1; then exit 1; fi
+touch "$tmp/mixed-qualified"
+admin desktop-display photo 24 auto srgb 1.0 0 1
+if admin desktop-display photo 24 auto srgb 1.0 1 1; then exit 1; fi
+if admin desktop-display photo 24 auto srgb 9.0 0 0; then exit 1; fi
+admin desktop-settings pages keyboard escape mono 16 0 auto
+admin desktop-status | grep -qx PB626_EPD_MIXED=1
+admin desktop-idle 0
+admin desktop-taskbar 1 56
+admin desktop-status | grep -qx PB626_TASKBAR=1
+admin desktop-status | grep -qx PB626_TASKBAR_SIZE=56
+if admin desktop-taskbar 2 56; then exit 1; fi
+if admin desktop-taskbar 1 99; then exit 1; fi
+admin desktop-appearance 56 48
+admin desktop-status | grep -qx PB626_PANEL_SIZE=56
+admin desktop-status | grep -qx PB626_TITLEBAR_SIZE=48
+if admin desktop-appearance 0 48; then exit 1; fi
+if admin desktop-appearance 56 99; then exit 1; fi
+admin desktop-dpi 144
+admin desktop-status | grep -qx PB626_UI_DPI=144
+if admin desktop-dpi 0; then exit 1; fi
+if admin desktop-dpi '144; bad'; then exit 1; fi
+admin desktop-hold 750
+admin desktop-status | grep -qx PB626_TASKBAR=1
+admin desktop-status | grep -qx PB626_TASKBAR_SIZE=56
+admin desktop-status | grep -qx PB626_PANEL_SIZE=56
+admin desktop-status | grep -qx PB626_TITLEBAR_SIZE=48
+admin desktop-status | grep -qx PB626_BUTTON_HOLD_MS=750
+admin desktop-status | grep -qx PB626_UI_DPI=144
+admin desktop-status | grep -qx PB626_EPD_MIXED=1
+for value in 0 299 3000 0500 bad; do
+    if admin desktop-hold "$value"; then exit 1; fi
+done
 for args in 'frontlight -1' 'frontlight 101' 'frontlight 01' \
     'frontlight 1+2' 'light-on extra' 'light-level 0' 'governor bad' 'power-key bad' 'led bad' 'hostname -bad' 'ntp bad' \
     'desktop-settings pages keyboard menu mono 16 0 bad' 'desktop-settings bad keyboard menu ui 16 0' \
-    'desktop-settings pages keyboard menu ui 16 5' 'suspend extra'; do
+    'desktop-settings pages keyboard menu ui 16 5' 'suspend extra' \
+    'manual-time --help 12:00:00' 'manual-time 2026-02-30 12:00:00' \
+    'manual-time 2026-02-01 25:00:00' 'timezone --help'; do
     if admin $args; then echo "Invalid command accepted: $args" >&2; exit 1; fi
 done
 test "$(admin power-key-status)" = lock
 admin power-key ignore
 test "$(admin power-key-status)" = ignore
-if admin power-key s2idle; then exit 1; fi
+if admin power-key suspend; then exit 1; fi
+if admin suspend-idle; then exit 1; fi
 admin power-key lock
 admin led heartbeat
 admin light-on
@@ -145,22 +189,59 @@ touch "$tmp/backlight/panel/brightness"
 admin lock-indicator awake
 test ! -e "$tmp/indicator"
 touch "$tmp/qualified"
-admin power-key s2idle
-test "$(admin power-key-status)" = s2idle
+admin power-key suspend
+test "$(admin power-key-status)" = suspend
 admin desktop-settings arrows home menu balanced 24 30
 admin desktop-status | grep -qx PB626_IDLE_MINUTES=30
-test "$(admin button-bindings-status)" = 'Left none none Right none none Home none none Menu refresh none'
-admin button-bindings Page_Up none F1 Page_Down none F2 keyboard Home none Escape refresh light-toggle
-test "$(admin button-bindings-status)" = 'Page_Up none F1 Page_Down none F2 keyboard Home none Escape refresh light-toggle'
+test "$(admin button-bindings-status)" = 'Left none none Right none none Home recent-apps none Menu refresh none'
+admin button-bindings Page_Up none F1 Page_Down none F2 keyboard recent-apps none Escape refresh light-toggle
+test "$(admin button-bindings-status)" = 'Page_Up none F1 Page_Down none F2 keyboard recent-apps none Escape refresh light-toggle'
 if admin button-bindings Left none none Right none none Home none none Menu refresh 'sh -c bad'; then exit 1; fi
 admin button-bindings-reset
-test "$(admin button-bindings-status)" = 'Left none none Right none none Home none none Menu refresh none'
+test "$(admin button-bindings-status)" = 'Left none none Right none none Home recent-apps none Menu refresh none'
 test "$(admin battery-status)" = '10 3'
 admin battery-settings 15 4
 test "$(admin battery-status)" = '15 4'
 for args in 'battery-settings 4 3' 'battery-settings 5 5' 'battery-settings 31 3' 'battery-settings 10 1'; do
     if admin $args; then echo "Invalid battery policy: $args" >&2; exit 1; fi
 done
+# Stock-style unattended sleep policy, on synthetic sysfs only.
+mkdir -p "$tmp/net/lo" "$tmp/net/wlan0" "$tmp/net/usb0"
+printf 'unknown\n' >"$tmp/net/lo/operstate"
+printf 'down\n' >"$tmp/net/wlan0/operstate"
+printf 'down\n' >"$tmp/net/usb0/operstate"
+printf 'Battery\n' >"$tmp/power_supply/battery/type"
+printf '1\n' >"$tmp/power_supply/battery/present"
+printf 'Discharging\n' >"$tmp/power_supply/battery/status"
+printf '60\n' >"$tmp/power_supply/battery/capacity"
+printf 'USB\n' >"$tmp/power_supply/usb/type"
+printf '0\n' >"$tmp/power_supply/usb/online"
+: >"$PB626_TEST_SYSTEMCTL_LOG"
+admin suspend-idle
+grep -Fxq -- '--no-block --check-inhibitors=yes suspend' "$PB626_TEST_SYSTEMCTL_LOG"
+: >"$PB626_TEST_SYSTEMCTL_LOG"
+printf '1\n' >"$tmp/power_supply/usb/online"
+admin suspend-idle
+test ! -s "$PB626_TEST_SYSTEMCTL_LOG"
+printf '0\n' >"$tmp/power_supply/usb/online"
+for link in up dormant unknown testing; do
+    printf '%s\n' "$link" >"$tmp/net/wlan0/operstate"
+    admin suspend-idle
+    test ! -s "$PB626_TEST_SYSTEMCTL_LOG"
+done
+printf 'down\n' >"$tmp/net/wlan0/operstate"
+printf 'up\n' >"$tmp/net/usb0/operstate"
+admin suspend-idle
+test ! -s "$PB626_TEST_SYSTEMCTL_LOG"
+# Explicit suspend does not inherit the conservative automatic link gate.
+admin suspend
+grep -Fxq -- '--no-block --check-inhibitors=yes suspend' "$PB626_TEST_SYSTEMCTL_LOG"
+: >"$PB626_TEST_SYSTEMCTL_LOG"
+printf 'down\n' >"$tmp/net/usb0/operstate"
+rm "$tmp/net/wlan0/operstate"
+admin suspend-idle
+test ! -s "$PB626_TEST_SYSTEMCTL_LOG"
+printf 'down\n' >"$tmp/net/wlan0/operstate"
 # Exercise the actual critical-battery transaction without the host's
 # power supplies or PID 1. No shutdown on a single sample or a charger.
 printf 'Battery\n' >"$tmp/power_supply/battery/type"
@@ -174,15 +255,24 @@ printf 'ready\n' >"$tmp/run/pb626-desktop/ready"
 admin battery-check
 grep -Fxq -- '--no-block start pb626-battery-warning.service' "$PB626_TEST_SYSTEMCTL_LOG"
 grep -Fxq -- '--no-block start pb626-battery-confirm.timer' "$PB626_TEST_SYSTEMCTL_LOG"
-! grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+if grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 printf '105.00 0.00\n' >"$tmp/uptime"
 admin battery-check
-! grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+if grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 printf '1\n' >"$tmp/power_supply/usb/online"
 printf '112.00 0.00\n' >"$tmp/uptime"
 admin battery-check
 test ! -e "$tmp/run/pb626-battery-critical"
-! grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"
+if grep -Fxq -- '--no-block poweroff' "$PB626_TEST_SYSTEMCTL_LOG"; then
+    echo "Unexpected forbidden match in $0" >&2
+    exit 1
+fi
 # Missing battery presence also fails closed.
 printf '0\n' >"$tmp/power_supply/battery/present"
 printf '0\n' >"$tmp/power_supply/usb/online"

@@ -1,0 +1,198 @@
+diff --git a/arch/arm/mach-sunxi/pm-sun5i.c b/arch/arm/mach-sunxi/pm-sun5i.c
+--- a/arch/arm/mach-sunxi/pm-sun5i.c
++++ b/arch/arm/mach-sunxi/pm-sun5i.c
+@@ -63,5 +63,10 @@
+ #define SUN5I_DRAMC_SDR_ZQSR		0x0b0
+ 
+-#define SUN5I_TIMER_WDOG_MODE		0x094
++#define SUN5I_TIMER_WDOG_CTL		0x090
++#define SUN5I_TIMER_WDOG_MODE		0x094
++#define SUN5I_WDOG_ENABLE		BIT(0)
++#define SUN5I_WDOG_RESET		BIT(1)
++#define SUN5I_WDOG_10S		(8 << 3)
++#define SUN5I_WDOG_RELOAD		((0x0a57 << 1) | 1)
+ 
+ /* register file sizes for the raw state save/restore */
+@@ -117,6 +122,8 @@
+ 	u32 axp_sleep_val;
+ 	u8 axp_voff_saved;
+-	bool axp_voff_valid;
+-	int (*standby)(void __iomem *dramc, void __iomem *twi, u32 axp_val);
++	bool axp_voff_valid;
++	bool watchdog_armed;
++	int (*standby)(void __iomem *dramc, void __iomem *twi, u32 axp_val,
++		       void __iomem *timer);
+ };
+ 
+@@ -123,6 +130,6 @@
+ static struct sun5i_pm pm;
+ 
+-extern int sun5i_standby_blob(void __iomem *dramc, void __iomem *twi,
+-			      u32 axp_val);
++extern int sun5i_standby_blob(void __iomem *dramc, void __iomem *twi,
++			      u32 axp_val, void __iomem *timer);
+ extern u32 sun5i_standby_blob_sz;
+ 
+@@ -381,5 +388,14 @@
+ static int sun5i_pm_finish(unsigned long arg)
+ {
+-	/* mark the resume image as armed */
++	/* The SoC watchdog provides a cold-reset escape if the SRAM code
++	 * cannot restore DRAM or the PMIC acknowledges but never cuts power.
++	 * The caller refused an already running watchdog.
++	 */
++	pm.watchdog_armed = true;
++	writel(SUN5I_WDOG_10S | SUN5I_WDOG_RESET | SUN5I_WDOG_ENABLE,
++	       pm.timer + SUN5I_TIMER_WDOG_MODE);
++	writel(SUN5I_WDOG_RELOAD, pm.timer + SUN5I_TIMER_WDOG_CTL);
++
++	/* mark the resume image as armed */
+ 	writel(SUN5I_STANDBY_MAGIC, pm.timer + SUN5I_STANDBY_GP_MAGIC);
+ 
+@@ -387,5 +403,5 @@
+ 
+ 	/* never returns unless the PMIC write failed */
+-	return pm.standby(pm.dramc, pm.twi, pm.axp_sleep_val);
++	return pm.standby(pm.dramc, pm.twi, pm.axp_sleep_val, pm.timer);
+ }
+ 
+@@ -394,6 +410,9 @@
+ 	int ret;
+ 
+-	if (state != PM_SUSPEND_MEM)
+-		return -EINVAL;
++	if (state != PM_SUSPEND_MEM)
++		return -EINVAL;
++	if (readl(pm.timer + SUN5I_TIMER_WDOG_MODE) & SUN5I_WDOG_ENABLE)
++		return -EBUSY;
++	pm.watchdog_armed = false;
+ 
+ 	save_regs(pm.ccu, pm.ccu_save, SUN5I_CCU_WORDS);
+@@ -433,8 +452,6 @@
+ 
+ 	if (!ret) {
+-		/* stop the rescue watchdog armed by the SPL */
+-		writel(0, pm.timer + SUN5I_TIMER_WDOG_MODE);
+-
+-		sun5i_ccu_restore();
++		/* Keep the SPL rescue watchdog running until restoration ends. */
++		sun5i_ccu_restore();
+ 		restore_regs(pm.sramc, pm.sramc_save, SUN5I_SRAMC_WORDS);
+ 		restore_regs(pm.intc, pm.intc_save, SUN5I_INTC_WORDS);
+@@ -446,9 +463,13 @@
+ 	} else {
+ 		pr_err("sun5i-pm: power-down failed, suspend aborted\n");
+-		sun5i_axp_abort();
+-		ret = -EIO;
+-	}
+-
+-	return ret;
++		sun5i_axp_abort();
++		ret = -EIO;
++	}
++	if (pm.watchdog_armed) {
++		writel(0, pm.timer + SUN5I_TIMER_WDOG_MODE);
++		pm.watchdog_armed = false;
++	}
++
++	return ret;
+ }
+ 
+diff --git a/arch/arm/mach-sunxi/sleep-sun5i.S b/arch/arm/mach-sunxi/sleep-sun5i.S
+--- a/arch/arm/mach-sunxi/sleep-sun5i.S
++++ b/arch/arm/mach-sunxi/sleep-sun5i.S
+@@ -14,5 +14,6 @@
+  *   r0 - DRAM controller registers (virtual)
+  *   r1 - TWI0 registers (virtual), controller set up by the caller
+- *   r2 - value for the AXP209 power output control register
++ *   r2 - value for the AXP209 power output control register
++ *   r3 - timer/RTC mapping; watchdog already armed by the caller
+  *
+  * Puts the DRAM into self-refresh, latches the DRAM pads and tells the
+@@ -31,5 +32,6 @@
+ #define TWI_DATA	0x08
+ #define TWI_CNTR	0x0c
+-#define TWI_STAT	0x10
++#define TWI_STAT	0x10
++#define RTC_SUSP_MAGIC	0x128
+ 
+ 	.arm
+@@ -40,7 +42,9 @@
+ 	push	{r4-r11, r12, lr}
+ 
+-	/* preload the TLB with the two device mappings */
+-	ldr	r3, [r0]
+-	ldr	r3, [r1]
++	/* Preload every device mapping before DRAM becomes inaccessible. */
++	mov	r10, r3
++	ldr	r3, [r0]
++	ldr	r3, [r1]
++	ldr	r3, [r10, #RTC_SUSP_MAGIC]
+ 
+ 	/* Keep the original port-enable mask in registers for abort. */
+@@ -94,7 +98,13 @@
+ 	str	r5, [r1, #TWI_CNTR]
+ 
+-	dsb
+-2:	wfi
+-	b	2b
++	dsb
++	/* Power should disappear. If execution continues, invalidate the
++	 * resume request before the watchdog resets the still-powered SoC.
++	 * This is an instruction-count guard, not a calibrated delay.
++	 */
++	mov	r7, #0x1000000
++2:	subs	r7, r7, #1
++	bne	2b
++	b	fatal
+ 
+ abort:
+@@ -108,7 +118,12 @@
+ 	mov	r5, #0
+ 	str	r5, [r0, #SDR_DPCR]
+-4:	ldr	r5, [r0, #SDR_DPCR]
+-	tst	r5, #1
+-	bne	4b
++	mov	r7, #0x100000
++4:	ldr	r5, [r0, #SDR_DPCR]
++	tst	r5, #1
++	beq	5f
++	subs	r7, r7, #1
++	bne	4b
++	b	fatal
++5:
+ 	mov	r6, #0x17
+ 	bl	dcr_command
+@@ -137,8 +152,12 @@
+ 	orr	r5, r5, r6, lsl #27
+ 	str	r5, [r0, #SDR_DCR]
+-1:	ldr	r5, [r0, #SDR_DCR]
+-	tst	r5, #(1 << 31)
+-	bne	1b
+-	mov	r7, #0x1000
++	mov	r7, #0x100000
++1:	ldr	r5, [r0, #SDR_DCR]
++	tst	r5, #(1 << 31)
++	beq	3f
++	subs	r7, r7, #1
++	bne	1b
++	b	fatal
++3:	mov	r7, #0x1000
+ 2:	subs	r7, r7, #1
+ 	bne	2b
+@@ -164,5 +183,14 @@
+ 2:	ldr	r5, [r1, #TWI_STAT]
+ 	bx	lr
+-ENDPROC(sun5i_standby_blob)
++/* DRAM is not known to be accessible. Never touch the stack or
++ * return to C. Disarm resume before the already-running watchdog resets.
++ */
++fatal:
++	mov	r5, #0
++	str	r5, [r10, #RTC_SUSP_MAGIC]
++	dsb
++1:	wfi
++	b	1b
++ENDPROC(sun5i_standby_blob)
+ 
+ 	.globl	sun5i_standby_blob_sz

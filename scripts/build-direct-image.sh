@@ -11,6 +11,11 @@ test -d "$root"
 test "$(sudo cat "$root/etc/pb626-image-id")" = pb626-native-debian13-armhf-v1
 sudo awk -F: '$1=="root" && $2 ~ /^[!*]/ {n++} END {exit n!=1}' "$root/etc/shadow"
 test ! -e "$root/lib/firmware/pb626/default.wbf"
+# Same manifest recipe is executed in recovery against the installed
+# module tree. File bytes and the set of paths must match, not just vermagic.
+sudo bash -euo pipefail -c 'cd "$1/usr/lib/modules"; export LC_ALL=C; find . -type f -print0 | sort -z | xargs -0 sha256sum' _ "$root" >"$work/modules.manifest"
+test -s "$work/modules.manifest"
+sha256sum <"$work/modules.manifest" | cut -d' ' -f1 >"$out/pb626-modules.sha256"
 echo 'Creating exact-size flashable ext4 image (generic, locked root)...'
 truncate -s $((14260224*512)) "$work/p1.ext4"
 # Explicit 4 KiB block size and initialized metadata, as in the offline builder.

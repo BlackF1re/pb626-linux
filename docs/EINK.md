@@ -209,3 +209,193 @@ server grab, and behavior on server restart. The mapped path removes the
 server-to-SHM copy and the ordinary SHM strip allocation when the mapping
 is present; X server grab duration can offset that benefit. No claim of
 speedup or physical validation is made.
+
+### Exact-first interactive scheduling
+
+A binary DU preview followed by GL16 can show an intermediate black or
+white approximation that does not exist in the target image. At 18–21 C
+this costs 31 + 59 scans (about 1.06 s), before capture/quiet time. The
+bridge now uses a fast update only if every changed pixel in that frame
+reaches its requested logical level with the selected preview. Otherwise
+it discards the unsubmitted IPC preparation and sends one exact SETTLE
+(GL16, existing GC16 fallback). Exact DU, A2 and DU4 remain available;
+manual RESET, local GC16 scrub, sleep, waveform and VCOM are unchanged.
+For workloads prioritizing approximate animation, set
+`PB626_EPD_APPROX_PREVIEW=1` in the desktop service environment and restart.
+This restores the previous preview scheduling (including the 850 ms bound).
+The exact-first policy avoids intentional intermediate levels, not the
+intrinsic optical flash of a factory waveform; verify text entry, window
+open/close and images on hardware. Compare logged mode, ACK and optical
+latency at equal temperature. Host tests exhaust all source/target levels
+and check mixed-tile fallback and legacy approximation.
+
+### Grayscale ghosting budget
+
+GL16 is not a substitute for a mandatory same-level GC16 scrub. Count
+acknowledged changed GL16 pixels in the existing saturated per-pixel
+budget, just like DU/A2/DU4, without extra memory. This preserves bounded
+cleanup when exact-first scheduling bypasses fast preview entirely. The
+counter remains conservative: approximate mode can count both preview
+and settle, and no optical equivalence of those waveforms is assumed.
+The threshold, halo radius, optional masks and idle delays are unchanged.
+Only an ACK consumes the budget or clears a scrub. Host regressions cover
+repeated gray-only changes, saturation and successful local cleanup.
+
+### Row-wise physical coordinate mapping
+
+Capture now resolves rotation once per output row and advances native
+panel coordinates by a unit step per pixel. Quantization and dirty-tile
+marking reuse those coordinates instead of converting an index back to
+x/y (division and remainder by 758) in the pixel loop. The regression
+compares every panel coordinate in all four rotations against panel_index,
+including partial row starts. The existing Xvfb full/partial comparison
+continues to verify pixel output. No changes to dither, panel orientation
+or capture geometry; target timing still requires measurement.
+
+### Bounded XDamage coalescing
+
+On the first normal XDamage notification after a completed capture, wait
+up to a 24 ms coalescing window before reading the root. NonEmpty events
+are not a per-paint clock, so this deadline is not extended by subsequent
+notifications. If another damage notification arrives while reading the
+strips, defer the unsubmitted frame for at most one recapture. Retain
+all accumulated dirty tiles; a second capture must make progress even
+under continuous animation. Boot, manual reset and lock/resume bypass
+this policy. This reduces the chance of scanning a transient window or
+partially painted widget. It does not change waveforms or cleanup.
+The window adds latency to an isolated update, while potentially avoiding
+hundreds of milliseconds of physical scanout for transient content.
+
+Exact-first DU also drives near-endpoint transitions (for example 1→0
+and 14→15) directly. The former approximation dead band is unnecessary
+for a binary target and would otherwise force a slower GL16 fallback.
+A2 eligibility still excludes nonbinary old levels; explicit legacy
+approximation retains its original dead band.
+
+### Combine already-due local cleaning with a settle
+
+When both a grayscale settle and the existing idle cleanup deadline are
+due, prepare one sparse GC16 frame covering the dirty pixels and due
+same-level scrub pixels/halo instead of two sequential scans. The bridge
+logs the local command S but sends the existing CLEAN wire command, so
+no worker protocol changes are needed. Changed pixels in this GC16
+frame reset their ghosting budget only after ACK. Never advance the
+cleanup deadline, enlarge the halo, or combine with a pending capture;
+large cleanup retains its five-second delay. The optical appearance of
+GC16 still needs physical comparison; the factory sequence is unchanged.
+
+### Sparse waveform planning
+
+Collect the active transition indices once per update. For up to 64 of
+256 possible transitions, expand only those entries from each packed
+waveform phase into the existing zeroed LUT. Dense images and INIT retain
+the full expansion path. Phase count, repeat merging, active mask and
+all voltage signals remain byte-identical; no neutral scans are dropped.
+Host regression covers dense, threshold-sized and single-transition
+masks, including index 255. This reduces CPU work in sparse updates
+without adding resident storage; measure actual preparation latency.
+
+### Experimental simultaneous transition waveforms
+
+The PIN32 worker already emits a per-transition signal in every scan.
+For ordinary exact SETTLE or DU4 with known history, the candidate selects the
+shortest eligible waveform for each old/new transition: DU for binary
+targets, A2 for binary endpoints when selected by the fast policy,
+DU4 for 5/10 when selected, GL16 otherwise, and GC16 only for a missing
+GL16 transition. It checks the decoded current-temperature table.
+Every chosen sequence starts on scan zero, retains all factory signals
+in order, and emits neutral signals after completion until the longest
+sequence ends. No extra full-screen buffer, protocol change or new
+voltage/timing is needed. Same-level scrubs, INIT, RESET and sleep are
+never mixed. ACK and ghosting accounting remain unchanged.
+
+Mixed electrical sequences are not yet optically qualified: common panel
+behavior, edge crosstalk, charge balance and temperature dependence must
+be checked on the actual panel. The worker requires both the root-owned
+/etc/pb626/mixed-waveform-qualified marker and PB626_EPD_MIXED=1 in the
+service environment; without both, the existing exact update is used.
+Approximate preview disables mixed planning even with the marker present.
+For controlled lab qualification only, use a reversible service drop-in
+and remove the marker if residual images or edge artifacts increase.
+Compare identical black/white, gray and mixed charts over repeated
+updates and temperatures; log selected counts and total scans. Host
+regression verifies the full expanded signal sequence for four mixed
+transition classes, neutral tails, disabled A2 and invalid/scrub rejection.
+
+### Single-pass exact frame selection
+
+For the default exact policy the bridge writes final target levels and
+classifies actual source/target transitions during the same dirty-tile
+walk. It selects DU, A2, DU4 or GL16 afterwards, without first preparing
+an inexact preview or rescanning a frame for A2/DU4 eligibility. The
+approximate motion policy retains its existing selection and dead band.
+The host test covers all 256 old/new pairs for all four fast preferences,
+plus mixed frames, and verifies the exact shared-frame sample.
+
+### Indexed phase preparation
+
+The default indexed worker now calculates PIN32 data directly from the
+four actual transition codes in each indexed group. It no longer expands
+four 257-entry pin tables before building the group table. Scalar and
+staged fallback retain their existing tables, and INIT needs neither.
+Tests compare all transition codes in each source position and the existing
+full-buffer scalar/indexed equivalence test remains mandatory. No change
+to physical scans, voltages or pixels selected for refresh.
+
+### Absorb imminent local cleanup in a necessary grayscale update
+
+When an exact sparse update already requires GL16 and a changed pixel
+would reach its eighth transition, use one GC16 update for the changed
+pixels and the same-final-shade one-pixel halo around those hot pixels.
+This prevents a second same-level scrub of the same region after idle.
+Unrelated due pixels keep their original cleanup deadline and counters.
+Pure DU/A2/DU4 frames, large page turns, approximate preview and optional
+HQ/Shadow filters retain their existing policies. No threshold increase,
+extra resident allocation or waveform alteration. The bridge logs H and
+uses the existing CLEAN command; counters reset only after ACK. Tests
+cover the tile-boundary halo, unrelated cleanup, and fast binary frames.
+GC16 is a complete factory update, but its optical appearance and the
+latency of this combined policy still require physical comparison.
+
+### Mixed planner cost and eligibility guard
+
+Compare mixed scan count against the already validated single-mode
+baseline for the current temperature. Reject a longer plan, a plan
+identical to the baseline, and any transaction requiring GC16 fallback.
+Expand only active transition codes per phase; no second framebuffer.
+This preserves the qualification gate and ensures that mixing cannot
+increase the nominal scan count. CPU and physical optical latency still
+need measurement. Host tests cover longer-plan and redundant-plan rejection.
+
+### Temperature-aware uniform Auto selection
+
+The exact Auto policy compares complete eligible DU, A2, DU4 and GL16
+sequences after decoding the current-temperature tables. It can choose a
+strictly shorter uniform mode without requiring mixed qualification.
+The target and source classes are checked explicitly; ties preserve the
+validated baseline. Manual mode preferences and approximate preview are
+unchanged. GC16 cleanup and required fallback are never replaced. The
+mixed planner subsequently compares against this selected baseline.
+
+### Mandatory scrub validation
+
+A same-level GC16 transition exists only for an explicit SCRUB sample.
+Validate that the temperature-specific decoded waveform actually drives
+that transition before acknowledging the update. A missing pulse sequence
+must not silently clear the bridge's ghosting counter. The known factory
+matrix includes all 256 GC16 transitions; malformed or incompatible WBF
+files fail closed using the existing recovery path. Host regression
+checks missing and present white-to-white scrub eligibility.
+
+### Bounded top-level window coalescing
+
+Observe root child MapNotify/UnmapNotify in addition to XDamage. For
+normal interactive windows/menus, allow a single 64 ms window from the
+first structural event to collect initial painting or the uncovered
+window's redraw. Subsequent structural events do not extend the deadline.
+Ordinary text and cursor damage retain 24 ms, and manual reset, startup,
+lock and resume bypass the extra window. Child ConfigureNotify is not
+mistaken for root geometry changes. The latency trade-off is deliberate:
+up to 40 ms extra compared with ordinary coalescing to avoid a full
+unnecessary physical update. Slow applications can still paint after the
+deadline; physical testing is required to tune it.

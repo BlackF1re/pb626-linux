@@ -39,12 +39,14 @@ static void test_packed_rgb565(void)
 			nibble_set(packed, 1, j);
 			assert(nibble_get(packed, 0) == i && nibble_get(packed, 1) == j);
 		}
-	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++) {
-		setup_gray(profile, 0, 1.0);
-		for (unsigned int p = 0; p <= 65535; p++)
-			assert(rgb565_gray(p) == gray_value(channel(p, 0xf800),
-					channel(p, 0x07e0), channel(p, 0x001f)));
-	}
+	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++)
+		for (int tone = 0; tone < 2; tone++)
+			for (int gamma = 0; gamma < 2; gamma++) {
+				setup_gray(profile, tone, gamma ? 1.2 : 1.0);
+				for (unsigned int p = 0; p <= 65535; p++)
+					assert(rgb565_gray(p) == gray_value(channel(p, 0xf800),
+						channel(p, 0x07e0), channel(p, 0x001f)));
+			}
 }
 
 static void test_gray_rows(void)
@@ -80,6 +82,99 @@ static void test_gray_rows(void)
 						       src32[4 * i + 1], src32[4 * i]));
 				}
 			}
+}
+
+/* Candidate only: keep the production conversion unchanged until timings
+ * on the reader establish whether a 64 KiB table is worth its footprint. */
+static uint8_t rgb565_candidate[65536];
+
+static void candidate_gray_row(const uint8_t *src, uint8_t *dst, int count)
+{
+	for (int x = 0; x < count; x++)
+		dst[x] = rgb565_candidate[src[2 * x] | ((unsigned int)src[2 * x + 1] << 8)];
+}
+
+static void init_candidate_gray(void)
+{
+	for (unsigned int p = 0; p < 65536; p++)
+		rgb565_candidate[p] = rgb565_gray(p);
+}
+
+static void test_rgb565_candidate(void)
+{
+	static uint8_t input[2 * 65536 + 1], reference[65536], candidate[65536];
+	uint8_t *src = input + 1; /* exercise unaligned input */
+	for (unsigned int p = 0; p < 65536; p++) {
+		src[2 * p] = p;
+		src[2 * p + 1] = p >> 8;
+	}
+	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++)
+		for (int tone = 0; tone < 2; tone++)
+			for (int gamma = 0; gamma < 2; gamma++) {
+				setup_gray(profile, tone, gamma ? 1.2 : 1.0);
+				init_candidate_gray();
+				rgb565_gray_row(src, reference, 65536);
+				candidate_gray_row(src, candidate, 65536);
+				assert(!memcmp(reference, candidate, sizeof(reference)));
+			}
+	puts("RGB565 candidate: all colors, profiles, tones and gammas passed");
+}
+
+static uint64_t cpu_ns(void)
+{
+	struct timespec t;
+	assert(!clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t));
+	return (uint64_t)t.tv_sec * 1000000000 + t.tv_nsec;
+}
+
+/* Run the ARM test executable with PB626_BENCH_RGB565=1 on the reader.
+ * No X connection, panel, privileged operation or runtime service needed.
+ * Report process CPU time; timings from an emulator are not comparable. */
+static void bench_rgb565_candidate(void)
+{
+	enum { ROW = 760, ROWS = 128, REPEATS = 64 };
+	static uint8_t input[2 * ROW * ROWS], output[ROW];
+	static volatile unsigned int sink;
+	setup_gray(GRAY_BALANCED, 0, 1.0);
+	init_candidate_gray();
+	puts("pattern,width,implementation,ns_per_pixel");
+#ifdef PB626_RGB565_ARITHMETIC
+	const char *production = "arithmetic";
+#else
+	const char *production = "expand96";
+#endif
+	for (int pattern = 0; pattern < 3; pattern++) {
+		uint32_t rng = 1;
+		for (unsigned int i = 0; i < ROW * ROWS; i++) {
+			rng = rng * UINT32_C(1664525) + UINT32_C(1013904223);
+			unsigned int v = (i / 7) & 31;
+			unsigned int p = pattern == 0 ? ((i / 19) & 1 ? 65535 : 0) :
+				pattern == 1 ? (v << 11) | ((v * 2) << 5) | v : rng >> 16;
+			input[2 * i] = p;
+			input[2 * i + 1] = p >> 8;
+		}
+		for (int width = 32; width <= ROW; width = width == 32 ? ROW : ROW + 1)
+			for (int lookup = 0; lookup < 2; lookup++) {
+				uint64_t start = cpu_ns();
+				unsigned int checksum = 0;
+				for (int pass = 0; pass < REPEATS; pass++)
+					for (int row = 0; row < ROWS; row++) {
+						const uint8_t *src = input + 2 * row * ROW;
+						if (lookup)
+							candidate_gray_row(src, output, width);
+						else
+							rgb565_gray_row(src, output, width);
+						checksum += output[(row + pass) % width];
+					}
+				uint64_t elapsed = cpu_ns() - start;
+				sink = checksum;
+				(void)sink;
+				printf("%s,%d,%s,%.2f\n",
+				       pattern == 0 ? "binary" : pattern == 1 ? "gray" : "color",
+				       width, lookup ? "lut" : production,
+				       (double)elapsed / (REPEATS * ROWS * width));
+			}
+	}
 }
 
 static void test_contrast_row(void)
@@ -190,6 +285,49 @@ static void test_power_press(void)
 	close(fds[1]);
 	assert(power_press(fds[0], &pressed) == 0 && !pressed.pressed && !pressed.dropped);
 	close(fds[0]);
+}
+
+static void test_sleep_power_edges(void)
+{
+	int fds[2];
+	assert(!pipe(fds));
+	assert(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
+	struct power_input pressed = {0};
+	struct input_event e = {.type = EV_KEY, .code = KEY_POWER, .value = 1, .input_event_sec = 10};
+	assert(write(fds[1], &e, sizeof(e)) == sizeof(e));
+	discard_power_edges(fds[0], &pressed);
+	assert(!pressed.pressed);
+	e.value = 0;
+	e.input_event_usec = 100000;
+	assert(write(fds[1], &e, sizeof(e)) == sizeof(e));
+	assert(power_press(fds[0], &pressed) == 0);
+	e.value = 1;
+	e.input_event_sec = 11;
+	assert(write(fds[1], &e, sizeof(e)) == sizeof(e));
+	e.value = 0;
+	e.input_event_usec = 200000;
+	assert(write(fds[1], &e, sizeof(e)) == sizeof(e));
+	assert(power_press(fds[0], &pressed) == 1);
+	close(fds[0]);
+	close(fds[1]);
+}
+
+static void test_capture_coordinates(void)
+{
+	for (int r = PB_ROT_0; r <= PB_ROT_270; r++) {
+		int w = logical_width(r), h = logical_height(r);
+		for (int y = 0; y < h; y++) {
+			int px, py, dx, dy;
+			capture_row_coordinates(r, 0, y, &px, &py, &dx, &dy);
+			for (int x = 0; x < w; x++, px += dx, py += dy) {
+				assert(px >= 0 && px < WIDTH && py >= 0 && py < HEIGHT);
+				assert((size_t)py * WIDTH + px == panel_index(r, x, y));
+			}
+			/* Partial strip begins at its actual logical x, not at zero. */
+			capture_row_coordinates(r, w / 3, y, &px, &py, &dx, &dy);
+			assert((size_t)py * WIDTH + px == panel_index(r, w / 3, y));
+		}
+	}
 }
 
 static void test_ddx_layout(void)
@@ -415,21 +553,199 @@ static void test_optional_halo_filters(void)
 	shadow_stage = 0;
 }
 
+static void test_combined_cleanup(void)
+{
+	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
+	static struct shared_frame frame;
+	const size_t ghost = WIDTH + 1, changed = 3 * TILE + 1;
+	memset(desired, 0xff, sizeof(desired));
+	memset(panel, 0xff, sizeof(panel));
+	memset(fast_changes, 0, sizeof(fast_changes));
+	memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	nibble_set(fast_changes, ghost, CLEAN_AFTER);
+	cleanup_pixels[0][0] = 1;
+	nibble_set(fast_changes, changed, 2);
+	nibble_set(desired, changed, 7);
+	dirty_tiles[0][3] = 1;
+	int old_halo = clean_halo;
+	clean_halo = 0;
+	assert(automatic_command(CLEAN_QUIET_US - 1, 0, 0, 1, 1) == SETTLE);
+	assert(automatic_command(CLEAN_QUIET_US, 1, 0, 1, 1) == 0);
+	assert(automatic_command(CLEAN_QUIET_US, 0, 0, 1, 1) == SETTLE_CLEAN);
+	assert(automatic_command(CLEAN_QUIET_US, 0, 0, 1, LARGE_CLEAN_PIXELS) == SETTLE);
+	assert(automatic_command(LARGE_CLEAN_QUIET_US, 0, 0, 1, LARGE_CLEAN_PIXELS) == SETTLE_CLEAN);
+	assert(prepare(SETTLE_CLEAN, desired, panel, &frame) == 2);
+	assert(frame.tiles[0][0] && frame.tiles[0][3]);
+	assert(frame.pixels[ghost] == (WHITE | SCRUB));
+	assert(frame.pixels[changed] == (7 | SCRUB));
+	assert(frame.pixels[changed + 1] == KEEP);
+	acknowledge(SETTLE_CLEAN, &frame, desired, panel);
+	assert(!cleanup_pixels[0][0] && !nibble_get(fast_changes, ghost));
+	assert(!nibble_get(fast_changes, changed) && nibble_get(panel, changed) == 7);
+	assert(!dirty_tiles_pending());
+	clean_halo = old_halo;
+}
+
+static void test_prospective_local_cleanup(void)
+{
+	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
+	static struct shared_frame frame;
+	const size_t p = (TILE - 1) * WIDTH + TILE - 1;
+	const size_t adjacent = p + WIDTH + 1, unrelated = 4 * TILE + 1;
+	memset(desired, 0xff, sizeof(desired));
+	memset(panel, 0xff, sizeof(panel));
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	memset(fast_changes, 0, sizeof(fast_changes));
+	memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
+	nibble_set(panel, p, 6);
+	nibble_set(panel, adjacent, 7);
+	nibble_set(desired, p, 7);
+	nibble_set(desired, adjacent, 7);
+	nibble_set(fast_changes, p, CLEAN_AFTER - 1);
+	nibble_set(fast_changes, unrelated, CLEAN_AFTER);
+	cleanup_pixels[0][4] = 1;
+	dirty_tiles[0][0] = 1;
+	uint8_t command = PREVIEW;
+	assert(prepare_update(&command, desired, panel, &frame, 0, FAST_AUTO) == 2);
+	assert(command == SETTLE_LOCAL_CLEAN);
+	assert(frame.tiles[0][0] && frame.tiles[1][1] && !frame.tiles[0][4]);
+	assert(frame.pixels[p] == (7 | SCRUB) && frame.pixels[adjacent] == (7 | SCRUB));
+	assert(nibble_get(fast_changes, p) == CLEAN_AFTER - 1);
+	acknowledge(command, &frame, desired, panel);
+	assert(!nibble_get(fast_changes, p) && nibble_get(panel, p) == 7);
+	assert(cleanup_pixels[0][4] == 1 && nibble_get(fast_changes, unrelated) == CLEAN_AFTER);
+	assert(!dirty_tiles_pending());
+
+	/* A binary update must remain fast despite a near-saturated budget. */
+	nibble_set(desired, p, WHITE);
+	nibble_set(fast_changes, p, CLEAN_AFTER - 1);
+	dirty_tiles[0][0] = 1;
+	command = PREVIEW;
+	assert(prepare_update(&command, desired, panel, &frame, 0, FAST_DU) == 1);
+	assert(command == PREVIEW && frame.pixels[p] == WHITE);
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	memset(fast_changes, 0, sizeof(fast_changes));
+	memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
+}
+
+static void test_settle_cleanup_budget(void)
+{
+	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
+	static struct shared_frame frame;
+	const size_t pixel = WIDTH + 1;
+	memset(desired, 0xff, sizeof(desired));
+	memset(panel, 0xff, sizeof(panel));
+	memset(fast_changes, 0, sizeof(fast_changes));
+	memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	for (int i = 0; i < CLEAN_AFTER + 2; i++) {
+		nibble_set(desired, pixel, i & 1 ? 6 : 9);
+		dirty_tiles[0][0] = 1;
+		assert(prepare(SETTLE, desired, panel, &frame) == 1);
+		/* Preparation alone must not consume the budget. */
+		assert(nibble_get(fast_changes, pixel) == (i < CLEAN_AFTER ? i : CLEAN_AFTER));
+		acknowledge(SETTLE, &frame, desired, panel);
+	}
+	assert(nibble_get(fast_changes, pixel) == CLEAN_AFTER && cleanup_pixels[0][0] == 1);
+	int old_halo = clean_halo;
+	clean_halo = 0;
+	assert(prepare(CLEAN, desired, panel, &frame) == 1);
+	assert(frame.pixels[pixel] == (nibble_get(panel, pixel) | SCRUB));
+	acknowledge(CLEAN, &frame, desired, panel);
+	assert(!nibble_get(fast_changes, pixel) && !cleanup_pixels[0][0]);
+	clean_halo = old_halo;
+}
+
+static void test_exact_preview_policy(void)
+{
+	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
+	static struct shared_frame frame;
+	const enum fast_profile profiles[] = { FAST_DU, FAST_A2, FAST_DU4, FAST_AUTO };
+	const size_t pixel = WIDTH + 1;
+	for (unsigned int m = 0; m < sizeof(profiles)/sizeof(profiles[0]); m++)
+		for (unsigned int old = 0; old <= WHITE; old++)
+			for (unsigned int target = 0; target <= WHITE; target++) {
+				memset(desired, 0xff, sizeof(desired));
+				memset(panel, 0xff, sizeof(panel));
+				memset(dirty_tiles, 0, sizeof(dirty_tiles));
+				nibble_set(desired, pixel, target);
+				nibble_set(panel, pixel, old);
+				dirty_tiles[0][0] = 1;
+				uint8_t command = PREVIEW;
+				unsigned int count = prepare_update(&command, desired, panel, &frame, 0, profiles[m]);
+				assert(count == (old != target));
+				if (count) {
+					assert(frame.pixels[pixel] == target);
+					assert(frame.tiles[0][0]);
+				}
+				if (count) {
+					uint8_t expected = SETTLE;
+					if (profiles[m] == FAST_DU4)
+						expected = target % 5 ? SETTLE : PREVIEW_DU4;
+					else if (target == 0 || target == WHITE)
+						expected = (profiles[m] == FAST_A2 || profiles[m] == FAST_AUTO) &&
+							(old == 0 || old == WHITE) ? PREVIEW_A2 : PREVIEW;
+					else if (profiles[m] == FAST_AUTO && target % 5 == 0)
+						expected = PREVIEW_DU4;
+					assert(command == expected);
+				}
+			}
+	/* A mixed tile must not leak a partially prepared fast frame. */
+	memset(desired, 0xff, sizeof(desired));
+	memset(panel, 0xff, sizeof(panel));
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	nibble_set(desired, pixel, 0);
+	nibble_set(desired, pixel + 1, 6);
+	dirty_tiles[0][0] = 1;
+	uint8_t command = PREVIEW;
+	assert(prepare_update(&command, desired, panel, &frame, 0, FAST_AUTO) == 2);
+	assert(command == SETTLE && frame.pixels[pixel] == 0 && frame.pixels[pixel + 1] == 6);
+	command = PREVIEW;
+	assert(prepare_update(&command, desired, panel, &frame, 1, FAST_DU) == 2);
+	assert(command == PREVIEW && frame.pixels[pixel + 1] == 0);
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+}
+
 int main(void)
 {
+	if (getenv("PB626_BENCH_RGB565")) {
+		bench_rgb565_candidate();
+		return 0;
+	}
 	if (getenv("PB626_TEST_X11")) {
 		test_x11_capture();
 		return 0;
 	}
 	test_power_press();
+	test_sleep_power_edges();
 	test_worker_deadlines();
 	test_packed_rgb565();
+	test_rgb565_candidate();
 	test_gray_rows();
 	test_ddx_layout();
+	test_capture_coordinates();
+	assert(damage_capture_due(0, 1000) == 1000 + CAPTURE_COALESCE_US);
+	assert(damage_capture_due(100000, 1000) == 100000);
+	int window_coalescing = 0;
+	assert(window_capture_due(0, 1000, &window_coalescing) == 1000 + WINDOW_COALESCE_US);
+	assert(window_coalescing);
+	assert(window_capture_due(65000, 2000, &window_coalescing) == 65000);
+	window_coalescing = 0;
+	assert(window_capture_due(200000, 1000, &window_coalescing) == 200000);
+	assert(may_retry_capture(1, 0, 0, 0));
+	assert(!may_retry_capture(0, 0, 0, 0));
+	assert(!may_retry_capture(1, 1, 0, 0));
+	assert(!may_retry_capture(1, 0, 1, 0));
+	assert(!may_retry_capture(1, 0, 0, 1));
 	test_gray();
 	test_contrast_row();
 	test_stock_sleep();
 	test_optional_halo_filters();
+	test_exact_preview_policy();
+	test_settle_cleanup_budget();
+	test_combined_cleanup();
+	test_prospective_local_cleanup();
 	assert(binding_index(KEY_LEFT) == 0 && binding_index(KEY_RIGHT) == 1);
 	assert(binding_index(KEY_HOME) == 2 && binding_index(KEY_MENU) == 3);
 	assert(binding_index(KEY_POWER) == -1);
@@ -441,6 +757,30 @@ int main(void)
 	buttons.bindings[0].deadline = 1234;
 	assert(binding_deadline(&buttons) == 1234);
 	buttons.bindings[0].down = 1;
+	assert(binding_deadline(&buttons) == UINT64_MAX);
+	assert(button_hold_us(NULL) == 1000000 && button_hold_us("750") == 750000);
+	assert(button_hold_us("-1") == 1000000);
+	buttons.hold_us = 750000;
+	struct button_binding *held = &buttons.bindings[0];
+	strcpy(held->action[LONG_PRESS], "refresh");
+	held->pending = 0;
+	held->hold_due = 1000;
+	assert(binding_deadline(&buttons) == 1000);
+	assert(!flush_bindings(NULL, 0, 0, &buttons, 999));
+	assert(flush_bindings(NULL, 0, 0, &buttons, 1000));
+	assert(held->long_fired && buttons.clean_requested);
+	assert(!flush_bindings(NULL, 0, 0, &buttons, 2000));
+	struct input_event release = { .type = EV_KEY, .value = 0 };
+	assert(!binding_event(NULL, 0, 0, &buttons, held, &release));
+	assert(!held->down && !held->long_fired);
+	buttons.menu_due = 1000;
+	assert(!flush_menu(&buttons, 999));
+	assert(flush_menu(&buttons, 1000));
+	assert(!flush_menu(&buttons, 1001));
+	buttons.menu_due = held->hold_due = 1000;
+	held->down = 1;
+	cancel_button_gestures(&buttons);
+	assert(!flush_menu(&buttons, 1000));
 	assert(binding_deadline(&buttons) == UINT64_MAX);
 	static struct shared_frame frame;
 	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];

@@ -1,0 +1,39 @@
+diff --git a/arch/arm/mach-sunxi/pm-sun5i.c b/arch/arm/mach-sunxi/pm-sun5i.c
+--- a/arch/arm/mach-sunxi/pm-sun5i.c
++++ b/arch/arm/mach-sunxi/pm-sun5i.c
+@@ -152,7 +152,8 @@
+ 
+ 	if (start) {
+ 		val = readl(pm.twi + SUN5I_TWI_CNTR);
+-		writel(val | SUN5I_TWI_CNTR_M_STA, pm.twi + SUN5I_TWI_CNTR);
++		writel((val & ~SUN5I_TWI_CNTR_INT_FLAG) |
++		       SUN5I_TWI_CNTR_M_STA, pm.twi + SUN5I_TWI_CNTR);
+ 	} else {
+ 		writel(data, pm.twi + SUN5I_TWI_DATA);
+ 		val = readl(pm.twi + SUN5I_TWI_CNTR);
+@@ -202,11 +203,20 @@
+ 	ret = sun5i_twi_step((AXP209_I2C_ADDR << 1) | 1, false, 0x40);
+ 	if (ret)
+ 		goto out;
+-	ret = sun5i_twi_step(0, false, 0x58);
+-	if (ret == -EIO)
+-		ret = 0;
+-	if (!ret)
+-		*val = readl(pm.twi + SUN5I_TWI_DATA);
++	/* Receive exactly one byte with NAK. Do not write TWI_DATA
++	 * during a read, or turn an unexpected bus state into success.
++	 * The A13 controller clears IFLG on a zero write.
++	 */
++	writel(SUN5I_TWI_CNTR_BUS_EN, pm.twi + SUN5I_TWI_CNTR);
++	{
++		u8 stat;
++
++		ret = sun5i_twi_wait_flag(&stat);
++		if (!ret && stat != 0x58)
++			ret = -EIO;
++	}
++	if (!ret)
++		*val = readl(pm.twi + SUN5I_TWI_DATA);
+ out:
+ 	sun5i_twi_stop();
+ 	return ret;
