@@ -1386,8 +1386,11 @@ static int exact_du4_candidate(const uint8_t *desired, const uint8_t *panel)
 	return gray;
 }
 
-static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8_t *panel,
-			    struct shared_frame *frame)
+/* Return UINT32_MAX if an exact-only fast update would misrepresent
+ * any pixel. No command has been submitted; a fresh SETTLE preparation
+ * may safely discard the partially populated IPC frame. */
+static unsigned int prepare_internal(uint8_t command, const uint8_t *desired, const uint8_t *panel,
+			    struct shared_frame *frame, int exact_only)
 {
 	unsigned int changes = 0;
 	if (command == RESET) {
@@ -1414,6 +1417,8 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
                         level = abs(target - old) >= 3 ? preview_level(target, old) : old;
                     else if (command == PREVIEW_DU4)
                         level = target != old ? preview_level4(target) : old;
+					if (exact_only && level != target)
+						return UINT32_MAX;
 					if (scrub || (command != CLEAN && level != old)) {
 						frame->pixels[i] = level | (scrub ? SCRUB : 0);
 						frame->tiles[ty][tx] = 1;
@@ -1426,6 +1431,30 @@ static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8
 				dirty_tiles[ty][tx] = 0;
 		}
 	return changes;
+}
+
+static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8_t *panel,
+			    struct shared_frame *frame)
+{
+	return prepare_internal(command, desired, panel, frame, 0);
+}
+
+/* Do not send an intentionally wrong intermediate image by default.
+ * Keep exact DU/A2/DU4 and the explicit legacy approximation policy. */
+static unsigned int prepare_update(uint8_t *command, const uint8_t *desired,
+				   const uint8_t *panel, struct shared_frame *frame,
+				   int approximate)
+{
+	if (!*command)
+		return 0;
+	if (!approximate && (*command == PREVIEW || *command == PREVIEW_DU4 ||
+			     *command == PREVIEW_A2)) {
+		unsigned int changes = prepare_internal(*command, desired, panel, frame, 1);
+		if (changes != UINT32_MAX)
+			return changes;
+		*command = SETTLE;
+	}
+	return prepare(*command, desired, panel, frame);
 }
 
 static void acknowledge(uint8_t command, const struct shared_frame *frame,
@@ -1610,6 +1639,8 @@ int main(int argc, char **argv)
             return EXIT_FAILURE;
         }
     }
+	const char *approx = getenv("PB626_EPD_APPROX_PREVIEW");
+	const int approximate = approx && !strcmp(approx, "1");
 	/* Native startup overlaps INIT with Xorg. The session marker is
 	 * a generic handoff, not a GUI/application readiness condition. */
 	int lock_fd = open("/run/pb626-epd.lock", O_CREAT | O_RDWR, 0600);
@@ -1744,12 +1775,13 @@ int main(int argc, char **argv)
 			return EXIT_FAILURE;
 	}
 	if (profile)
-		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f fast=%s\n",
+		fprintf(stderr, "x11-epd: capture=%s gray=%s tone=%s gamma=%.2f fast=%s preview=%s\n",
                 ddx_fb ? "DDX-map (with XGetImage fallback)" :
                 shm.shmaddr ? "MIT-SHM" : "XGetImage", profiles[selected],
                 lightness ? "cie-lstar" : "srgb", gamma,
                 fast_mode == FAST_A2 ? "a2" : fast_mode == FAST_DU4 ? "du4" :
-                fast_mode == FAST_AUTO ? "auto" : "du");
+                fast_mode == FAST_AUTO ? "auto" : "du",
+                approximate ? "approximate" : "exact");
 	/* Reallocation under memory pressure needs physical qualification.
 	 * No new polling timer when this experiment is disabled. */
 	const int release_idle = access("/etc/pb626/dma-release-qualified", F_OK) == 0;
@@ -1998,7 +2030,7 @@ int main(int argc, char **argv)
 
 		command = bound_preview(command, pending ? now - pending_since : 0);
 		uint64_t prepare_start = now_us();
-		unsigned int changes = command ? prepare(command, frame, previous, worker.frame) : 0;
+		unsigned int changes = prepare_update(&command, frame, previous, worker.frame, approximate);
 		/* A2 only when every changed pixel is an exact binary transition. */
         if (changes && command == PREVIEW && (fast_mode == FAST_A2 || fast_mode == FAST_AUTO) &&
             a2_eligible(worker.frame, previous))

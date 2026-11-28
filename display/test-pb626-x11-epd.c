@@ -510,6 +510,49 @@ static void test_optional_halo_filters(void)
 	shadow_stage = 0;
 }
 
+static void test_exact_preview_policy(void)
+{
+	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
+	static struct shared_frame frame;
+	const uint8_t commands[] = { PREVIEW, PREVIEW_A2, PREVIEW_DU4 };
+	const size_t pixel = WIDTH + 1;
+	for (unsigned int m = 0; m < sizeof(commands); m++)
+		for (unsigned int old = 0; old <= WHITE; old++)
+			for (unsigned int target = 0; target <= WHITE; target++) {
+				memset(desired, 0xff, sizeof(desired));
+				memset(panel, 0xff, sizeof(panel));
+				memset(dirty_tiles, 0, sizeof(dirty_tiles));
+				nibble_set(desired, pixel, target);
+				nibble_set(panel, pixel, old);
+				dirty_tiles[0][0] = 1;
+				uint8_t command = commands[m];
+				unsigned int count = prepare_update(&command, desired, panel, &frame, 0);
+				assert(count == (old != target));
+				if (count) {
+					assert(frame.pixels[pixel] == target);
+					assert(frame.tiles[0][0]);
+				}
+				unsigned int level = commands[m] == PREVIEW_DU4 ?
+					(old != target ? preview_level4(target) : old) :
+					(abs((int)target - (int)old) >= 3 ? preview_level(target, old) : old);
+				assert(command == (level != target ? SETTLE : commands[m]));
+			}
+	/* A mixed tile must not leak a partially prepared fast frame. */
+	memset(desired, 0xff, sizeof(desired));
+	memset(panel, 0xff, sizeof(panel));
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	nibble_set(desired, pixel, 0);
+	nibble_set(desired, pixel + 1, 6);
+	dirty_tiles[0][0] = 1;
+	uint8_t command = PREVIEW;
+	assert(prepare_update(&command, desired, panel, &frame, 0) == 2);
+	assert(command == SETTLE && frame.pixels[pixel] == 0 && frame.pixels[pixel + 1] == 6);
+	command = PREVIEW;
+	assert(prepare_update(&command, desired, panel, &frame, 1) == 2);
+	assert(command == PREVIEW && frame.pixels[pixel + 1] == 0);
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+}
+
 int main(void)
 {
 	if (getenv("PB626_BENCH_RGB565")) {
@@ -530,6 +573,7 @@ int main(void)
 	test_contrast_row();
 	test_stock_sleep();
 	test_optional_halo_filters();
+	test_exact_preview_policy();
 	assert(binding_index(KEY_LEFT) == 0 && binding_index(KEY_RIGHT) == 1);
 	assert(binding_index(KEY_HOME) == 2 && binding_index(KEY_MENU) == 3);
 	assert(binding_index(KEY_POWER) == -1);

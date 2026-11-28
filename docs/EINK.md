@@ -209,3 +209,22 @@ server grab, and behavior on server restart. The mapped path removes the
 server-to-SHM copy and the ordinary SHM strip allocation when the mapping
 is present; X server grab duration can offset that benefit. No claim of
 speedup or physical validation is made.
+
+### Exact-first interactive scheduling
+
+A binary DU preview followed by GL16 can show an intermediate black or
+white approximation that does not exist in the target image. At 18–21 C
+this costs 31 + 59 scans (about 1.06 s), before capture/quiet time. The
+bridge now uses a fast update only if every changed pixel in that frame
+reaches its requested logical level with the selected preview. Otherwise
+it discards the unsubmitted IPC preparation and sends one exact SETTLE
+(GL16, existing GC16 fallback). Exact DU, A2 and DU4 remain available;
+manual RESET, local GC16 scrub, sleep, waveform and VCOM are unchanged.
+For workloads prioritizing approximate animation, set
+`PB626_EPD_APPROX_PREVIEW=1` in the desktop service environment and restart.
+This restores the previous preview scheduling (including the 850 ms bound).
+The exact-first policy avoids intentional intermediate levels, not the
+intrinsic optical flash of a factory waveform; verify text entry, window
+open/close and images on hardware. Compare logged mode, ACK and optical
+latency at equal temperature. Host tests exhaust all source/target levels
+and check mixed-tile fallback and legacy approximation.
