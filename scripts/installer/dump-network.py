@@ -55,8 +55,9 @@ def main():
     ap.add_argument("action",choices=("backup","restore","preflight"))
     ap.add_argument("directory",type=Path)
     ap.add_argument("--sd",action="store_true")
+    ap.add_argument("--windows",action="store_true",help="Native Windows TCP")
     args=ap.parse_args()
-    r=d.EthernetRecovery()
+    r=d.EthernetRecovery(windows=args.windows)
     cid,sectors,ext=info(r,args.sd)
     images=regions(args.sd,sectors)
     path=args.directory

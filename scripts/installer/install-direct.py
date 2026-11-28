@@ -127,10 +127,14 @@ class Recovery:
 
 class EthernetRecovery:
     """One bounded request/response over the dedicated USB NCM link."""
-    def __init__(self, configure=True, address="169.254.62.1", port=6262):
+    def __init__(self, configure=True, address="169.254.62.1", port=6262, windows=False):
         self.address, self.port = address, port
         self.interface = None
-        if configure:
+        self.source_address = "169.254.62.2" if windows else None
+        if windows:
+            require(os.name == "nt", "Windows native mode requires Windows")
+            require(self.lines("hello", timeout=5)==["PB626-NCM-1"], "Wrong recovery protocol")
+        elif configure:
             require(os.name != "nt", "Run this installer in WSL or Linux")
             require(os.geteuid() == 0, "Run as root to configure USB NCM")
             require(shutil.which("ip"), "Install iproute2 in WSL/Linux")
@@ -176,7 +180,8 @@ class EthernetRecovery:
             if self.interface:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE,
                              self.interface.encode()+b"\0")
-                s.bind(("169.254.62.2",0))
+            if self.interface or self.source_address:
+                s.bind((self.source_address or "169.254.62.2",0))
             s.connect((self.address,self.port))
             s.sendall(header)
             if payload is not None:
@@ -287,7 +292,7 @@ def get_wbf(r):
     return wbf
 
 
-def checked_inputs(kit):
+def checked_inputs(kit, spl_mode='qualified'):
     native = kit/'native'
     rev = (native/'BUILD-COMMIT').read_text().strip()
     require(re.fullmatch('[0-9a-f]{40}', rev)
@@ -309,7 +314,17 @@ def checked_inputs(kit):
             'Kernel/DTB mismatch')
     sys.path.insert(0, str(kit/'source/BT0-uncaged'))
     bt0 = importlib.import_module('build')
-    spl = bytes(bt0.build(kit/'fel-inputs/pb626-spl.bin', native/'pb626-bt0-menu.raw'))
+    spl = None
+    if spl_mode == 'qualified':
+        spl = bytes(bt0.build(kit/'fel-inputs/pb626-spl.bin', native/'pb626-bt0-menu.raw'))
+    elif spl_mode == 'candidate':
+        candidate = kit/'candidate/BT0-uncaged-source-candidate.bin'
+        spl = candidate.read_bytes()
+        bt0.verify(spl)
+        sums = manifest(kit/'SHA256SUMS')
+        require(sha(spl) == sums.get('candidate/'+candidate.name), 'Candidate manifest mismatch')
+    else:
+        require(spl_mode == 'keep', 'Unknown SPL mode')
     return rev, raw, spl
 
 
@@ -332,13 +347,13 @@ def send_block(r, cid, kind, i, data):
     require('PB626_WRITTEN' in rows, 'Missing verified write acknowledgement')
 
 
-def hash_password(distro):
+def hash_password(distro, openssl=None):
     password = getpass.getpass('New root password (at least 4 characters): ')
     require(len(password) >= 4 and '\n' not in password and '\r' not in password
             and '\0' not in password, 'Invalid password')
     require(password == getpass.getpass('Confirm root password: '), 'Passwords differ')
-    cmd = ['openssl', 'passwd', '-6', '-stdin']
-    if os.name == 'nt':
+    cmd = [str(openssl or 'openssl'), 'passwd', '-6', '-stdin']
+    if os.name == 'nt' and openssl is None:
         cmd = ['wsl.exe', '-d', distro, '-u', 'root', '--']+cmd
     result = subprocess.check_output(cmd, input=(password+'\n').encode('utf-8')).strip()
     require(re.fullmatch(rb'\$6\$[./0-9A-Za-z]{1,16}\$[./0-9A-Za-z]{86}', result),
@@ -351,13 +366,18 @@ def main():
     ap.add_argument('--kit', type=Path, default=Path(__file__).resolve().parent)
     ap.add_argument('--port', help='Legacy compatibility; ACM is not used for bulk data')
     ap.add_argument('--distro', default='Ubuntu')
+    ap.add_argument('--windows', action='store_true', help='Native Windows TCP; adapter configured by launcher')
+    ap.add_argument('--spl', choices=('keep','qualified','candidate'), default='qualified')
+    ap.add_argument('--spl-only', action='store_true', help='Only replace the selected primary SPL')
     args = ap.parse_args()
     kit = args.kit.resolve()
-    rev, raw, spl = checked_inputs(kit)
+    require(not args.spl_only or args.spl != 'keep', 'No SPL selected')
+    require(args.spl != 'candidate' or args.windows, 'Experimental SPL is restricted to Windows lab recovery')
+    rev, raw, spl = checked_inputs(kit, args.spl)
     print('Paired flashable firmware:', rev, flush=True)
     theme_module = importlib.import_module('pb626_sleep_theme')
     mapped = mapped_chunks(kit/'native/pb626-rootfs.bmap.json')
-    r = EthernetRecovery()
+    r = EthernetRecovery(windows=args.windows)
     try:
         r.test_transport()
         rows = r.lines('probe')
@@ -366,14 +386,24 @@ def main():
         cid = ids[0]
         require(r.lines('layout')==['1 1009664 14260224','2 73728 65536','8 275456 500736'],
                 'Unexpected partition layout')
+        if args.spl == 'candidate':
+            print('EXPERIMENTAL BT0: physical FEL has not been qualified; a bad SPL may make the reader unrecoverable.', flush=True)
+            print('Candidate SHA256:', sha(spl), flush=True)
+            require(input('Type RISK '+cid+' to accept this: ') == 'RISK '+cid, 'Cancelled')
+        if args.spl_only:
+            require(input('Type BOOTLOADER '+cid+' to write only LBA 16-63: ') == 'BOOTLOADER '+cid, 'Cancelled')
+            send_block(r, cid, 'spl-candidate' if args.spl == 'candidate' else 'spl', 0, spl)
+            require('CID='+cid in r.lines('probe'), 'Final identity check failed')
+            print('SUCCESS: BT0 alone written and read back; rootfs and kernel unchanged.', flush=True)
+            return
         print('Reading factory waveform, VCOM and sleep artwork over TCP...', flush=True)
         personal = {'default.wbf': get_wbf(r)}
         theme = r.request('theme')
         require(len(theme)==770198, 'Unsupported stock theme size')
         personal.update(theme_module.decode_theme(theme))
         require('CID='+cid in r.lines('probe'), 'CID changed')
-        personal['password'] = hash_password(args.distro)
-        print('Only p1, raw kernel/DTB and tested BT0 will be replaced. No full backup.', flush=True)
+        personal['password'] = hash_password(args.distro, kit/'host/openssl.exe' if args.windows else None)
+        print('Only p1, raw kernel/DTB and selected BT0 (if any) will be replaced. No full backup.', flush=True)
         require(input('Type FLASH '+cid+' to continue: ') == 'FLASH '+cid, 'Cancelled')
         # Verify recovery supports the new protocol before any write. This operation
         # only creates a private directory in RAM, not on eMMC.
@@ -400,13 +430,17 @@ def main():
         print('Personalizing rootfs on device...', flush=True)
         require('PB626_PERSONALIZED' in r.run('{} personalize {}'.format(REMOTE,cid), timeout=240),
                 'Personalization failed')
-        print('Writing kernel/DTB and BT0 (last)...', flush=True)
-        for kind, image in (('kernel',raw), ('spl',spl)):
+        print('Writing kernel/DTB and selected BT0 (last, if requested)...', flush=True)
+        images = [('kernel', raw)]
+        if spl is not None:
+            images.append(('spl-candidate' if args.spl == 'candidate' else 'spl', spl))
+        for kind, image in images:
             for i, offset in enumerate(range(0,len(image),CHUNK)):
                 send_block(r,cid,kind,i,image[offset:offset+CHUNK])
         require('CID='+cid in r.lines('probe'),
                 'Final identity check failed')
-        print('SUCCESS: p1, kernel and BT0 written; all other eMMC regions preserved.', flush=True)
+        print('SUCCESS: p1 and kernel written; BT0 '+('preserved' if spl is None else 'written and verified')+
+              '; all other eMMC regions preserved.', flush=True)
     finally:
         r.close()
 

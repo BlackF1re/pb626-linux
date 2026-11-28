@@ -74,9 +74,17 @@ case "$operation" in
             kernel) dev=$D; bs=512; seek=$((80+idx*8192)); count=$((length/512))
                 test "$idx" -le 2; test $((seek+count)) -le 16465
                 if test "$idx" = 2; then test "$length" = 512; fi ;;
-            spl) dev=$D; bs=512; seek=16; count=48
+            spl|spl-candidate) dev=$D; bs=512; seek=16; count=48
                 test "$idx" = 0 && test "$length" = 24576 || fail "Invalid BT0 extent"
-                test "$expected" = 1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6 ;;
+                if test "$kind" = spl; then
+                    test "$expected" = 1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6
+                else
+                    # Only the Windows-specific RAM recovery assembly can
+                    # supply this immutable same-run digest. No peer command
+                    # can alter the authorization file or write another SPL.
+                    test -f /etc/pb626-spl-candidate.sha256
+                    test "$expected" = "$(cat /etc/pb626-spl-candidate.sha256)"
+                fi ;;
             *) fail "Invalid write region";;
         esac
         receive "$bytes" "$expected"
