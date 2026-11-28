@@ -1,4 +1,4 @@
-Full qualification request: Debian runtime, CI and suspend/resume review
+Full qualification request: factory suspend reverse-engineering and isolated deep resume compile check
 Source branch: optimization/debian-runtime
-Source head before request: 9eb28e075f6970a0c10e401b70e09f1aa7eef471
-Scope: all selected firmware, native Debian armhf, Alpine/FEL, recovery, source bootloader candidates, host and target tests, Windows launcher and same-run flash kit. Deep suspend and other hardware qualification gates remain unchanged.
+Source head before request: 17806d9b76aa7a6fbadef6a15e3b553ab4861860
+Scope: full production firmware, Debian/FEL/recovery, source bootloader candidates and independent experimental deep PM object compilation. No experimental kernel or SPL replaces the qualified boot path.
