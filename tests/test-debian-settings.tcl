@@ -12,7 +12,7 @@ proc exec {args} {
             light-status {return "1 37"}
             power-key-status {return "ignore"}
             led-status {return "on"}
-            button-bindings-status {return "Left none none Right none none Home none none Menu refresh none"}
+            button-bindings-status {return "Left none none Right none none Home recent-apps none Menu refresh none"}
             battery-status {return "10 3"}
             sd-status {return "No external SD card detected"}
             default {error "unexpected privileged operation"}

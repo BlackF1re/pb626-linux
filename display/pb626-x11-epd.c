@@ -255,11 +255,25 @@ static int valid_button_action(const char *name)
 		"none", "Left", "Right", "Up", "Down", "Page_Up", "Page_Down",
 		"Home", "End", "Escape", "Return", "BackSpace", "Tab", "space", "Menu",
 		"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
-		"keyboard", "refresh", "light-toggle",
+		"keyboard", "refresh", "light-toggle", "recent-apps",
 	};
 	for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++)
 		if (!strcmp(name, allowed[i])) return 1;
 	return 0;
+}
+
+static void default_button_bindings(struct controls *controls)
+{
+	const char *actions[BUTTON_KEYS][BUTTON_GESTURES] = {
+		{controls->page_keys ? "Page_Up" : "Left", "none", "none"},
+		{controls->page_keys ? "Page_Down" : "Right", "none", "none"},
+		{controls->home_key ? "Home" : "keyboard", "recent-apps", "none"},
+		{controls->menu_escape ? "Escape" : "Menu", "refresh", "none"},
+	};
+	for (int i = 0; i < BUTTON_KEYS; i++)
+		for (int j = 0; j < BUTTON_GESTURES; j++)
+			snprintf(controls->bindings[i].action[j],
+				 sizeof(controls->bindings[i].action[j]), "%s", actions[i][j]);
 }
 
 static int load_button_bindings(struct controls *controls)
@@ -310,6 +324,20 @@ static int dispatch_binding(Display *d, Window root, Atom keyboard,
 	if (!strcmp(action, "keyboard")) {
 		keyboard_command(d, root, keyboard, KEYBOARD_TOGGLE);
 		controls->keyboard_changed = 1;
+	} else if (!strcmp(action, "recent-apps")) {
+		/* Debian Matchbox's stock kbdconfig binds Alt+space to taskmenu.
+		 * Reuse the WM's live application list without a resident helper. */
+		KeyCode alt = XKeysymToKeycode(d, XK_Alt_L);
+		KeyCode space = XKeysymToKeycode(d, XK_space);
+		if (alt && space) {
+			char keys[32];
+			XQueryKeymap(d, keys);
+			int alt_down = ((unsigned char)keys[alt / 8] >> (alt % 8)) & 1;
+			if (!alt_down) XTestFakeKeyEvent(d, alt, True, CurrentTime);
+			XTestFakeKeyEvent(d, space, True, CurrentTime);
+			XTestFakeKeyEvent(d, space, False, CurrentTime);
+			if (!alt_down) XTestFakeKeyEvent(d, alt, False, CurrentTime);
+		}
 	} else if (!strcmp(action, "light-toggle")) {
 		(void)power_action("light-toggle", NULL);
 	} else {
@@ -1872,6 +1900,11 @@ int main(int argc, char **argv)
 		.hold_us = button_hold_us(getenv("PB626_BUTTON_HOLD_MS")),
 	};
 	controls.custom_buttons = load_button_bindings(&controls);
+	if (!controls.custom_buttons && !controls.fallback &&
+	    getenv("PB626_SYSTEM_SLEEP")) {
+		default_button_bindings(&controls);
+		controls.custom_buttons = 1;
+	}
 	struct pollfd sources[8] = {{ .fd = ConnectionNumber(display), .events = POLLIN }};
 	nfds_t source_count = 1;
 	const char *devices = getenv("PB626_BUTTON_DEVICES");

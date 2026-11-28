@@ -200,7 +200,7 @@ read_battery() {
 }
 valid_button_action() {
     case "$1" in
-        none|Left|Right|Up|Down|Page_Up|Page_Down|Home|End|Escape|Return|BackSpace|Tab|space|Menu|F[1-9]|F1[012]|keyboard|refresh|light-toggle) return 0 ;;
+        none|Left|Right|Up|Down|Page_Up|Page_Down|Home|End|Escape|Return|BackSpace|Tab|space|Menu|F[1-9]|F1[012]|keyboard|refresh|light-toggle|recent-apps) return 0 ;;
         *) return 2 ;;
     esac
 }
@@ -211,7 +211,7 @@ button_defaults() {
         if grep -qx PB626_HOME_KEY=home "$state/desktop.conf"; then home=Home; fi
         if grep -qx PB626_MENU_KEY=escape "$state/desktop.conf"; then menu=Escape; fi
     fi
-    printf '%s\n' "$left none none $right none none $home none none $menu refresh none"
+    printf '%s\n' "$left none none $right none none $home recent-apps none $menu refresh none"
 }
 case "${1:-}" in
 frontlight|light-level|light-on|light-off|light-toggle)

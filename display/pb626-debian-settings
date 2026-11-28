@@ -139,7 +139,7 @@ proc bindingsSave {} {
 proc buttonSettings {} {
     if {[winfo exists .bindings]} {raise .bindings; return}
     if {[catch {query button-bindings-status} data] || [llength $data] != 12} {return}
-    set ::bindingActions {none Left Right Up Down Page_Up Page_Down Home End Escape Return BackSpace Tab space Menu F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 keyboard refresh light-toggle}
+    set ::bindingActions {none Left Right Up Down Page_Up Page_Down Home End Escape Return BackSpace Tab space Menu F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 keyboard refresh light-toggle recent-apps}
     for {set i 0} {$i < 12} {incr i} {set ::bindAction($i) [lindex $data $i]}
     set ::bindingKey Left
     toplevel .bindings
@@ -532,7 +532,7 @@ section $p basic "Physical buttons" "Choose short-press defaults or configure in
 choose $p arrows "Left / Right" buttons {arrows pages}
 choose $p home "Home button" home {keyboard home}
 choose $p menu "Menu short press" menu {menu escape}
-label $p.note -text "Advanced bindings override these defaults.\nWithout touch, hardware pointer controls remain available." -anchor w -justify left -wraplength 560
+label $p.note -text "Advanced bindings override these defaults. By default, hold Home for running apps and Menu for a full refresh.\nWithout touch, hardware pointer controls remain available." -anchor w -justify left -wraplength 560
 pack $p.note -fill x -padx 16 -pady 10
 choose $p hold "Long press duration (ms)" holdMs {300 500 750 1000 1500 2000}
 button $p.holdsave -text "Save hold duration" -command {desktopApply hold}
