@@ -1425,11 +1425,12 @@ static int exact_du4_candidate(const uint8_t *desired, const uint8_t *panel)
 	return gray;
 }
 
-/* Return UINT32_MAX if an exact-only fast update would misrepresent
- * any pixel. No command has been submitted; a fresh SETTLE preparation
- * may safely discard the partially populated IPC frame. */
+enum { TARGET_GRAY = 1, TARGET_NOT_DU4 = 2, SOURCE_GRAY = 4 };
+
+/* In exact mode classify real transitions while writing the final pixels.
+ * No speculative preview preparation, rollback or second tile walk. */
 static unsigned int prepare_internal(uint8_t command, const uint8_t *desired, const uint8_t *panel,
-			    struct shared_frame *frame, int exact_only)
+			    struct shared_frame *frame, unsigned int *classes)
 {
 	unsigned int changes = 0;
 	if (command == RESET) {
@@ -1455,16 +1456,15 @@ static unsigned int prepare_internal(uint8_t command, const uint8_t *desired, co
 						    (command == SETTLE_CLEAN && target != old);
 					uint8_t level = target;
 					differs |= target != old;
-					if (command == PREVIEW || command == PREVIEW_A2) {
-						/* In exact-first mode DU can drive every changed
-						 * binary target, including 1->0 and 14->15.
-						 * A2 is still selected only after eligibility. */
-						if (!exact_only || (target != 0 && target != WHITE))
-							level = abs(target - old) >= 3 ? preview_level(target, old) : old;
-					} else if (command == PREVIEW_DU4)
-                        level = target != old ? preview_level4(target) : old;
-					if (exact_only && level != target)
-						return UINT32_MAX;
+					if (classes && target != old) {
+						if (target != 0 && target != WHITE) *classes |= TARGET_GRAY;
+						if (target % 5) *classes |= TARGET_NOT_DU4;
+						if (old != 0 && old != WHITE) *classes |= SOURCE_GRAY;
+					}
+					if (command == PREVIEW || command == PREVIEW_A2)
+						level = abs(target - old) >= 3 ? preview_level(target, old) : old;
+					else if (command == PREVIEW_DU4)
+						level = target != old ? preview_level4(target) : old;
 					if (scrub || (command != CLEAN && level != old)) {
 						frame->pixels[i] = level | (scrub ? SCRUB : 0);
 						frame->tiles[ty][tx] = 1;
@@ -1482,23 +1482,31 @@ static unsigned int prepare_internal(uint8_t command, const uint8_t *desired, co
 static unsigned int prepare(uint8_t command, const uint8_t *desired, const uint8_t *panel,
 			    struct shared_frame *frame)
 {
-	return prepare_internal(command, desired, panel, frame, 0);
+	return prepare_internal(command, desired, panel, frame, NULL);
 }
 
-/* Do not send an intentionally wrong intermediate image by default.
- * Keep exact DU/A2/DU4 and the explicit legacy approximation policy. */
+static uint8_t exact_command(enum fast_profile fast, unsigned int classes)
+{
+	if (fast == FAST_DU4)
+		return classes & TARGET_NOT_DU4 ? SETTLE : PREVIEW_DU4;
+	if (classes & TARGET_GRAY)
+		return fast == FAST_AUTO && !(classes & TARGET_NOT_DU4) ? PREVIEW_DU4 : SETTLE;
+	if ((fast == FAST_A2 || fast == FAST_AUTO) && !(classes & SOURCE_GRAY))
+		return PREVIEW_A2;
+	return PREVIEW;
+}
+
 static unsigned int prepare_update(uint8_t *command, const uint8_t *desired,
 				   const uint8_t *panel, struct shared_frame *frame,
-				   int approximate)
+				   int approximate, enum fast_profile fast)
 {
 	if (!*command)
 		return 0;
-	if (!approximate && (*command == PREVIEW || *command == PREVIEW_DU4 ||
-			     *command == PREVIEW_A2)) {
-		unsigned int changes = prepare_internal(*command, desired, panel, frame, 1);
-		if (changes != UINT32_MAX)
-			return changes;
-		*command = SETTLE;
+	if (!approximate && *command == PREVIEW) {
+		unsigned int classes = 0;
+		unsigned int changes = prepare_internal(SETTLE, desired, panel, frame, &classes);
+		*command = exact_command(fast, classes);
+		return changes;
 	}
 	return prepare(*command, desired, panel, frame);
 }
@@ -2091,16 +2099,16 @@ int main(int argc, char **argv)
 		uint8_t command = captured && (!has_frame || controls.clean_requested || lock_pending) ? RESET :
             automatic_command(now - last_damage, dirty || now < layout_until,
                               captured, different, cleanup_count);
-        if (command == PREVIEW &&
+        if (approximate && command == PREVIEW &&
             (fast_mode == FAST_DU4 ||
              (fast_mode == FAST_AUTO && exact_du4_candidate(frame, previous))))
             command = PREVIEW_DU4;
 
 		command = bound_preview(command, pending ? now - pending_since : 0);
 		uint64_t prepare_start = now_us();
-		unsigned int changes = prepare_update(&command, frame, previous, worker.frame, approximate);
+		unsigned int changes = prepare_update(&command, frame, previous, worker.frame, approximate, fast_mode);
 		/* A2 only when every changed pixel is an exact binary transition. */
-        if (changes && command == PREVIEW && (fast_mode == FAST_A2 || fast_mode == FAST_AUTO) &&
+        if (approximate && changes && command == PREVIEW && (fast_mode == FAST_A2 || fast_mode == FAST_AUTO) &&
             a2_eligible(worker.frame, previous))
             command = PREVIEW_A2;
         uint64_t submit_start = now_us();

@@ -594,9 +594,9 @@ static void test_exact_preview_policy(void)
 {
 	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
 	static struct shared_frame frame;
-	const uint8_t commands[] = { PREVIEW, PREVIEW_A2, PREVIEW_DU4 };
+	const enum fast_profile profiles[] = { FAST_DU, FAST_A2, FAST_DU4, FAST_AUTO };
 	const size_t pixel = WIDTH + 1;
-	for (unsigned int m = 0; m < sizeof(commands); m++)
+	for (unsigned int m = 0; m < sizeof(profiles)/sizeof(profiles[0]); m++)
 		for (unsigned int old = 0; old <= WHITE; old++)
 			for (unsigned int target = 0; target <= WHITE; target++) {
 				memset(desired, 0xff, sizeof(desired));
@@ -605,18 +605,24 @@ static void test_exact_preview_policy(void)
 				nibble_set(desired, pixel, target);
 				nibble_set(panel, pixel, old);
 				dirty_tiles[0][0] = 1;
-				uint8_t command = commands[m];
-				unsigned int count = prepare_update(&command, desired, panel, &frame, 0);
+				uint8_t command = PREVIEW;
+				unsigned int count = prepare_update(&command, desired, panel, &frame, 0, profiles[m]);
 				assert(count == (old != target));
 				if (count) {
 					assert(frame.pixels[pixel] == target);
 					assert(frame.tiles[0][0]);
 				}
-				unsigned int level = commands[m] == PREVIEW_DU4 ?
-					(old != target ? preview_level4(target) : old) :
-					(target == 0 || target == WHITE ? target :
-					 (abs((int)target - (int)old) >= 3 ? preview_level(target, old) : old));
-				assert(command == (level != target ? SETTLE : commands[m]));
+				if (count) {
+					uint8_t expected = SETTLE;
+					if (profiles[m] == FAST_DU4)
+						expected = target % 5 ? SETTLE : PREVIEW_DU4;
+					else if (target == 0 || target == WHITE)
+						expected = (profiles[m] == FAST_A2 || profiles[m] == FAST_AUTO) &&
+							(old == 0 || old == WHITE) ? PREVIEW_A2 : PREVIEW;
+					else if (profiles[m] == FAST_AUTO && target % 5 == 0)
+						expected = PREVIEW_DU4;
+					assert(command == expected);
+				}
 			}
 	/* A mixed tile must not leak a partially prepared fast frame. */
 	memset(desired, 0xff, sizeof(desired));
@@ -626,10 +632,10 @@ static void test_exact_preview_policy(void)
 	nibble_set(desired, pixel + 1, 6);
 	dirty_tiles[0][0] = 1;
 	uint8_t command = PREVIEW;
-	assert(prepare_update(&command, desired, panel, &frame, 0) == 2);
+	assert(prepare_update(&command, desired, panel, &frame, 0, FAST_AUTO) == 2);
 	assert(command == SETTLE && frame.pixels[pixel] == 0 && frame.pixels[pixel + 1] == 6);
 	command = PREVIEW;
-	assert(prepare_update(&command, desired, panel, &frame, 1) == 2);
+	assert(prepare_update(&command, desired, panel, &frame, 1, FAST_DU) == 2);
 	assert(command == PREVIEW && frame.pixels[pixel + 1] == 0);
 	memset(dirty_tiles, 0, sizeof(dirty_tiles));
 }

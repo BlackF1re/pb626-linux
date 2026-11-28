@@ -321,3 +321,13 @@ Compare identical black/white, gray and mixed charts over repeated
 updates and temperatures; log selected counts and total scans. Host
 regression verifies the full expanded signal sequence for four mixed
 transition classes, neutral tails, disabled A2 and invalid/scrub rejection.
+
+### Single-pass exact frame selection
+
+For the default exact policy the bridge writes final target levels and
+classifies actual source/target transitions during the same dirty-tile
+walk. It selects DU, A2, DU4 or GL16 afterwards, without first preparing
+an inexact preview or rescanning a frame for A2/DU4 eligibility. The
+approximate motion policy retains its existing selection and dead band.
+The host test covers all 256 old/new pairs for all four fast preferences,
+plus mixed frames, and verifies the exact shared-frame sample.
