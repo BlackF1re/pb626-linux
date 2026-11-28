@@ -62,7 +62,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          cmp windows-toolchain.txt windows-host/toolchain.txt
+          test "$(sha256sum <windows-toolchain.txt)" = "$(sha256sum <windows-host/toolchain.txt)"
           cd windows-host
           test -s SHA256SUMS
           sha256sum -c SHA256SUMS

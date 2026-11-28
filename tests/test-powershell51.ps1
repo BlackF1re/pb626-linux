@@ -131,3 +131,6 @@ try {
     if ($LASTEXITCODE -eq 0 -or ($output -join ' ') -notmatch 'separate deep lab') { throw 'Standard profile allowed deep operation' }
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
 Write-Host 'WINDOWS CONSOLE OFFLINE FAILURE PATHS PASS' -ForegroundColor Green
+
+# Expected negative child exits have already been asserted above.
+exit 0
