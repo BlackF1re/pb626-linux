@@ -1,4 +1,4 @@
-Full qualification request: factory suspend reverse-engineering and isolated deep resume compile check
+Full qualification request: correct deep build concurrency, bound SRAM failure paths and build isolated linked deep kernel
 Source branch: optimization/debian-runtime
-Source head before request: 17806d9b76aa7a6fbadef6a15e3b553ab4861860
-Scope: full production firmware, Debian/FEL/recovery, source bootloader candidates and independent experimental deep PM object compilation. No experimental kernel or SPL replaces the qualified boot path.
+Source head before request: 4a105da497262e885a2dbac019570e74013eaa72
+Scope: production firmware and independent deep kernel/modules/DTB plus actual SRAM fault model. No change to production sleep or installer qualification gates.
