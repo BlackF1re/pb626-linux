@@ -172,7 +172,7 @@ jobs:
   renderer:
     name: E Ink renderer
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install X11 test dependencies
@@ -195,31 +195,39 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /tmp/pb626-pinned-kernel
-          key: pb626-ci-kernel-source-v1-facc87117511221-${{ steps.kernel-paths.outputs.fingerprint }}
-      - name: Fetch kernel sources
+          key: pb626-ci-kernel-files-v2-facc87117511221-${{ steps.kernel-paths.outputs.fingerprint }}
+      - name: Fetch pinned kernel files
         if: steps.kernel-source.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           root=/tmp/pb626-pinned-kernel
           pin=facc87117511221bb61410e3f92ad8579697f736
           rm -rf "$root"
-          git init -q "$root"
-          git -C "$root" -c protocol.version=2 fetch --depth=1 --filter=blob:none https://github.com/Arnavion/linux.git "$pin"
-          test "$(git -C "$root" rev-parse FETCH_HEAD)" = "$pin"
-          mkdir -p "$root/.git/info"
-          sed 's|^|/|' /tmp/pb626-kernel-paths > "$root/.git/info/sparse-checkout"
-          git -C "$root" config core.sparseCheckout true
-          git -C "$root" checkout --detach FETCH_HEAD
+          mkdir -p "$root"
+          # Fetch only the exact blobs required for the patch and UAPI checks.
+          # A shallow partial clone still downloads the entire Linux tree metadata.
+          metadata=$(mktemp)
+          trap 'rm -f "$metadata"' EXIT
+          while IFS= read -r path; do
+            mkdir -p "$root/$(dirname "$path")"
+            curl --fail --silent --show-error --retry 3 --retry-all-errors \
+              --connect-timeout 15 --max-time 90 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/Arnavion/linux/contents/$path?ref=$pin" -o "$metadata"
+            jq -e '.encoding == "base64" and .type == "file"' "$metadata" >/dev/null
+            jq -er '.content' "$metadata" | base64 -d > "$root/$path"
+            test "$(git hash-object "$root/$path")" = "$(jq -er '.sha' "$metadata")"
+          done < /tmp/pb626-kernel-paths
+          (cd "$root" && xargs -d '\n' sha256sum < /tmp/pb626-kernel-paths > SHA256SUMS)
       - name: Verify kernel sources
         run: |
           set -euo pipefail
           root=/tmp/pb626-pinned-kernel
-          test "$(git -C "$root" rev-parse HEAD)" = facc87117511221bb61410e3f92ad8579697f736
-          git -C "$root" diff --exit-code HEAD --
-          while IFS= read -r path; do
-            test -f "$root/$path"
-            test "$(git -C "$root" hash-object "$root/$path")" = "$(git -C "$root" rev-parse "HEAD:$path")"
-          done < /tmp/pb626-kernel-paths
+          (cd "$root" && sha256sum -c SHA256SUMS)
+          diff -u /tmp/pb626-kernel-paths <(cut -c67- "$root/SHA256SUMS")
       - name: Cache kernel sources
         if: steps.kernel-source.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
