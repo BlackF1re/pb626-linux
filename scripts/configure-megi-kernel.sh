@@ -18,7 +18,7 @@ verify_config() {
     MFD_AXP20X_I2C REGULATOR_AXP20X AXP20X_ADC IIO BATTERY_AXP20X CHARGER_AXP20X
     RTC_DRV_PCF8563 KEYBOARD_GPIO KEYBOARD_SUN4I_LRADC INPUT_AXP20X_PEK INPUT_EVDEV
     PM PM_SLEEP SUSPEND SUSPEND_FREEZER PM_DEBUG PM_SLEEP_DEBUG THERMAL CPU_THERMAL SUNXI_WATCHDOG
-    CPU_IDLE CPU_IDLE_GOV_MENU ARM_CPUIDLE
+    CPU_IDLE CPU_IDLE_GOV_MENU ARM_CPUIDLE SUN5I_PM ARM_CPU_SUSPEND
     VT UNIX98_PTYS SYSVIPC POSIX_MQUEUE FUTEX EPOLL SIGNALFD TIMERFD EVENTFD
     INOTIFY_USER SHMEM TMPFS PROC_FS SYSFS MULTIUSER SECCOMP SECCOMP_FILTER
     FHANDLE TMPFS_XATTR TMPFS_POSIX_ACL EXT4_FS_POSIX_ACL AUTOFS_FS
@@ -65,7 +65,7 @@ verify_config() {
     MEDIA_RADIO_SUPPORT MEDIA_SDR_SUPPORT MEDIA_TEST_SUPPORT MEDIA_SUBDRV_AUTOSELECT
     DVB_CORE MEDIA_TUNER MEDIA_ATTACH CXD2880_SPI_DRV
     SLUB_TINY ZRAM_WRITEBACK ZRAM_MEMORY_TRACKING ZRAM_TRACK_ENTRY_ACTIME ZRAM_MULTI_COMP ZSWAP
-    HZ_PERIODIC HZ_1000 MODULE_FORCE_LOAD IIO_CONFIGFS SUN5I_PM HIBERNATION
+    HZ_PERIODIC HZ_1000 MODULE_FORCE_LOAD IIO_CONFIGFS HIBERNATION
   )
   for key in "${required_builtin[@]}"; do
     grep -qx "CONFIG_$key=y" "$cfg" || { echo "REQUIRED BUILT-IN MISSING: CONFIG_$key=y" >&2; return 1; }
@@ -126,7 +126,7 @@ c=linux/scripts/config
   -m BLK_DEV_LOOP -d BLK_DEV_NBD -d BLK_DEV_INTEGRITY -d SCSI -d BLK_DEV_SD \
   -m MTD -m MTD_SPI_NOR -m SPI_SUN4I -d MTD_BLOCK_RO -d SPI_SPIDEV \
   -d IIO_CONFIGFS -d MODULE_FORCE_LOAD \
-  --set-str LOCALVERSION '-pb626-eink-builtin-mbusfix-lean-rndis'
+  --set-str LOCALVERSION '-pb626'
 
 # IPv4/IPv6 nftables, stateful firewall and VPN routing. No legacy xtables,
 # IP sets, protocol-specific NAT helpers or forwarding offload.
@@ -174,9 +174,9 @@ c=linux/scripts/config
 # A13 Cortex-A8 has NEON but no ARMv8 AES/PMULL instructions. Both CE
 # providers reject this CPU at init. Keep generic AES and bit-sliced NEON.
 "$c" --file linux/.config -d CRYPTO_AES_ARM_CE -d CRYPTO_GHASH_ARM_CE
-# The verified cold-boot SPL has no Megi RTC/DRAM resume contract yet.
+# Suspend-to-RAM is part of the paired firmware; userspace retains the hardware acceptance gate.
 "$c" --file linux/.config -e SUSPEND -e PM_DEBUG -e PM_SLEEP_DEBUG \
-  -e CPU_IDLE -e CPU_IDLE_GOV_MENU -e ARM_CPUIDLE -d SUN5I_PM -d HIBERNATION
+  -e CPU_IDLE -e CPU_IDLE_GOV_MENU -e ARM_CPUIDLE -e SUN5I_PM -d HIBERNATION
 # The DT pool has priority over Kconfig; common.fragment sets the same 32 MiB.
 make -C linux olddefconfig
 verify_config linux/.config

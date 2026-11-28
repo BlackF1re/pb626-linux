@@ -7,9 +7,13 @@ cd "$repo"
 case "${1:-}" in
 prepare)
 set -euo pipefail
+pin=facc87117511221bb61410e3f92ad8579697f736
 git init -q linux
-git -C linux fetch -q --depth 1 https://github.com/Arnavion/linux.git facc87117511221bb61410e3f92ad8579697f736
-git -C linux checkout -q --detach FETCH_HEAD
+if ! git -C linux cat-file -e "$pin^{commit}" 2>/dev/null; then
+  git -C linux fetch -q --depth 1 https://github.com/Arnavion/linux.git "$pin"
+  test "$(git -C linux rev-parse FETCH_HEAD)" = "$pin"
+fi
+git -C linux checkout -q --force --detach "$pin"
 test "$(git -C linux rev-parse HEAD)" = facc87117511221bb61410e3f92ad8579697f736
 grep -q '^VERSION = 7$' linux/Makefile
 grep -q '^PATCHLEVEL = 2$' linux/Makefile
@@ -30,6 +34,11 @@ git -C linux apply --check "$repo/patches/sun4i-lradc-system-pm.patch"
 git -C linux apply "$repo/patches/sun4i-lradc-system-pm.patch"
 git -C linux apply --check "$repo/patches/axp209-boot-source.patch"
 git -C linux apply "$repo/patches/axp209-boot-source.patch"
+for patch in sun5i-pm-twi-read sun5i-pm-sram-abort sun5i-pm-prepare-rollback sun5i-pm-watchdog; do
+  git -C linux apply --check "$repo/patches/suspend/$patch.patch"
+  git -C linux apply "$repo/patches/suspend/$patch.patch"
+done
+git -C linux diff --check
 ;;
 compile)
 set -euo pipefail
@@ -43,6 +52,9 @@ make -C linux -j"$(nproc)" KCFLAGS=-Wno-error zImage modules
 mkdir -p kernel-cache module-root
 cp linux/arch/arm/boot/zImage kernel-cache/pb626-megi-zImage
 cp linux/.config kernel-cache/pb626-megi.config
+test -s linux/arch/arm/mach-sunxi/pm-sun5i.o
+cp linux/arch/arm/mach-sunxi/sleep-sun5i.o kernel-cache/
+arm-linux-gnueabihf-objdump -dr kernel-cache/sleep-sun5i.o > kernel-cache/sram-disassembly.txt
 release=$(sed -n 's/^#define UTS_RELEASE "\(.*\)"/\1/p' linux/include/generated/utsrelease.h)
 test -n "$release"
 printf '%s\n' "$release" > kernel-cache/KERNELRELEASE
@@ -58,6 +70,9 @@ echo 'Local patch: patches/a13-mbus-dma-devlink.patch' >> kernel-cache/KERNEL-SO
 echo 'Local patch: patches/sun5i-eink-runtime-pm.patch' >> kernel-cache/KERNEL-SOURCE.txt
 echo 'Local patch: patches/sun4i-lradc-system-pm.patch' >> kernel-cache/KERNEL-SOURCE.txt
 echo 'Local patch: patches/axp209-boot-source.patch' >> kernel-cache/KERNEL-SOURCE.txt
+for patch in sun5i-pm-twi-read sun5i-pm-sram-abort sun5i-pm-prepare-rollback sun5i-pm-watchdog; do
+  echo "Local patch: patches/suspend/$patch.patch" >> kernel-cache/KERNEL-SOURCE.txt
+done
 ;;
 *) echo 'Usage: build-megi-kernel.sh prepare|compile [rebuild]' >&2; exit 2;;
 esac

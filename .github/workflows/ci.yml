@@ -57,13 +57,11 @@ jobs:
           sh -n scripts/pb626-network.sh
           sh -n boot/init-megi
           for f in boot/pb626-native-{desktop,console} boot/native/init.d/* boot/native/pb626-* display/pb626-{desktop,xsession}; do sh -n "$f"; done
-          bash -n scripts/build-native-rootfs.sh
           bash -n scripts/build-debian-rootfs.sh
           bash -n scripts/build-debian-base.sh
           bash -n scripts/compile-debian-native.sh
           bash -n scripts/audit-armhf-compiler.sh
           bash -n scripts/build-megi-kernel.sh
-          bash -n scripts/build-deep-kernel.sh
           bash -n BT0-uncaged/build-from-source.sh
           bash -n BT0-uncaged/build-fel-host.sh
           python3 -m py_compile scripts/prepare-fel-inputs.py
@@ -118,13 +116,9 @@ jobs:
           tclsh tests/check-control-center.tcl display/pb626-control-center display/pb626-debian-settings display/pb626-open-document
           bash -n scripts/fel-boot.sh
           bash -n scripts/configure-megi-kernel.sh
-          bash -n scripts/build-alpine-rootfs.sh
-          bash -n scripts/build-desktop-base.sh
-          bash -n scripts/build-megi-desktop.sh
           sh -n display/pb626-settings
           bash -n display/pb626-xsession
           bash -n scripts/build-megi-variants.sh
-          bash -n scripts/assemble-megi-ram.sh
           shellcheck -s sh scripts/probe-device.sh tests/probe-smoke.sh scripts/inspect-live.sh scripts/pb626-network.sh
           shellcheck -s bash scripts/fel-boot.sh
       - name: Parse PowerShell
@@ -184,7 +178,7 @@ jobs:
         run: |
           set -euo pipefail
           {
-            for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
+            for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch patches/suspend/{sun5i-pm-twi-read,sun5i-pm-sram-abort,sun5i-pm-prepare-rollback,sun5i-pm-watchdog}.patch; do
               sed -n 's|^--- a/||p' "$patch"
             done
             printf '%s\n' include/uapi/linux/sun5i-eink.h
@@ -240,7 +234,7 @@ jobs:
           root=/tmp/pb626-pinned-kernel
           mkdir -p /tmp/pb626-uapi/linux
           cp "$root/include/uapi/linux/sun5i-eink.h" /tmp/pb626-uapi/linux/sun5i-eink.h
-          for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
+          for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch patches/suspend/{sun5i-pm-twi-read,sun5i-pm-sram-abort,sun5i-pm-prepare-rollback,sun5i-pm-watchdog}.patch; do
             git -C "$root" apply --check "$GITHUB_WORKSPACE/$patch"
             git -C "$root" apply "$GITHUB_WORKSPACE/$patch"
           done
