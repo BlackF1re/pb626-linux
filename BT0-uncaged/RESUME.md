@@ -9,9 +9,10 @@ with an unqualified resume experiment. CONFIG_SUN5I_PM remains disabled.
 
 - The exact original 24 KiB lab pb626-spl.bin identified in README.md, or
   the matching U-Boot revision, defconfig, source changes and toolchain.
-- Ideally the original private first 68 MiB dump (factory BT0/BT1, with
-  private data kept local). The provided stock filesystem archive contains
-  boot.axf and Linux images but neither the lab SPL nor raw boot0/boot1.
+- The separately supplied private first 68 MiB dump has now been inspected.
+  It contains actual factory BT0 and redundant BT1, not the lab U-Boot SPL.
+  See [factory suspend evidence](../docs/FACTORY-SUSPEND.md). Keep raw
+  dumps private; no vendor binary is included.
 - Pinned Megi kernel implementation of pm-sun5i.c; it describes RTC GP0
   (ZQ calibration), GP1 (physical cpu_resume), GP2 (SUSP magic),
   GP3 (saved DCR), and the DRAM pad-hold indication.
@@ -51,8 +52,8 @@ are independent of this missing SPL resume support.
 The historical Megi U-Boot source is now recoverable from the repository's
 own prior build recipe. See SOURCE.md. The separate prepare-source-resume.py
 modifies the pinned A13 DRAM helper before compilation. It consumes the
-RTC SUSP magic, validates address/alignment and 256 MiB single-rank DDR3
-geometry, requires retained pads, restores DCR/ZQ, avoids DDR3 RESET
+RTC SUSP magic, validates address/alignment and the exact factory-observed 256 MiB
+single-rank x16 DDR3 geometry, requires retained pads, restores DCR/ZQ, avoids DDR3 RESET
 and RAM sizing, exits self-refresh using the vendor sequence, runs the
 DQS training whose first 64 bytes Linux saves, and jumps to cpu_resume
 with MMU and D-cache off. It arms a rescue watchdog. The early Menu

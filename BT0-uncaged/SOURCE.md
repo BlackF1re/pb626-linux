@@ -10,6 +10,9 @@ identity with the privately built 24 KiB lab SPL.
 
 The stock archive README explicitly says allocated files only, not raw
 partition images. Its boot.axf and script.bin are not the primary BT0.
+The separate first-68-MiB raw dump supplied later contains genuine factory
+BT0/BT1; see [factory suspend evidence](../docs/FACTORY-SUSPEND.md).
+This vendor bootloader is not the historical lab U-Boot SPL.
 The new source build uses the historical Megi board defconfig, recreates
 the FEL entry contract in assembly, builds patched sunxi-tools, and
 links the Menu algorithm against save_boot_params rather than assuming

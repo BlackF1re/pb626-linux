@@ -23,6 +23,11 @@ software candidates, not evidence of successful physical sleep.
 
 ## Factory evidence
 
+The separately supplied first-68-MiB eMMC dump now provides actual
+factory BT0/BT1, including the retained-DRAM branch. See
+[FACTORY-SUSPEND.md](FACTORY-SUSPEND.md) for hashes, disassembly anchors,
+exact 256 MiB geometry, distinct stock/Megi ABIs, and lab patch scope.
+
 Owner-supplied 5.20.1157 archive: boot/script.bin pm_para standby_mode=1;
 pmu_para selects AXP209 on TWI0 0x34, IRQ 0. libhwconfig.so device_suspend
 (0x5b38) selects partial or mem on platform 14. The matching BSP source
@@ -31,9 +36,8 @@ partial state is not part of the modern Linux suspend ABI.
 ektf2k_elan.ko elan_ktf2k_ts_suspend (0x1f68) cancels work and calls
 SetTouchPower(0) except state 6; resume (0x1ec) calls SetTouchPower(1)
 and ektf2k_reset. epdc.ko epdc_suspend (0x434) checks pending LUT work
-and can return -EBUSY. The FEX describes multiple revisions; its
-declared 512 MiB does not establish physical RAM beyond the observed
-256 MiB. Do not copy raw factory PMIC or charger settings into Linux.
+and can return -EBUSY. The FEX advertises 512 MiB (x8); the actual BT0 header instead specifies
+one 2048 Mbit x16 DDR3 device on a 16-bit bus, 256 MiB. Do not copy raw factory PMIC or charger settings into Linux.
 
 ## Runtime and system device PM
 
@@ -134,7 +138,10 @@ USB gadget or VBUS handling. Settings power requests now explicitly honor
 logind sleep inhibitors. A display-idle timer is opt-in and cannot infer
 whether a terminal job is important: use `systemd-inhibit --what=sleep
 --mode=block <command>` for work that must not be interrupted. No automatic
-suspend is enabled by default.
+suspend is enabled by default. When qualified and explicitly enabled,
+the idle-only request also rejects charging/unknown battery state and
+active or unknown non-loopback network links. Manual suspend remains
+separate and respects inhibitors.
 
 ### Confirmed limits of the stock radio and boot inputs
 
@@ -147,9 +154,9 @@ the existence of LPS/IPS and system sleep entry points is not proof
 that stock USB runtime autosuspend was enabled. Keep radio association
 and USB rescue usable; do not force an unsupported PM state.
 
-The archive contains boot.axf, bImage, script.bin and vendor modules,
-but neither the exact private pb626-spl.bin input nor the source tree
-that produced it. Public U-Boot v2026.07 dram_sun4i.c explicitly clears
+The filesystem archive contains boot.axf, bImage, script.bin and vendor
+modules; the separate raw eMMC dump contains factory BT0/BT1. Neither
+is the private U-Boot lab SPL or its exact dirty source tree. Public U-Boot v2026.07 dram_sun4i.c explicitly clears
 SDR_DPCR and performs cold initialization, discarding retained data.
 It cannot substitute for a resume-aware SPL. A new source-reproducible
 SPL needs board-specific non-destructive training, resume handoff and
