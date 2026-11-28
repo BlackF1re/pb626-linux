@@ -1,4 +1,4 @@
-Full qualification request: final runtime optimization candidates
+Full qualification request: exact RGB565 channel expansion and release compiler parity
 Source branch: optimization/debian-runtime
-Source head before request: 1df507f3e70a212f65a12824d81bb82e1c53dbb4
-Scope: full paired firmware and recovery graph, native 4 KiB ELF layout, Cortex-A8 crypto policy, ARM Matchbox X11 smoke, packed transitions and capture regressions, isolated kernel compiler candidates.
+Source head before request: 4b14229fb6bcbafcc409a41251a044ee7e6df80b
+Scope: paired firmware and recovery graph, hardened Matchbox ARM X11 smoke, exact RGB565 regressions and release compiler profiles.
