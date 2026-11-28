@@ -1,4 +1,4 @@
-name: PocketBook 626 fast restore
+name: Recovery tests
 
 on:
   push:
@@ -33,11 +33,12 @@ permissions:
 
 jobs:
   package:
+    name: Backup / restore
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Build ARM recovery helper
+      - name: Build ARM scanner
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -45,7 +46,7 @@ jobs:
             mmdebstrap debian-archive-keyring cpio device-tree-compiler
           arm-linux-gnueabihf-gcc -O2 -Wall -Wextra -Werror -static -s \
             scripts/restore/pb626-restore-scan.c -o pb626-restore-scan
-      - name: Verify scans and full readback on a temporary image
+      - name: Test scans and readback
         run: |
           set -euo pipefail
           dd if=/dev/zero of=sample.img bs=4M count=1 status=none
@@ -80,7 +81,7 @@ jobs:
           truncate -s 7818182656 sample.img
           qemu-arm ./pb626-restore-scan verify sample.img 1864 | tail -n1 >actual-large
           printf 'SHA256 %s\n' "$(sha256sum sample.img | cut -d ' ' -f1)" | diff -u - actual-large
-      - name: Test binary transport and parse launcher
+      - name: Test transport and launchers
         run: |
           set -euo pipefail
           gcc -O2 -Wall -Wextra -Werror scripts/restore/pb626-restore-scan.c -o native-scanner
@@ -103,7 +104,7 @@ jobs:
               "$PWD/scripts/restore/Backup-PB626Fast.ps1", [ref]$tokens, [ref]$errors)
             if ($errors) { $errors; exit 1 }
           '
-      - name: Build and inspect minimal Debian recovery (fixture kernel, never publish)
+      - name: Test recovery fixture
         run: |
           set -euo pipefail
           work=$(mktemp -d)
@@ -134,7 +135,7 @@ jobs:
           for applet in find sort xargs; do grep -Eq "^([.]/)?bin/$applet$" "$work/files"; done
           if grep -Eq '(^|/)(Xorg|systemd|modules|apt-get)$' "$work/files"; then exit 1; fi
           rm -rf "$work"
-      - name: Package fast restore
+      - name: Package recovery tools
         run: |
           mkdir dist
           cp scripts/restore/{Backup-PB626Fast.ps1,Restore-PB626Fast.ps1,pb626-restore-fast.sh,README.md} dist/

@@ -1,4 +1,4 @@
-name: Rebuild original FEL host inputs
+name: FEL tools
 on:
   workflow_call:
   workflow_dispatch:
@@ -6,12 +6,12 @@ permissions:
   contents: read
 jobs:
   fel-host:
-    name: Rebuild recovered FEL host inputs (independent of SPL candidates)
+    name: Host tools
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Install and fingerprint host build dependencies
+      - name: Install and fingerprint tools
         id: tools
         run: |
           sudo apt-get update
@@ -26,7 +26,7 @@ jobs:
       - name: Compile on cache miss
         if: steps.host-cache.outputs.cache-hit != 'true'
         run: bash BT0-uncaged/build-fel-host.sh fel-host-cache
-      - name: Validate cached or compiled host tools and stamp current run
+      - name: Verify and stamp tools
         run: |
           (cd fel-host-cache && sha256sum -c SHA256SUMS)
           cp -a fel-host-cache fel-host
@@ -39,7 +39,7 @@ jobs:
           name: pb626-fel-host-tools
           path: fel-host/
           if-no-files-found: error
-      - name: Verify historical upstream SPL availability (no binary publication)
+      - name: Verify upstream SPL
         run: |
           python3 scripts/prepare-fel-inputs.py --host fel-host --output "$RUNNER_TEMP/verified-fel"
           rm -rf "$RUNNER_TEMP/verified-fel"

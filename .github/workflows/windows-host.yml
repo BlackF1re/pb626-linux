@@ -1,4 +1,4 @@
-name: Native Windows FEL and portable installer tools
+name: Windows tools
 on:
   workflow_call:
   workflow_dispatch:
@@ -6,6 +6,7 @@ permissions:
   contents: read
 jobs:
   host:
+    name: Build
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
@@ -22,7 +23,7 @@ jobs:
             mingw-w64-ucrt-x86_64-dtc
             mingw-w64-ucrt-x86_64-zlib
             mingw-w64-ucrt-x86_64-openssl
-      - name: Fingerprint native dependencies
+      - name: Fingerprint toolchain
         id: packages
         shell: msys2 {0}
         run: |
@@ -34,11 +35,11 @@ jobs:
         with:
           path: windows-host
           key: pb626-windows-host-v1-${{ steps.packages.outputs.fingerprint }}-${{ hashFiles('scripts/windows/build-host.sh', 'patches/sunxi-fel-keep-mmu-off.patch', '.github/workflows/windows-host.yml') }}
-      - name: Compile native Windows FEL
+      - name: Build FEL
         if: steps.host-cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
         run: bash scripts/windows/build-host.sh windows-host
-      - name: Add portable CPython (hash pinned to python.org)
+      - name: Add pinned Python
         if: steps.host-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: |
@@ -51,14 +52,14 @@ jobs:
           # not in a machine-wide Python or a user site-packages directory.
           Add-Content -LiteralPath windows-host/python/python313._pth -Value '..\..'
           Copy-Item windows-toolchain.txt windows-host/toolchain.txt
-      - name: Generate new host manifest
+      - name: Hash tools
         if: steps.host-cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
         run: |
           set -euo pipefail
           cd windows-host
           find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS
-      - name: Verify host manifest (also on cache hit)
+      - name: Verify tools
         shell: msys2 {0}
         run: |
           set -euo pipefail
@@ -66,7 +67,7 @@ jobs:
           cd windows-host
           test -s SHA256SUMS
           sha256sum -c SHA256SUMS
-      - name: Run with ordinary Windows PATH (no MSYS2/WSL)
+      - name: Test native tools
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'

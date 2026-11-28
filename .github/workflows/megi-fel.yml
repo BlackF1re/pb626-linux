@@ -1,4 +1,4 @@
-name: Build native Linux and FEL recovery
+name: Firmware
 
 # Single full firmware pipeline. Main builds automatically; feature branches
 # use the explicit qualification request or Run workflow. All stage artifacts
@@ -48,23 +48,25 @@ permissions:
 
 jobs:
   host-checks:
+    name: CI
     uses: ./.github/workflows/ci.yml
   restore-checks:
+    name: Recovery tests
     uses: ./.github/workflows/restore.yml
   alpine-base:
     if: ${{ !inputs.debian_only }}
-    name: Alpine ARMv7 base (independent cache)
+    name: Alpine base
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Restore Alpine base filesystem cache
+      - name: Restore Alpine cache
         id: cache
         uses: actions/cache@v4
         with:
           path: alpine-cache/alpine-rootfs.tar.gz
           key: pb626-alpine-armv7-v3.24.4-${{ runner.os }}-${{ hashFiles('scripts/build-alpine-rootfs.sh') }}
-      - name: Install emulator for Alpine setup on cache miss
+      - name: Install emulator
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           # Ignore only the optional Microsoft feed; firmware build dependencies come from Ubuntu.
@@ -74,7 +76,7 @@ jobs:
           fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-user-static
-      - name: Assemble Alpine base on cache miss
+      - name: Build Alpine base
         if: steps.cache.outputs.cache-hit != 'true'
         run: bash scripts/build-alpine-rootfs.sh
       - name: Verify Alpine archive
@@ -92,7 +94,7 @@ jobs:
           retention-days: 1
 
   kernel:
-    name: Megi kernel + DTBs (prebuilt cache)
+    name: Megi kernel
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -108,14 +110,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             git gcc-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex \
             libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod
-      - name: Validate ARM static-link toolchain before downloading the kernel
+      - name: Check ARM static linking
         run: |
           set -euo pipefail
           printf 'int main(void) { return 0; }\n' |
             arm-linux-gnueabihf-gcc -x c -static - -o /tmp/pb626-toolchain-smoke
           test -s /tmp/pb626-toolchain-smoke
           file /tmp/pb626-toolchain-smoke | grep -q 'ARM'
-      - name: Fingerprint the complete kernel build toolchain
+      - name: Fingerprint toolchain
         id: compiler
         run: |
           set -euo pipefail
@@ -133,23 +135,23 @@ jobs:
           )
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
           echo "Toolchain fingerprint: $fingerprint"
-      - name: Restore complete verified kernel/DTB/UAPI stage
+      - name: Restore full kernel cache
         id: complete
         uses: actions/cache@v4
         with:
           path: kernel-complete
           key: pb626-megi-complete-v1-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/build-megi-kernel.sh', 'scripts/configure-megi-kernel.sh', 'board/**', 'scripts/build-megi-variants.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch') }}
-      - name: Restore prebuilt kernel and modules cache
+      - name: Restore kernel cache
         if: steps.complete.outputs.cache-hit != 'true'
         id: cache
         uses: actions/cache@v4
         with:
           path: kernel-cache
           key: pb626-megi-kernel-v3-facc87117511221-${{ runner.os }}-${{ runner.arch }}-tool${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/build-megi-kernel.sh', 'scripts/configure-megi-kernel.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch') }}
-      - name: Fetch pinned Megi 7.2 source and verify A13 drivers
+      - name: Fetch and verify kernel
         if: steps.complete.outputs.cache-hit != 'true'
         run: bash scripts/build-megi-kernel.sh prepare
-      - name: Verify cached Kconfig reproducibility
+      - name: Check Kconfig
         if: steps.complete.outputs.cache-hit != 'true'
         id: kconfig
         run: |
@@ -167,10 +169,10 @@ jobs:
             diff -u kernel-cache/pb626-megi.config linux/.config || true
             echo "rebuild=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Compile zImage and all modules on cache miss or config drift
+      - name: Build kernel and modules
         if: steps.complete.outputs.cache-hit != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.kconfig.outputs.rebuild == 'true')
         run: bash scripts/build-megi-kernel.sh compile "${{ steps.kconfig.outputs.rebuild }}"
-      - name: Check cached or newly compiled zImage, modules and USB contract
+      - name: Verify kernel and USB
         if: steps.complete.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -204,7 +206,7 @@ jobs:
         with:
           path: dtb-stage
           key: pb626-dtbs-v1-facc87117511221-${{ runner.os }}-${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('scripts/build-megi-kernel.sh', 'kernel-cache/pb626-megi.config', 'board/**', 'scripts/build-megi-variants.sh', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch') }}
-      - name: Build current Device Trees on cache miss
+      - name: Build DTBs
         if: steps.complete.outputs.cache-hit != 'true' && steps.dtbs.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -222,7 +224,7 @@ jobs:
       - name: Verify DTB cache
         if: steps.complete.outputs.cache-hit != 'true'
         run: (cd dtb-stage && sha256sum -c SHA256SUMS)
-      - name: Assemble portable kernel-stage artifact
+      - name: Stage kernel
         if: steps.complete.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -237,12 +239,12 @@ jobs:
             diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") || true
             exit 1
           fi
-      - name: Cache verified kernel/DTBs/UAPI without checkout identity or RAM worker
+      - name: Save kernel stage
         if: steps.complete.outputs.cache-hit != 'true'
         run: |
           cp -a kernel-stage kernel-complete
           (cd kernel-complete && find . -type f ! -path ./SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum > SHA256SUMS)
-      - name: Verify and reuse complete cache without fetching Linux source
+      - name: Verify kernel cache
         if: steps.complete.outputs.cache-hit == 'true'
         run: |
           set -euo pipefail
@@ -250,7 +252,7 @@ jobs:
           bash scripts/configure-megi-kernel.sh --check kernel-complete/pb626-megi.config
           cp -a kernel-complete kernel-stage
           rm kernel-stage/SHA256SUMS
-      - name: Report resolved kernel optimization and compatibility options
+      - name: Report kernel config
         run: |
           set -euo pipefail
           cfg=kernel-stage/pb626-megi.config
@@ -261,14 +263,14 @@ jobs:
           stat -c '%s bytes %n' kernel-stage/pb626-megi-zImage kernel-stage/kernel-modules.tar.gz
           echo "Installed loadable modules:"
           tar -tzf kernel-stage/kernel-modules.tar.gz | awk '/[.]ko([.](gz|xz|zst))?$/ {n++} END {print n+0}'
-      - name: Restore static RAM E Ink worker
+      - name: Restore E Ink worker
         if: ${{ !inputs.debian_only }}
         id: ram-worker
         uses: actions/cache@v4
         with:
           path: ram-worker-cache
           key: pb626-ram-worker-v1-${{ runner.os }}-${{ steps.compiler.outputs.fingerprint }}-${{ hashFiles('kernel-stage/uapi/linux/sun5i-eink.h', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/test-pb626-epd.c') }}
-      - name: Test and compile the RAM E Ink utility on cache miss
+      - name: Test and build E Ink worker
         if: ${{ !inputs.debian_only && steps.ram-worker.outputs.cache-hit != 'true' }}
         run: |
           set -euo pipefail
@@ -279,14 +281,14 @@ jobs:
           arm-linux-gnueabihf-gcc -O3 -Wall -Wextra -Werror -static -I kernel-stage/uapi \
             display/pb626-epd.c -o ram-worker-cache/pb626-epd
           (cd ram-worker-cache && sha256sum pb626-epd > SHA256SUMS)
-      - name: Verify and stage the RAM E Ink utility
+      - name: Stage E Ink worker
         if: ${{ !inputs.debian_only }}
         run: |
           set -euo pipefail
           (cd ram-worker-cache && sha256sum -c SHA256SUMS)
           cp ram-worker-cache/pb626-epd kernel-stage/
           test -s kernel-stage/pb626-epd
-      - name: Stamp and hash paired kernel stage
+      - name: Stamp kernel stage
         run: |
           git rev-parse HEAD > kernel-stage/BUILD-COMMIT
           (cd kernel-stage && find . -type f ! -path ./SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum > SHA256SUMS)
@@ -299,7 +301,7 @@ jobs:
           retention-days: 14
 
   bundle:
-    name: Final RAM bundle (no kernel rebuild)
+    name: Alpine RAM
     runs-on: ubuntu-24.04
     needs: [kernel, alpine-base]
     timeout-minutes: 20
@@ -309,7 +311,7 @@ jobs:
         with:
           name: pb626-kernel-stage
           path: kernel-stage
-      - name: Verify paired kernel stage
+      - name: Verify kernel stage
         run: |
           test "$(cat kernel-stage/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
           (cd kernel-stage && sha256sum -c SHA256SUMS)
@@ -341,13 +343,13 @@ jobs:
             sleep 5
           done
           exit 1
-      - name: Use the verified ARM E Ink utility from the kernel stage
+      - name: Stage E Ink worker
         run: |
           set -euo pipefail
           test -s kernel-stage/pb626-epd
           cp kernel-stage/pb626-epd pb626-epd
           chmod +x pb626-epd
-      - name: Assemble full Alpine RAM image from independent stages
+      - name: Build Alpine RAM
         run: bash scripts/assemble-megi-ram.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -357,7 +359,7 @@ jobs:
           retention-days: 14
 
   desktop:
-    name: Paired RAM desktop and native firmware
+    name: Alpine desktop
     needs: [bundle, alpine-base]
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -384,23 +386,23 @@ jobs:
         id: desktop-inputs
         run: |
           echo "alpine=$(sha256sum alpine-base/alpine-rootfs.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: Cache distribution desktop base (no kernel or project runtime)
+      - name: Cache desktop base
         id: cache
         uses: actions/cache@v4
         with:
           path: desktop-cache
           key: pb626-desktop-base-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.desktop-inputs.outputs.alpine }}-${{ hashFiles('scripts/build-desktop-base.sh', 'display/matchbox-keyboard-eink.patch', 'display/matchbox-panel-power-supply.patch') }}
-      - name: Build Matchbox and Xorg on cache miss
+      - name: Build Matchbox and Xorg
         if: steps.cache.outputs.cache-hit != 'true'
         run: bash scripts/build-desktop-base.sh alpine-base/alpine-rootfs.tar.gz desktop-cache
       - name: Verify desktop base
         run: (cd desktop-cache && sha256sum -c SHA256SUMS)
-      - name: Cache compiled display bridge and native worker
+      - name: Cache display binaries
         uses: actions/cache@v4
         with:
           path: bridge-cache
           key: pb626-display-binaries-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop-cache/SHA256SUMS', 'scripts/build-megi-desktop.sh', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/pb626-x11-epd.c', 'display/pb626-sleep.h', 'display/pb626-ddx-fb.h', 'display/test-pb626-*.c', 'fel-bundle/uapi/linux/sun5i-eink.h') }}
-      - name: Assemble paired firmware from current FEL bundle and cached desktop
+      - name: Build Alpine desktop
         run: bash scripts/build-megi-desktop.sh fel-bundle desktop-cache bridge-cache
       - uses: actions/upload-artifact@v4
         with:
@@ -414,14 +416,14 @@ jobs:
           if-no-files-found: error
 
   debian-base:
-    name: Debian runtime and compiler chroots (independent cache)
+    name: Debian base
     outputs:
       manifest: ${{ steps.base-manifest.outputs.sha }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Cache epoch (weekly Debian security refresh)
+      - name: Weekly cache epoch
         id: epoch
         run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
@@ -429,7 +431,7 @@ jobs:
         with:
           path: debian-base
           key: pb626-debian-base-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.epoch.outputs.week }}-${{ hashFiles('scripts/build-debian-base.sh') }}
-      - name: Install bootstrap tools on miss
+      - name: Install bootstrap tools
         if: steps.base.outputs.cache-hit != 'true'
         run: |
           # Ignore only the optional Microsoft feed; firmware build dependencies come from Ubuntu.
@@ -441,7 +443,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends mmdebstrap debian-archive-keyring qemu-user-static binfmt-support arch-test
           sudo update-binfmts --enable qemu-arm
           arch-test armhf
-      - name: Build base on cache miss
+      - name: Build Debian base
         if: steps.base.outputs.cache-hit != 'true'
         run: bash scripts/build-debian-base.sh debian-base
       - name: Check base integrity
@@ -458,14 +460,16 @@ jobs:
           retention-days: 1
 
   bootloader:
+    name: BT0
     uses: ./.github/workflows/source-bootloader.yml
     secrets: inherit
 
   fel-host:
+    name: FEL tools
     uses: ./.github/workflows/fel-host.yml
 
   diagnostics:
-    name: Terminal diagnostics (standalone)
+    name: Diagnostics
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -496,7 +500,7 @@ jobs:
           retention-days: 14
 
   debian-native:
-    name: Debian 13 armhf native firmware candidate
+    name: Debian rootfs
     needs: [kernel, debian-base]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -506,7 +510,7 @@ jobs:
         with:
           name: pb626-kernel-stage
           path: kernel-stage
-      - name: Verify paired kernel stage
+      - name: Verify kernel stage
         run: |
           test "$(cat kernel-stage/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
           (cd kernel-stage && sha256sum -c SHA256SUMS)
@@ -514,26 +518,26 @@ jobs:
         env:
           BASE_SHA: ${{ needs.debian-base.outputs.manifest }}
         run: test "${#BASE_SHA}" = 64
-      - name: Restore complete validated native content
+      - name: Restore native cache
         id: native-content
         uses: actions/cache@v4
         with:
           path: debian-dist
           key: pb626-native-content-v2-${{ runner.os }}-${{ runner.arch }}-${{ needs.debian-base.outputs.manifest }}-${{ hashFiles('kernel-stage/pb626-megi-zImage', 'kernel-stage/pb626-elan-emmc-native.dtb', 'kernel-stage/kernel-modules.tar.gz', 'kernel-stage/pb626-megi.config', 'kernel-stage/KERNELRELEASE', 'kernel-stage/KERNEL-SOURCE.txt', 'kernel-stage/uapi/linux/sun5i-eink.h', 'scripts/build-debian-rootfs.sh', 'scripts/build-matchbox-themes.py', 'scripts/build-direct-image.sh', 'scripts/build-rootfs-bmap.py', 'BT0-uncaged/early-menu.S', 'BT0-uncaged/test_hook.py', 'scripts/compile-debian-native.sh', 'scripts/configure-megi-kernel.sh', 'scripts/profile-memory.sh', 'scripts/inspect-live.sh', 'scripts/probe-device.sh', 'boot/debian/**', 'boot/native/**', 'boot/pb626-native-desktop', 'display/**', 'diagnostics/pb626-diagnostics', 'diagnostics/pb626-diag-clock.c', 'BT0-uncaged/pack-kernel.py', 'BT0-uncaged/kernel-entry.S', 'tests/check-control-center.tcl', 'LICENSE') }}
-      - name: Download Debian base on cache miss
+      - name: Download Debian base
         if: steps.native-content.outputs.cache-hit != 'true'
         uses: actions/download-artifact@v4
         with:
           name: pb626-debian-base-stage
           path: debian-base
-      - name: Verify Debian base on cache miss
+      - name: Verify Debian base
         if: steps.native-content.outputs.cache-hit != 'true'
         env:
           BASE_SHA: ${{ needs.debian-base.outputs.manifest }}
         run: |
           test "$(sha256sum debian-base/SHA256SUMS | cut -d' ' -f1)" = "$BASE_SHA"
           (cd debian-base && sha256sum -c SHA256SUMS)
-      - name: Install bootstrap and ARM execution tools
+      - name: Install build tools
         if: steps.native-content.outputs.cache-hit != 'true'
         run: |
           # Ignore only the optional Microsoft feed; firmware build dependencies come from Ubuntu.
@@ -554,10 +558,10 @@ jobs:
         with:
           path: debian-compiled-cache
           key: pb626-debian-compiled-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('debian-base/SHA256SUMS', 'kernel-stage/uapi/linux/sun5i-eink.h', 'scripts/compile-debian-native.sh', 'display/pb626-epd.c', 'display/pb626-epd.h', 'display/pb626-x11-epd.c', 'display/pb626-sleep.h', 'display/pb626-ddx-fb.h', 'display/test-pb626-epd.c', 'display/test-pb626-x11-epd.c', 'display/test-matchbox-clients.sh', 'display/pb626-taskbar.c', 'display/test-pb626-taskbar.c', 'display/keyboard-us.xml', 'display/matchbox-keyboard-eink.patch', 'display/matchbox-panel-power-supply.patch', 'display/xorg-dummy-pb626-shared.patch', 'boot/debian/pb626-charge.c') }}
-      - name: Build and verify Debian rootfs and paired firmware
+      - name: Build Debian firmware
         if: steps.native-content.outputs.cache-hit != 'true'
         run: bash scripts/build-debian-rootfs.sh kernel-stage debian-dist debian-base debian-compiled-cache
-      - name: Verify cached content and bind to current assembly
+      - name: Verify and stamp firmware
         run: |
           set -euo pipefail
           (cd debian-dist && sha256sum -c SHA256SUMS)
@@ -576,7 +580,7 @@ jobs:
           retention-days: 14
 
   recovery:
-    name: Minimal Debian recovery (parallel with native rootfs)
+    name: RAM recovery
     needs: [kernel]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -586,11 +590,11 @@ jobs:
         with:
           name: pb626-kernel-stage
           path: kernel-stage
-      - name: Verify paired kernel stage
+      - name: Verify kernel stage
         run: |
           test "$(cat kernel-stage/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
           (cd kernel-stage && sha256sum -c SHA256SUMS)
-      - name: Install Debian recovery build tools
+      - name: Install recovery tools
         run: |
           # Ignore only the optional Microsoft feed; firmware build dependencies come from Ubuntu.
           mapfile -t blocked_sources < <(grep -RIl -- 'packages.microsoft.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null || true)
@@ -600,7 +604,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mmdebstrap debian-archive-keyring \
             gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user cpio device-tree-compiler
-      - name: Fingerprint recovery payload inputs
+      - name: Fingerprint recovery
         id: recovery-tools
         run: |
           fingerprint=$(dpkg-query -W -f='${Version}\n' gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross | sha256sum | cut -c1-20)
@@ -611,7 +615,7 @@ jobs:
         with:
           path: recovery-payload
           key: pb626-recovery-payload-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.recovery-tools.outputs.week }}-${{ steps.recovery-tools.outputs.fingerprint }}-${{ hashFiles('scripts/build-debian-recovery.sh', 'scripts/restore/pb626-restore-scan.c') }}
-      - name: Build the minimal recovery
+      - name: Build recovery
         run: bash scripts/build-debian-recovery.sh kernel-stage flash-kit recovery-payload
       - uses: actions/upload-artifact@v4
         with:
@@ -622,12 +626,12 @@ jobs:
           retention-days: 14
 
   windows-powershell51:
-    name: Windows PowerShell 5.1 installer smoke test
+    name: PowerShell 5.1
     runs-on: windows-2022
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Parse and exercise installer in Windows PowerShell 5.1
+      - name: Test PowerShell 5.1
         shell: powershell
         run: |
           if ($PSVersionTable.PSVersion.Major -ne 5) {
@@ -636,7 +640,7 @@ jobs:
           .\tests\test-powershell51.ps1
 
   flash-kit:
-    name: Assemble same-run flash kit (no compilation)
+    name: Linux flash kit
     needs: [debian-native, recovery, diagnostics, fel-host, bootloader, host-checks, restore-checks, windows-powershell51]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -662,7 +666,7 @@ jobs:
         with:
           name: pb626-spl-emulation-report
           path: flash-kit/qualification
-      - name: Assemble paired installation, backup and restore kit
+      - name: Assemble Linux kit
         run: |
           set -euo pipefail
           test "$(cat native-stage/BUILD-COMMIT)" = "$(cat flash-kit/recovery/BUILD-COMMIT)"
@@ -690,10 +694,11 @@ jobs:
           retention-days: 14
 
   windows-host:
+    name: Windows tools
     uses: ./.github/workflows/windows-host.yml
 
   windows-kit:
-    name: Assemble native Windows flash bundle
+    name: Windows kit
     needs: [debian-native, recovery, fel-host, bootloader, windows-host, host-checks, restore-checks, windows-powershell51]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -736,7 +741,7 @@ jobs:
           retention-days: 14
 
   windows-kit-check:
-    name: Verify complete Windows bundle using Windows PowerShell 5.1
+    name: Windows kit test
     needs: [windows-kit]
     runs-on: windows-2022
     timeout-minutes: 15
@@ -746,7 +751,7 @@ jobs:
         with:
           name: pb626-windows-flash-kit
           path: windows-kit
-      - name: Offline package and native command checks
+      - name: Test Windows kit
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -761,35 +766,35 @@ jobs:
 
   deep-resume-lab:
     if: ${{ inputs.include_deep }}
-    name: Deep resume isolated kernel and SRAM model (not for flash)
+    name: Deep kernel + SRAM
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - name: Install pinned-tree build prerequisites
+      - name: Install build tools
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends git gcc-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod
-      - name: Fingerprint deep kernel build tools
+      - name: Fingerprint toolchain
         id: tools
         run: |
           set -euo pipefail
           dpkg-query -W gcc-arm-linux-gnueabihf gcc-13-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod | tee /tmp/deep-toolchain
           echo "fingerprint=$(sha256sum /tmp/deep-toolchain | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: Restore isolated deep kernel cache
+      - name: Restore deep cache
         id: deep
         uses: actions/cache/restore@v4
         with:
           path: deep-resume-lab
           key: pb626-deep-kernel-v1-facc87117511221-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('scripts/build-megi-kernel.sh', 'scripts/configure-megi-kernel.sh', 'scripts/build-megi-variants.sh', 'board/megi/**', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch', 'patches/lab/**', 'scripts/build-deep-kernel.sh') }}
-      - name: Compile and link isolated deep kernel
+      - name: Build deep kernel
         if: steps.deep.outputs.cache-hit != 'true'
         env:
           ARCH: arm
           CROSS_COMPILE: arm-linux-gnueabihf-
         run: bash scripts/build-deep-kernel.sh
-      - name: Verify isolated kernel artifacts
+      - name: Verify deep kernel
         run: |
           set -euo pipefail
           (cd deep-resume-lab && sha256sum -c SHA256SUMS)
@@ -809,18 +814,18 @@ jobs:
           cache: pip
           cache-dependency-path: BT0-uncaged/emulator/requirements.txt
       - run: python -m pip install -r BT0-uncaged/emulator/requirements.txt
-      - name: Execute actual SRAM object with current fault tests (also on cache hit)
+      - name: Test SRAM faults
         run: |
           set -euo pipefail
           arm-linux-gnueabihf-objcopy -O binary -j .text deep-resume-lab/sleep-sun5i.o /tmp/deep-sram.bin
           python3 tests/test-deep-sram.py deep-resume-lab/sleep-sun5i.o /tmp/deep-sram.bin
-      - name: Cache verified isolated kernel, not test result
+      - name: Save deep cache
         if: steps.deep.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: deep-resume-lab
           key: ${{ steps.deep.outputs.cache-primary-key }}
-      - name: Record qualification limits
+      - name: Stamp deep stage
         run: |
           printf '%s\n' 'Linked laboratory kernel and SRAM control-flow model only. No board resume qualification, not for ordinary flash.' > deep-resume-lab/STATUS
           git rev-parse HEAD >deep-resume-lab/BUILD-COMMIT
@@ -832,7 +837,7 @@ jobs:
           if-no-files-found: error
 
   windows-deep-kit:
-    name: Pair experimental deep kernel and rootfs for explicit Windows lab flashing
+    name: Deep Windows kit
     needs: [debian-native, deep-resume-lab, recovery, windows-host, fel-host, bootloader, host-checks, restore-checks, windows-powershell51]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -880,7 +885,7 @@ jobs:
           key: pb626-deep-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native-stage/pb626-native-rootfs.tar.gz','native-stage/KERNELRELEASE','deep-resume-lab/kernel-modules.tar.gz','deep-resume-lab/KERNELRELEASE','deep-resume-lab/zImage','deep-resume-lab/pb626-elan-emmc-native.dtb','deep-resume-lab/experimental.config','scripts/windows/build-deep-native.sh','scripts/build-direct-image.sh','scripts/build-rootfs-bmap.py','BT0-uncaged/pack-kernel.py','BT0-uncaged/kernel-entry.S','BT0-uncaged/early-menu.S') }}
       - if: steps.deep-native.outputs.cache-hit != 'true'
         run: bash scripts/windows/build-deep-native.sh deep-native
-      - name: Assemble and authorize only the exact same-run deep pair
+      - name: Assemble deep kit
         run: |
           set -euo pipefail
           (cd deep-native && sha256sum -c SHA256SUMS)
@@ -900,7 +905,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   windows-deep-check:
-    name: Verify complete deep Windows bundle using PowerShell 5.1
+    name: Deep kit test
     needs: [windows-deep-kit]
     runs-on: windows-2022
     timeout-minutes: 15
@@ -917,13 +922,13 @@ jobs:
           if ((Get-Content -Raw .\windows-deep-kit\PROFILE).Trim() -ne 'deep-lab') { throw 'Wrong deep profile' }
 
   qualification:
-    name: All selected builds and tests passed
+    name: Qualification
     needs: [host-checks, restore-checks, windows-powershell51, alpine-base, kernel, bundle, desktop, debian-base, bootloader, fel-host, diagnostics, debian-native, recovery, flash-kit, windows-host, windows-kit, windows-kit-check, deep-resume-lab, windows-deep-kit, windows-deep-check]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every selected job and record build provenance
+      - name: Verify results
         env:
           RESULTS: ${{ toJSON(needs) }}
           DEBIAN_ONLY: ${{ inputs.debian_only && 'true' || 'false' }}

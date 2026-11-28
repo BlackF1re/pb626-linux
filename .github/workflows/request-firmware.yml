@@ -1,4 +1,4 @@
-name: Full firmware qualification (pre-merge)
+name: Firmware request
 
 # No ordinary code commit triggers this expensive build.
 on:
@@ -26,6 +26,7 @@ permissions:
 
 jobs:
   full:
+    name: Build
     uses: ./.github/workflows/megi-fel.yml
     secrets: inherit
     with:
@@ -35,7 +36,7 @@ jobs:
   # Experimental builds never feed the production firmware or its caches.
   kernel-size-audit:
     if: ${{ inputs.kernel_audit }}
-    name: Kernel compiler experiment (${{ matrix.profile }})
+    name: 'Kernel audit: ${{ matrix.profile }}'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     continue-on-error: ${{ matrix.profile != 'baseline' }}
@@ -45,12 +46,12 @@ jobs:
         profile: [baseline, thumb2, dead-code, cortex-a8-tune]
     steps:
       - uses: actions/checkout@v4
-      - name: Install pinned-tree build prerequisites
+      - name: Install build tools
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends git gcc-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod
-      - name: Resolve and compile candidate
+      - name: Build candidate
         env:
           PROFILE: ${{ matrix.profile }}
           ARCH: arm
@@ -87,7 +88,7 @@ jobs:
             stat -c '%s bytes %n' linux/arch/arm/boot/zImage
             find linux -type f -name '*.ko' -printf '%s\n' | awk '{s+=$1;n++} END {print n, "modules,", s, "unstripped bytes"}'
           } | tee kernel-audit/sizes.txt
-      - name: Upload isolated candidate report
+      - name: Upload audit
         if: always()
         uses: actions/upload-artifact@v4
         with:

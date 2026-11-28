@@ -1,4 +1,4 @@
-name: Source-built PocketBook bootloader candidates
+name: Bootloader
 on:
   workflow_dispatch:
   workflow_call:
@@ -9,6 +9,7 @@ permissions:
   contents: read
 jobs:
   source:
+    name: Build SPL
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -34,10 +35,10 @@ jobs:
         with:
           path: source-boot-candidates
           key: pb626-source-spl-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/build-from-source.sh', 'BT0-uncaged/prepare-source-hook.py', 'BT0-uncaged/prepare-source-led.py', 'BT0-uncaged/pb626-led.c', 'BT0-uncaged/pb626-led.h', 'BT0-uncaged/led-morse.h', 'BT0-uncaged/prepare-source-resume.py', 'BT0-uncaged/pb626-resume-contract.h', 'BT0-uncaged/early-menu.S', 'BT0-uncaged/fel-entry.S', 'patches/sunxi-fel-keep-mmu-off.patch') }}
-      - name: Build independently from pinned source
+      - name: Build candidates
         if: steps.cache.outputs.cache-hit != 'true'
         run: bash BT0-uncaged/build-from-source.sh source-boot-candidates
-      - name: Verify both candidate manifests
+      - name: Verify candidates
         run: |
           (cd source-boot-candidates && sha256sum -c SHA256SUMS)
           (cd source-boot-candidates/deep-resume && sha256sum -c SHA256SUMS)
@@ -48,7 +49,7 @@ jobs:
           if-no-files-found: error
 
   emulate:
-    name: Cortex-A8 differential boot contract (not full board)
+    name: Cortex-A8 model
     needs: source
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -64,11 +65,11 @@ jobs:
           cache: pip
           cache-dependency-path: BT0-uncaged/emulator/requirements.txt
       - run: python -m pip install -r BT0-uncaged/emulator/requirements.txt
-      - name: Exhaustive actual-binary Menu regression
+      - name: Test Menu hook
         run: |
           python BT0-uncaged/test_hook.py --candidate source-boot-candidates/BT0-uncaged-source-candidate.bin source-boot-candidates/native-all-symbols.txt
           python BT0-uncaged/test_hook.py --candidate source-boot-candidates/deep-resume/BT0-uncaged-deep-candidate.bin source-boot-candidates/deep-resume/all-symbols.txt
-      - name: Execute reference and candidates on the same Cortex-A8 model
+      - name: Compare SPL binaries
         env:
           PB626_REFERENCE_SPL_B64: ${{ secrets.PB626_REFERENCE_SPL_B64 }}
         run: |
