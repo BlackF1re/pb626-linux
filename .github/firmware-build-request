@@ -1,4 +1,4 @@
-Full qualification request: exact RGB565 channel expansion and release compiler parity
+Full qualification request: exact-first E Ink scheduling and runtime optimizations
 Source branch: optimization/debian-runtime
-Source head before request: 4b14229fb6bcbafcc409a41251a044ee7e6df80b
-Scope: paired firmware and recovery graph, hardened Matchbox ARM X11 smoke, exact RGB565 regressions and release compiler profiles.
+Source head before request: fdb560b6fbebe5cf1ad7c8f1e45774eaeaf099e6
+Scope: production paired firmware and recovery, host and ARM rendering regressions, exact preview, ghosting budget, bounded XDamage, combined cleanup, sparse waveform planning. Non-production compiler experiments are opt-in.
