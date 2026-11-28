@@ -944,6 +944,27 @@ struct capture_stats {
 	unsigned int pixels, changed;
 };
 
+/* Map the first logical pixel of a row and its unit step once.
+ * Keep the dither phase and tile indexes in physical panel coordinates. */
+static inline void capture_row_coordinates(enum pb_rotation rotation, int x, int y,
+					   int *px, int *py, int *dx, int *dy)
+{
+	switch (rotation) {
+	case PB_ROT_90:
+		*px = WIDTH - 1 - y; *py = x; *dx = 0; *dy = 1;
+		break;
+	case PB_ROT_180:
+		*px = WIDTH - 1 - x; *py = HEIGHT - 1 - y; *dx = -1; *dy = 0;
+		break;
+	case PB_ROT_270:
+		*px = y; *py = HEIGHT - 1 - x; *dx = 0; *dy = -1;
+		break;
+	default:
+		*px = x; *py = y; *dx = 1; *dy = 0;
+		break;
+	}
+}
+
 static int capture(Display *display, Window root, int offset, struct rect dirty,
 		   uint8_t *frame, struct rect pointer, int vertical, struct capture_stats *stats,
 		   XShmSegmentInfo *shm)
@@ -1005,22 +1026,22 @@ static int capture(Display *display, Window root, int offset, struct rect dirty,
 					     output_y + 1 < h ? lightness[(output_y + 1) % 3] : row,
 					     contrast, strip.left, strip.right, w);
 			}
-			for (int x = strip.left; x < strip.right; x++) {
+			int px, py, dx, dy;
+			capture_row_coordinates(capture_rotation, strip.left, output_y, &px, &py, &dx, &dy);
+			for (int x = strip.left; x < strip.right; x++, px += dx, py += dy) {
+				size_t i = (size_t)py * WIDTH + px;
 				const uint8_t *pixel = lightness[output_y % 3] + x;
 				unsigned int value = *pixel;
 				uint8_t next = value / 17;
 				if (gray_profile == GRAY_MONO)
 					next = value >= 128 ? WHITE : 0;
-				else if (value != 17u * next) {
-					size_t i = panel_index(capture_rotation, x, output_y);
-					next = quantize(value, uses_contrast ? contrast[x] : 0, (int)(i % WIDTH), (int)(i / WIDTH));
-				}
-				size_t i = panel_index(capture_rotation, x, output_y);
+				else if (value != 17u * next)
+					next = quantize(value, uses_contrast ? contrast[x] : 0, px, py);
 				if (draw_pointer && !screen_locked)
 					next = pointer_level(pointer, vertical, x, output_y, next);
 				if (nibble_get(frame, i) != next) {
 					stats->changed++;
-					dirty_tiles[(i / WIDTH) / TILE][(i % WIDTH) / TILE] = 1;
+					dirty_tiles[py / TILE][px / TILE] = 1;
 					nibble_set(frame, i, next);
 				}
 			}

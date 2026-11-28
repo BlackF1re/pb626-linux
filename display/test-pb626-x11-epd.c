@@ -287,6 +287,24 @@ static void test_power_press(void)
 	close(fds[0]);
 }
 
+static void test_capture_coordinates(void)
+{
+	for (int r = PB_ROT_0; r <= PB_ROT_270; r++) {
+		int w = logical_width(r), h = logical_height(r);
+		for (int y = 0; y < h; y++) {
+			int px, py, dx, dy;
+			capture_row_coordinates(r, 0, y, &px, &py, &dx, &dy);
+			for (int x = 0; x < w; x++, px += dx, py += dy) {
+				assert(px >= 0 && px < WIDTH && py >= 0 && py < HEIGHT);
+				assert((size_t)py * WIDTH + px == panel_index(r, x, y));
+			}
+			/* Partial strip begins at its actual logical x, not at zero. */
+			capture_row_coordinates(r, w / 3, y, &px, &py, &dx, &dy);
+			assert((size_t)py * WIDTH + px == panel_index(r, w / 3, y));
+		}
+	}
+}
+
 static void test_ddx_layout(void)
 {
 	struct pb626_ddx_fb h = {
@@ -597,6 +615,7 @@ int main(void)
 	test_rgb565_candidate();
 	test_gray_rows();
 	test_ddx_layout();
+	test_capture_coordinates();
 	test_gray();
 	test_contrast_row();
 	test_stock_sleep();

@@ -240,3 +240,14 @@ and settle, and no optical equivalence of those waveforms is assumed.
 The threshold, halo radius, optional masks and idle delays are unchanged.
 Only an ACK consumes the budget or clears a scrub. Host regressions cover
 repeated gray-only changes, saturation and successful local cleanup.
+
+### Row-wise physical coordinate mapping
+
+Capture now resolves rotation once per output row and advances native
+panel coordinates by a unit step per pixel. Quantization and dirty-tile
+marking reuse those coordinates instead of converting an index back to
+x/y (division and remainder by 758) in the pixel loop. The regression
+compares every panel coordinate in all four rotations against panel_index,
+including partial row starts. The existing Xvfb full/partial comparison
+continues to verify pixel output. No changes to dither, panel orientation
+or capture geometry; target timing still requires measurement.
