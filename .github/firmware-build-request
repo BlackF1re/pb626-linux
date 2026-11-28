@@ -1,4 +1,4 @@
-Full qualification request: source SPL LED handoff and FEL priority regression
+Full qualification request: native Windows 5.1 flash kit and explicit paired deep lab kit
 Source branch: optimization/debian-runtime
-Source head before request: 6f7f0d150ae692d4796d0d9a6b5b0680ed0baa97
-Scope: production firmware, isolated deep kernel and rebuilt source SPL candidates. Recheck native LBA, Menu/FEL with an armed RTC marker and real ARM LED handoff. Do not change the qualified historical SPL or installer gates.
+Source head before request: 26cf320b3eb00a58f60d336d7fff87d7dc2b49f8
+Scope: production firmware and recovery, inbox NCM/RNDIS, native x64 FEL tools, Windows 5.1 package validation, separately paired deep laboratory kernel/rootfs/SPL. Keep qualified historical BT0 default and no merge.
