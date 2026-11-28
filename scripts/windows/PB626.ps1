@@ -155,13 +155,18 @@ if (!$Action) {
 Verify-Kit
 if ($firmwareProfile -eq 'deep-lab' -and $Action -in @('Install','InstallQualified','InstallCandidate','Bootloader','RestoreBootloader')) { throw 'Deep profile requires the paired InstallDeepLab action' }
 if ($firmwareProfile -eq 'standard' -and $Action -eq 'InstallDeepLab') { throw 'Use the separate deep lab bundle' }
-if ($Action -eq 'Validate') { return }
+if ($Action -eq 'Validate') {
+    Invoke-Python @((Join-Path $kit 'windows-fel.py'),'validate')
+    return
+}
 if ($Action -eq 'Prepare') { Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare'); return }
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $principal=New-Object Security.Principal.WindowsPrincipal($identity)
 if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     if ($DataDir.Contains('"')) { throw 'Invalid data directory' }
-    $launch='-NoLogo -NoProfile -ExecutionPolicy Bypass -File "'+$PSCommandPath+'" -Action '+$Action+' -UsbProfile '+$UsbProfile+' -DataDir "'+([IO.Path]::GetFullPath($DataDir).TrimEnd('\'))+'"'
+    $fullData=[IO.Path]::GetFullPath($DataDir)
+    if ($fullData.EndsWith('\')) { $fullData+='.' }
+    $launch='-NoLogo -NoProfile -ExecutionPolicy Bypass -File "'+$PSCommandPath+'" -Action '+$Action+' -UsbProfile '+$UsbProfile+' -DataDir "'+$fullData+'"'
     if ($UseRunningRecovery) { $launch+=' -UseRunningRecovery' }
     $child=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -ArgumentList $launch -Wait -PassThru
     exit $child.ExitCode

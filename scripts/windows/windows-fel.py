@@ -115,7 +115,7 @@ def boot(kit, profile):
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument("action",choices=("prepare","probe","boot","hello"))
+    ap.add_argument("action",choices=("prepare","probe","boot","hello","validate"))
     ap.add_argument("--profile",choices=("ncm","rndis"),default="ncm")
     ap.add_argument("--kit",type=Path,default=Path(__file__).resolve().parent)
     args=ap.parse_args()
@@ -124,6 +124,12 @@ def main():
         print("Verified FEL input:",prepare(kit))
     elif args.action=="probe":
         print(probe(kit/"host/sunxi-fel.exe",kit))
+    elif args.action=="validate":
+        import importlib
+        direct=importlib.import_module("install-direct")
+        rev, raw, spl=direct.checked_inputs(kit,"candidate")
+        mapped=direct.mapped_chunks(kit/"native/pb626-rootfs.bmap.json")
+        print(f"Validated {direct.kit_profile(kit)}: {rev}; raw kernel {len(raw)} bytes; {len(mapped)} mapped rootfs chunks; candidate {sha(spl)}")
     elif args.action=="hello":
         import importlib
         recovery=importlib.import_module("install-direct").EthernetRecovery(windows=True)

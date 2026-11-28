@@ -51,15 +51,20 @@ jobs:
           # not in a machine-wide Python or a user site-packages directory.
           Add-Content -LiteralPath windows-host/python/python313._pth -Value '..\..'
           Copy-Item windows-toolchain.txt windows-host/toolchain.txt
-      - name: Write or verify cached host manifest
+      - name: Generate new host manifest
+        if: steps.host-cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          cd windows-host
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS
+      - name: Verify host manifest (also on cache hit)
         shell: msys2 {0}
         run: |
           set -euo pipefail
           cmp windows-toolchain.txt windows-host/toolchain.txt
           cd windows-host
-          if [ ! -f SHA256SUMS ]; then
-            find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS
-          fi
+          test -s SHA256SUMS
           sha256sum -c SHA256SUMS
       - name: Run with ordinary Windows PATH (no MSYS2/WSL)
         shell: powershell

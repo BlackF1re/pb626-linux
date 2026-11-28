@@ -11,7 +11,7 @@ trap 'rm -rf "$work"' EXIT
 rev=0237931bb3d66de17c441a3c94d0e4b39e1308d1
 git init -q "$work/src"
 git -C "$work/src" fetch -q --depth=1 https://github.com/linux-sunxi/sunxi-tools.git "$rev"
-git -C "$work/src" checkout -q --detach FETCH_HEAD
+git -C "$work/src" -c core.autocrlf=false checkout -q --detach FETCH_HEAD
 cd "$work/src"
 test "$(git rev-parse HEAD)" = "$rev"
 git apply --check "$repo/patches/sunxi-fel-keep-mmu-off.patch"
