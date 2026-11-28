@@ -67,7 +67,21 @@ set canvas .tabs.power.canvas
 lassign [$canvas yview] top bottom
 if {$bottom >= 1.0} {error "Power settings should scroll in compact geometry"}
 if {[winfo screenwidth .] <= 1024 && [tk scaling] > 1.7} {error "Settings scaling must remain recoverable"}
-if {![winfo ismapped .footer.restart] || ![winfo ismapped .footer.close]} {error "Global actions unavailable"}
+# Mapped widgets can still be clipped by a constrained parent. Check the
+# entire global actions and the scroll viewport, not just widget existence.
+foreach widget {.footer.restart .footer.close} {
+    if {![winfo ismapped $widget] ||
+        [winfo rootx $widget] < [winfo rootx .] ||
+        [winfo rooty $widget] < [winfo rooty .] ||
+        [winfo rootx $widget] + [winfo width $widget] > [winfo rootx .] + [winfo width .] ||
+        [winfo rooty $widget] + [winfo height $widget] > [winfo rooty .] + [winfo height .] ||
+        [winfo width $widget] < 2 || [winfo height $widget] < 2} {
+        error "Global action clipped or unavailable: $widget"
+    }
+}
+if {![winfo ismapped $canvas] || [winfo height $canvas] < 64} {
+    error "Settings scroll viewport unavailable"
+}
 if {[bind .tabs.power.canvas.body.shutdownSection.title <B1-Motion>] eq ""} {error "Touch scrolling missing"}
 if {[bind .tabs.display.canvas.body.brightness <B1-Motion>] ne ""} {error "Slider must keep native motion"}
 $canvas yview moveto 0.0
