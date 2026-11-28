@@ -8,6 +8,10 @@ on:
       - '.github/firmware-build-request'
   workflow_dispatch:
     inputs:
+      include_legacy:
+        description: Also build standalone Linux kit and diagnostics
+        type: boolean
+        default: false
       include_alpine:
         description: Also build legacy Alpine images
         type: boolean
@@ -31,6 +35,7 @@ jobs:
     secrets: inherit
     with:
       debian_only: ${{ !inputs.include_alpine }}
+      windows_only: ${{ !inputs.include_legacy }}
       include_deep: true
 
   # Experimental builds never feed the production firmware or its caches.

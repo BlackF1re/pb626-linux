@@ -20,6 +20,10 @@ on:
       - 'LICENSE'
   workflow_dispatch:
     inputs:
+      windows_only:
+        description: Skip standalone Linux flash kit and diagnostics
+        type: boolean
+        default: false
       debian_only:
         description: Skip Alpine builds
         type: boolean
@@ -30,6 +34,10 @@ on:
         default: false
   workflow_call:
     inputs:
+      windows_only:
+        description: Skip standalone Linux flash kit and diagnostics
+        type: boolean
+        default: false
       debian_only:
         description: Skip Alpine builds
         type: boolean
@@ -469,6 +477,7 @@ jobs:
     uses: ./.github/workflows/fel-host.yml
 
   diagnostics:
+    if: ${{ !inputs.windows_only }}
     name: Diagnostics
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -640,6 +649,7 @@ jobs:
           .\tests\test-powershell51.ps1
 
   flash-kit:
+    if: ${{ !inputs.windows_only }}
     name: Linux flash kit
     needs: [debian-native, recovery, diagnostics, fel-host, bootloader, host-checks, restore-checks, windows-powershell51]
     runs-on: ubuntu-24.04
@@ -933,11 +943,14 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
           DEBIAN_ONLY: ${{ inputs.debian_only && 'true' || 'false' }}
           INCLUDE_DEEP: ${{ inputs.include_deep && 'true' || 'false' }}
+          WINDOWS_ONLY: ${{ inputs.windows_only && 'true' || 'false' }}
         run: |
           python3 - <<'PY'
           import json, os, pathlib
           jobs = {k: v["result"] for k, v in json.loads(os.environ["RESULTS"]).items()}
           omitted = {"alpine-base", "bundle", "desktop"} if os.environ["DEBIAN_ONLY"] == "true" else set()
+          if os.environ["WINDOWS_ONLY"] == "true":
+              omitted.update({"diagnostics", "flash-kit"})
           if os.environ["INCLUDE_DEEP"] != "true":
               omitted.update({"deep-resume-lab", "windows-deep-kit", "windows-deep-check"})
           bad = {k: v for k, v in jobs.items() if v != ("skipped" if k in omitted else "success")}

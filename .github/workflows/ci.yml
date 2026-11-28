@@ -1,29 +1,10 @@
 name: CI
 
 on:
-  push:
-    branches: [main, enhance/native-reliability]
-    paths:
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/megi-fel.yml'
-      - '.github/workflows/restore.yml'
-      - 'BT0-uncaged/**'
-      - 'boot/**'
-      - 'board/**'
-      - 'display/**'
-      - 'patches/**'
-      - 'scripts/**'
-      - 'tests/**'
-      - 'diagnostics/**'
-      - '.github/workflows/source-bootloader.yml'
-      - '.github/workflows/request-firmware.yml'
-      - '!**/*.md'
   pull_request:
     branches: [main]
     paths:
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/megi-fel.yml'
-      - '.github/workflows/restore.yml'
+      - '.github/workflows/**'
       - 'BT0-uncaged/**'
       - 'boot/**'
       - 'board/**'
@@ -32,8 +13,6 @@ on:
       - 'scripts/**'
       - 'tests/**'
       - 'diagnostics/**'
-      - '.github/workflows/source-bootloader.yml'
-      - '.github/workflows/request-firmware.yml'
       - '!**/*.md'
   workflow_dispatch:
     inputs:
@@ -83,7 +62,7 @@ jobs:
           bash -n scripts/build-debian-base.sh
           bash -n scripts/compile-debian-native.sh
           bash -n scripts/audit-armhf-compiler.sh
-          bash -n scripts/build-megi-kernel.sh
+          bash -n scripts/build-megi-kernel.sh scripts/build-deep-kernel.sh
           bash -n BT0-uncaged/build-from-source.sh
           bash -n BT0-uncaged/build-fel-host.sh
           python3 -m py_compile scripts/prepare-fel-inputs.py
