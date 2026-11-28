@@ -1277,7 +1277,7 @@ static int a2_eligible(const struct shared_frame *frame, const uint8_t *panel)
 
 enum fast_profile { FAST_DU, FAST_A2, FAST_DU4, FAST_AUTO };
 /* Bridge-local scheduling command; wire protocol remains GC16/CLEAN. */
-enum { SETTLE_CLEAN = 'S' };
+enum { SETTLE_CLEAN = 'S', SETTLE_LOCAL_CLEAN = 'H' };
 
 /* Count completed non-scrub transitions, including GL16. A direct
  * grayscale update must not bypass the bounded ghosting budget.
@@ -1425,7 +1425,40 @@ static int exact_du4_candidate(const uint8_t *desired, const uint8_t *panel)
 	return gray;
 }
 
-enum { TARGET_GRAY = 1, TARGET_NOT_DU4 = 2, SOURCE_GRAY = 4 };
+enum { TARGET_GRAY = 1, TARGET_NOT_DU4 = 2, SOURCE_GRAY = 4, SCRUB_NEXT = 8 };
+
+/* A changed pixel that would saturate its budget in this very update.
+ * Use its final shade for the halo, exactly as a subsequent CLEAN would. */
+static int local_scrub_seed(const uint8_t *desired, const uint8_t *panel, size_t i)
+{
+	return nibble_get(fast_changes, i) >= CLEAN_AFTER - 1 &&
+	       nibble_get(desired, i) != nibble_get(panel, i);
+}
+
+static int local_scrub_halo(const uint8_t *desired, const uint8_t *panel, int x, int y)
+{
+	if (!clean_halo)
+		return 0;
+	unsigned int shade = nibble_get(desired, y * WIDTH + x);
+	for (int ny = y ? y - 1 : y; ny <= y + 1 && ny < HEIGHT; ny++)
+		for (int nx = x ? x - 1 : x; nx <= x + 1 && nx < WIDTH; nx++) {
+			size_t i = ny * WIDTH + nx;
+			if (local_scrub_seed(desired, panel, i) && nibble_get(desired, i) == shade)
+				return 1;
+		}
+	return 0;
+}
+
+static int local_dirty_near_tile(int tx, int ty)
+{
+	if (!clean_halo)
+		return dirty_tiles[ty][tx];
+	for (int y = ty ? ty - 1 : ty; y <= ty + 1 && y < TILE_ROWS; y++)
+		for (int x = tx ? tx - 1 : tx; x <= tx + 1 && x < TILE_COLS; x++)
+			if (dirty_tiles[y][x])
+				return 1;
+	return 0;
+}
 
 /* In exact mode classify real transitions while writing the final pixels.
  * No speculative preview preparation, rollback or second tile walk. */
@@ -1441,9 +1474,11 @@ static unsigned int prepare_internal(uint8_t command, const uint8_t *desired, co
 	}
 	memset(frame->tiles, 0, sizeof(frame->tiles));
 	const int cleaning = command == CLEAN || command == SETTLE_CLEAN;
+	const int local = command == SETTLE_LOCAL_CLEAN;
 	for (int ty = 0; ty < TILE_ROWS; ty++)
 		for (int tx = 0; tx < TILE_COLS; tx++) {
 			if (!(cleaning && cleanup_near_tile(tx, ty)) &&
+			    !(local && local_dirty_near_tile(tx, ty)) &&
 			    !(command != CLEAN && dirty_tiles[ty][tx]))
 				continue;
 			int right, bottom, differs = 0;
@@ -1453,13 +1488,15 @@ static unsigned int prepare_internal(uint8_t command, const uint8_t *desired, co
 					size_t i = y * WIDTH + x;
 					uint8_t target = nibble_get(desired, i), old = nibble_get(panel, i);
 					int scrub = (cleaning && target == old && needs_scrub(panel, x, y)) ||
-						    (command == SETTLE_CLEAN && target != old);
+						    (command == SETTLE_CLEAN && target != old) ||
+						    (local && (target != old || local_scrub_halo(desired, panel, x, y)));
 					uint8_t level = target;
 					differs |= target != old;
 					if (classes && target != old) {
 						if (target != 0 && target != WHITE) *classes |= TARGET_GRAY;
 						if (target % 5) *classes |= TARGET_NOT_DU4;
 						if (old != 0 && old != WHITE) *classes |= SOURCE_GRAY;
+						if (nibble_get(fast_changes, i) >= CLEAN_AFTER - 1) *classes |= SCRUB_NEXT;
 					}
 					if (command == PREVIEW || command == PREVIEW_A2)
 						level = abs(target - old) >= 3 ? preview_level(target, old) : old;
@@ -1502,10 +1539,19 @@ static unsigned int prepare_update(uint8_t *command, const uint8_t *desired,
 {
 	if (!*command)
 		return 0;
-	if (!approximate && *command == PREVIEW) {
+	if (!approximate && (*command == PREVIEW || *command == SETTLE)) {
 		unsigned int classes = 0;
 		unsigned int changes = prepare_internal(SETTLE, desired, panel, frame, &classes);
-		*command = exact_command(fast, classes);
+		if (*command == PREVIEW)
+			*command = exact_command(fast, classes);
+		/* Do not turn a fast binary/DU4 update or a large page turn
+		 * into GC16 just to save a future scrub. For a small frame
+		 * already needing GL16, absorb the imminent local cleanup. */
+		if (*command == SETTLE && (classes & SCRUB_NEXT) &&
+		    changes < LARGE_CLEAN_PIXELS && cleanup_filter == HALO_NONE) {
+			*command = SETTLE_LOCAL_CLEAN;
+			return prepare(*command, desired, panel, frame);
+		}
 		return changes;
 	}
 	return prepare(*command, desired, panel, frame);
@@ -2113,7 +2159,7 @@ int main(int argc, char **argv)
             command = PREVIEW_A2;
         uint64_t submit_start = now_us();
 		if (changes) {
-			uint8_t wire = command == SETTLE_CLEAN ? CLEAN : command;
+			uint8_t wire = (command == SETTLE_CLEAN || command == SETTLE_LOCAL_CLEAN) ? CLEAN : command;
 			if (lock_pending && has_frame && command == RESET && !controls.clean_requested) {
 				/* Rebuild actual X11 frame using known sleep history. */
 				wire = CLEAN;
@@ -2180,7 +2226,7 @@ int main(int argc, char **argv)
 				(unsigned long long)(now_us() - capture_start),
 				(unsigned long long)capture_start, (unsigned long long)damage_wait,
 				(unsigned long long)ack);
-		if (changes || command == SETTLE || command == SETTLE_CLEAN)
+		if (changes || command == SETTLE || command == SETTLE_CLEAN || command == SETTLE_LOCAL_CLEAN)
 			continue; /* Discard intermediate frames and consume accumulated damage. */
 
 wait_input:

@@ -341,3 +341,18 @@ staged fallback retain their existing tables, and INIT needs neither.
 Tests compare all transition codes in each source position and the existing
 full-buffer scalar/indexed equivalence test remains mandatory. No change
 to physical scans, voltages or pixels selected for refresh.
+
+### Absorb imminent local cleanup in a necessary grayscale update
+
+When an exact sparse update already requires GL16 and a changed pixel
+would reach its eighth transition, use one GC16 update for the changed
+pixels and the same-final-shade one-pixel halo around those hot pixels.
+This prevents a second same-level scrub of the same region after idle.
+Unrelated due pixels keep their original cleanup deadline and counters.
+Pure DU/A2/DU4 frames, large page turns, approximate preview and optional
+HQ/Shadow filters retain their existing policies. No threshold increase,
+extra resident allocation or waveform alteration. The bridge logs H and
+uses the existing CLEAN command; counters reset only after ACK. Tests
+cover the tile-boundary halo, unrelated cleanup, and fast binary frames.
+GC16 is a complete factory update, but its optical appearance and the
+latency of this combined policy still require physical comparison.

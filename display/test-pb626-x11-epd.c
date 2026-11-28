@@ -562,6 +562,48 @@ static void test_combined_cleanup(void)
 	clean_halo = old_halo;
 }
 
+static void test_prospective_local_cleanup(void)
+{
+	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
+	static struct shared_frame frame;
+	const size_t p = (TILE - 1) * WIDTH + TILE - 1;
+	const size_t adjacent = p + WIDTH + 1, unrelated = 4 * TILE + 1;
+	memset(desired, 0xff, sizeof(desired));
+	memset(panel, 0xff, sizeof(panel));
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	memset(fast_changes, 0, sizeof(fast_changes));
+	memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
+	nibble_set(panel, p, 6);
+	nibble_set(panel, adjacent, 7);
+	nibble_set(desired, p, 7);
+	nibble_set(desired, adjacent, 7);
+	nibble_set(fast_changes, p, CLEAN_AFTER - 1);
+	nibble_set(fast_changes, unrelated, CLEAN_AFTER);
+	cleanup_pixels[0][4] = 1;
+	dirty_tiles[0][0] = 1;
+	uint8_t command = PREVIEW;
+	assert(prepare_update(&command, desired, panel, &frame, 0, FAST_AUTO) == 2);
+	assert(command == SETTLE_LOCAL_CLEAN);
+	assert(frame.tiles[0][0] && frame.tiles[1][1] && !frame.tiles[0][4]);
+	assert(frame.pixels[p] == (7 | SCRUB) && frame.pixels[adjacent] == (7 | SCRUB));
+	assert(nibble_get(fast_changes, p) == CLEAN_AFTER - 1);
+	acknowledge(command, &frame, desired, panel);
+	assert(!nibble_get(fast_changes, p) && nibble_get(panel, p) == 7);
+	assert(cleanup_pixels[0][4] == 1 && nibble_get(fast_changes, unrelated) == CLEAN_AFTER);
+	assert(!dirty_tiles_pending());
+
+	/* A binary update must remain fast despite a near-saturated budget. */
+	nibble_set(desired, p, WHITE);
+	nibble_set(fast_changes, p, CLEAN_AFTER - 1);
+	dirty_tiles[0][0] = 1;
+	command = PREVIEW;
+	assert(prepare_update(&command, desired, panel, &frame, 0, FAST_DU) == 1);
+	assert(command == PREVIEW && frame.pixels[p] == WHITE);
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	memset(fast_changes, 0, sizeof(fast_changes));
+	memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
+}
+
 static void test_settle_cleanup_budget(void)
 {
 	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
@@ -671,6 +713,7 @@ int main(void)
 	test_exact_preview_policy();
 	test_settle_cleanup_budget();
 	test_combined_cleanup();
+	test_prospective_local_cleanup();
 	assert(binding_index(KEY_LEFT) == 0 && binding_index(KEY_RIGHT) == 1);
 	assert(binding_index(KEY_HOME) == 2 && binding_index(KEY_MENU) == 3);
 	assert(binding_index(KEY_POWER) == -1);
