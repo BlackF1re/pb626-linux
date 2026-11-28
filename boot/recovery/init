@@ -66,23 +66,59 @@ echo PB626RECOVERY >"$g/strings/0x409/serialnumber"
 echo PocketBook >"$g/strings/0x409/manufacturer"
 echo 'PB626 Debian recovery' >"$g/strings/0x409/product"
 echo 'ACM recovery' >"$g/configs/c.1/strings/0x409/configuration"
-ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
-# Composite ACM (emergency shell) + NCM (all routine bulk transfers).
-# If NCM cannot be created, preserve the diagnostic ACM rather than hiding it.
-ncm=no
-if mkdir "$g/functions/ncm.usb0" &&
-   echo 02:50:42:62:60:01 >"$g/functions/ncm.usb0/dev_addr" &&
-   echo 02:50:42:62:60:02 >"$g/functions/ncm.usb0/host_addr" &&
-   ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/ncm.usb0"; then
-    # IAD composite class is needed for Windows composite enumeration.
+# Linux/Windows 11 use NCM. A separate DTB explicitly requests Windows
+# 10 RNDIS, including Microsoft compatible ID descriptors. Never enable
+# both network functions together (limited MUSB endpoints).
+net=no
+function=ncm
+if [ -e /sys/firmware/devicetree/base/chosen/pb626,windows-rndis ]; then
+    function=rndis
+    # Separate product ID avoids cached NCM/ACM interface associations.
+    echo 0xa4a2 >"$g/idProduct"
+fi
+if mkdir "$g/functions/$function.usb0" &&
+   echo 02:50:42:62:60:01 >"$g/functions/$function.usb0/dev_addr" &&
+   echo 02:50:42:62:60:02 >"$g/functions/$function.usb0/host_addr"; then
+    if [ "$function" = rndis ]; then
+        # RNDIS interface first; Windows uses the compatible ID to bind
+        # its inbox driver, with no custom INF or unsigned kernel driver.
+        if echo 1 >"$g/os_desc/use" &&
+           echo 0xcd >"$g/os_desc/b_vendor_code" &&
+           echo MSFT100 >"$g/os_desc/qw_sign" &&
+           echo RNDIS >"$g/functions/rndis.usb0/os_desc/interface.rndis/compatible_id" &&
+           echo 5162001 >"$g/functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id" &&
+           ln -s "$g/configs/c.1" "$g/os_desc/c.1" &&
+           ln -s "$g/functions/rndis.usb0" "$g/configs/c.1/rndis.usb0"; then
+            net=yes
+        fi
+    else
+        if ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/ncm.usb0"; then net=yes; fi
+    fi
+fi
+# Preserve the previous NCM interface order (ACM then NCM).
+if [ "$function" = ncm ] && [ "$net" = yes ]; then rm "$g/configs/c.1/ncm.usb0"; fi
+ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0" || fatal acm
+if [ "$function" = ncm ] && [ "$net" = yes ]; then
+    ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/ncm.usb0" || net=no
+fi
+net_fallback() {
+    rm -f "$g/configs/c.1/$function.usb0" "$g/os_desc/c.1"
+    if [ "$function" = rndis ]; then echo 0 >"$g/os_desc/use" 2>/dev/null || :; fi
+    echo 0xa4a7 >"$g/idProduct"
+    echo 0x02 >"$g/bDeviceClass"
+    echo 0x02 >"$g/bDeviceSubClass"
+    echo 0x00 >"$g/bDeviceProtocol"
+    echo 'ACM recovery' >"$g/configs/c.1/strings/0x409/configuration"
+    net=no
+}
+if [ "$net" = yes ]; then
     echo 0xef >"$g/bDeviceClass"
     echo 0x02 >"$g/bDeviceSubClass"
     echo 0x01 >"$g/bDeviceProtocol"
-    echo 'ACM + NCM recovery' >"$g/configs/c.1/strings/0x409/configuration"
-    ncm=yes
+    echo "ACM + $function recovery" >"$g/configs/c.1/strings/0x409/configuration"
 else
-    rm -f "$g/configs/c.1/ncm.usb0"
-    echo 'PB626 recovery: NCM unavailable; ACM diagnostics only' >/dev/kmsg
+    net_fallback
+    echo 'PB626 recovery: network unavailable; ACM diagnostics only' >/dev/kmsg
 fi
 bind_udc() {
     for n in $(seq 1 "$1"); do
@@ -95,15 +131,9 @@ bind_udc() {
     return 1
 }
 if ! bind_udc 5; then
-    if test "$ncm" = yes; then
-        # An endpoint allocation error must not take out emergency ACM.
+    if test "$net" = yes; then
         printf '\n' >"$g/UDC" 2>/dev/null || :
-        rm -f "$g/configs/c.1/ncm.usb0"
-        echo 0x02 >"$g/bDeviceClass"
-        echo 0x02 >"$g/bDeviceSubClass"
-        echo 0x00 >"$g/bDeviceProtocol"
-        echo 'ACM recovery' >"$g/configs/c.1/strings/0x409/configuration"
-        ncm=no
+        net_fallback
         echo 'PB626 recovery: composite bind failed; using emergency ACM' >/dev/kmsg
     fi
     bind_udc 30 || fatal 'no UDC'
@@ -111,7 +141,7 @@ fi
 # USB enumerates first; storage failure cannot prevent a shell.
 storage_init &
 sd_init &
-if test "$ncm" = yes; then
+if test "$net" = yes; then
     if ip link set usb0 up && ip addr add 169.254.62.1/30 dev usb0; then
         /usr/libexec/pb626-netd </dev/null >/dev/kmsg 2>&1 &
     else

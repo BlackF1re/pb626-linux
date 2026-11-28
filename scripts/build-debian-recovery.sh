@@ -74,6 +74,12 @@ dtb="$out/recovery/pb626-elan-emmc-backup.dtb"
 fdtget "$dtb" /chosen pb626,emmc-backup >/dev/null
 test "$(fdtget -t s "$dtb" /soc/mmc@1c11000 status)" = okay
 test "$(fdtget -t s "$dtb" /soc/mmc@1c0f000 status)" = disabled
+# Windows 10 inbox RNDIS driver; Windows 11 and Linux use the original NCM DTB.
+windows_dtb="$out/recovery/pb626-elan-emmc-windows-rndis.dtb"
+cp "$dtb" "$windows_dtb"
+fdtput "$windows_dtb" /chosen pb626,windows-rndis
+fdtget "$windows_dtb" /chosen pb626,emmc-backup >/dev/null
+test "$(fdtget -t s "$windows_dtb" /soc/mmc@1c0f000 status)" = disabled
 # Keep the validated eMMC-only DTB untouched. The separate opt-in SD
 # profile uses the same conservative parameters as native SD experiments.
 sd_dtb="$out/recovery/pb626-elan-emmc-sd-backup.dtb"
