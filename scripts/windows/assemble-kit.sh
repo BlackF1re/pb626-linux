@@ -23,7 +23,7 @@ mkdir -p "$out"/{host,native,recovery,candidate,qualification,source/scripts,sou
 printf '%s\n' "$profile" >"$out/PROFILE"
 (cd "$candidate_dir" && sha256sum -c SHA256SUMS)
 # Include just the usable direct-install payload, not a redundant tarball.
-native=(BUILD-COMMIT KERNELRELEASE raw-linux.img pb626-native-zImage pb626-elan-emmc-native.dtb pb626-rootfs.ext4.gz pb626-rootfs.bmap.json pb626-bt0-menu.raw)
+native=(BUILD-COMMIT KERNELRELEASE raw-linux.img pb626-native-zImage pb626-elan-emmc-native.dtb pb626-rootfs.ext4.gz pb626-rootfs.bmap.json pb626-bt0-menu.raw pb626-modules.sha256)
 for name in "${native[@]}"; do cp "native-stage/$name" "$out/native/"; done
 (cd "$out/native" && sha256sum "${native[@]}" >SHA256SUMS)
 cp -a windows-host/. "$out/host/"

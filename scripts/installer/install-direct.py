@@ -464,15 +464,20 @@ def main():
     ap.add_argument('--distro', default='Ubuntu')
     ap.add_argument('--windows', action='store_true', help='Native Windows TCP; adapter configured by launcher')
     ap.add_argument('--spl', choices=('keep','qualified','candidate'), default='qualified')
-    ap.add_argument('--spl-only', action='store_true', help='Only replace the selected primary SPL')
+    partial=ap.add_mutually_exclusive_group()
+    partial.add_argument('--spl-only', action='store_true', help='Only replace the selected primary SPL')
+    partial.add_argument('--rootfs-only',action='store_true',help='Replace rootfs only if exact paired kernel is installed')
+    partial.add_argument('--kernel-only',action='store_true',help='Replace kernel only if installed modules match the bundle')
     ap.add_argument('--candidate-backup', type=Path, help='Verified full dump for experimental BT0')
     ap.add_argument('--journal',type=Path,help='Local write-state record')
     args = ap.parse_args()
     kit = args.kit.resolve()
     require(not args.spl_only or args.spl != 'keep', 'No SPL selected')
+    require(not (args.rootfs_only or args.kernel_only) or (args.windows and args.spl=='keep'),
+            'Partial kernel/rootfs operations preserve BT0 and require native Windows recovery')
     require(args.spl != 'candidate' or args.windows, 'Experimental SPL is restricted to Windows lab recovery')
     profile=kit_profile(kit)
-    require(profile!='deep-lab' or (args.windows and args.spl=='candidate' and not args.spl_only),
+    require(profile!='deep-lab' or (args.windows and args.spl=='candidate' and not (args.spl_only or args.rootfs_only or args.kernel_only)),
             'Deep lab kernel/rootfs and resume SPL must be installed as one explicit pair')
     rev, raw, spl = checked_inputs(kit, args.spl)
     journal(args.journal,'preflight')
@@ -515,6 +520,29 @@ def main():
             print('EXPERIMENTAL BT0: physical FEL has not been qualified; a bad SPL may make the reader unrecoverable.', flush=True)
             print('Candidate SHA256:', sha(spl), flush=True)
             confirm('Type RISK '+cid+' to accept this (anything else cancels): ','RISK '+cid)
+        if args.rootfs_only:
+            print('Checking the installed raw kernel against this bundle...',flush=True)
+            for i,offset in enumerate(range(0,len(raw),CHUNK)):
+                require(matching_block(r,cid,'kernel',i,raw[offset:offset+CHUNK]),
+                        'Rootfs-only requires the exact paired kernel; use paired installation')
+        if args.kernel_only:
+            release=(kit/'native/KERNELRELEASE').read_text().strip()
+            module_file=kit/'native/pb626-modules.sha256'
+            require(filehash(module_file)==manifest(kit/'native/SHA256SUMS').get(module_file.name),
+                    'Missing or invalid module tree manifest')
+            digest=module_file.read_text().strip()
+            require(re.fullmatch(r'[A-Za-z0-9_.+-]+',release) and re.fullmatch(r'[0-9a-f]{64}',digest),
+                    'Invalid module manifest')
+            print('Checking the installed module tree and native rootfs (read-only)...',flush=True)
+            require(r.run('{} modules-check {} {} {}'.format(REMOTE,cid,release,digest))==['PB626_MODULES_VERIFIED'],
+                    'Installed modules do not match; use paired installation')
+            confirm('Type KERNEL '+cid+' to replace only raw kernel/DTB: ','KERNEL '+cid)
+            for i,offset in enumerate(range(0,len(raw),CHUNK)):
+                write_if_different(r,cid,'kernel',i,raw[offset:offset+CHUNK],args.journal)
+            require('CID='+cid in r.lines('probe'),'Final identity check failed')
+            journal(args.journal,'verified','kernel only')
+            print('SUCCESS: kernel/DTB verified; rootfs and BT0 unchanged.',flush=True)
+            return
         if args.spl_only:
             release=(kit/'native/KERNELRELEASE').read_text().strip()
             require(re.fullmatch(r'[A-Za-z0-9_.+-]+',release), 'Invalid kernel release')
@@ -537,7 +565,8 @@ def main():
         personal.update(theme_module.decode_theme(theme))
         require('CID='+cid in r.lines('probe'), 'CID changed')
         personal['password'] = hash_password(args.distro, kit/'host/openssl.exe' if args.windows else None)
-        print('Only p1, raw kernel/DTB and selected BT0 (if any) will be replaced. No full backup.', flush=True)
+        print('Only p1 will be replaced. Kernel and BT0 preserved.' if args.rootfs_only else
+              'Only p1, raw kernel/DTB and selected BT0 (if any) will be replaced. No full backup.',flush=True)
         confirm('Type FLASH '+cid+' to continue (anything else cancels): ','FLASH '+cid)
         # Verify recovery supports the new protocol before any write. This operation
         # only creates a private directory in RAM, not on eMMC.
@@ -567,8 +596,8 @@ def main():
         journal(args.journal,'writing','rootfs personalization')
         require('PB626_PERSONALIZED' in r.run('{} personalize {}'.format(REMOTE,cid), timeout=240),
                 'Personalization failed')
-        print('Writing kernel/DTB and selected BT0 (last, if requested)...', flush=True)
-        images = [('kernel', raw)]
+        print('Checking remaining selected components...', flush=True)
+        images = [] if args.rootfs_only else [('kernel', raw)]
         if spl is not None:
             images.append(('spl-candidate' if args.spl == 'candidate' else 'spl', spl))
         for kind, image in images:
@@ -580,7 +609,8 @@ def main():
         require('CID='+cid in r.lines('probe'),
                 'Final identity check failed')
         journal(args.journal,'verified','firmware')
-        print('SUCCESS: p1 and kernel written; BT0 '+('preserved' if spl is None else 'written and verified')+
+        print(('SUCCESS: p1 written; kernel preserved; BT0 ' if args.rootfs_only else
+               'SUCCESS: p1 and kernel written; BT0 ')+('preserved' if spl is None else 'written and verified')+
               '; all other eMMC regions preserved.', flush=True)
     finally:
         r.close()

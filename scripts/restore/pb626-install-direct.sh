@@ -101,6 +101,26 @@ case "$operation" in
         test -f /etc/pb626-spl-candidate.sha256
         cat /etc/pb626-spl-candidate.sha256
         ;;
+    modules-check)
+        release=$1; expected=$2
+        case "$release" in ''|*[!A-Za-z0-9_.+-]*) fail "Invalid kernel release";; esac
+        case "$expected" in *[!0-9a-f]*) fail "Invalid module hash";; esac
+        test "${#expected}" = 64
+        work=$(mktemp -d /run/pb626-install.XXXXXX)
+        mkdir -p "$mnt"
+        mount -t ext4 -o ro,noload "$P" "$mnt"; mounted=1
+        grep -qx pb626-native-debian13-armhf-v1 "$mnt/etc/pb626-image-id"
+        test -s "$mnt/usr/lib/modules/$release/modules.dep"
+        test -s "$mnt/lib/firmware/pb626/default.wbf"
+        # Paths in the kernel module tree are fixed by the build.
+        (set -o pipefail; cd "$mnt/usr/lib/modules"; export LC_ALL=C
+            find . -type f -print0 | sort -z | xargs -0 sha256sum) >"$work/modules.manifest"
+        test -s "$work/modules.manifest"
+        check_hash "$work/modules.manifest" "$expected" >/dev/null
+        busybox umount "$mnt"; mounted=0
+        identity
+        echo PB626_MODULES_VERIFIED
+        ;;
     native-check)
         # BT0-only updates must not turn a stock or incompatible native
         # installation into an unbootable machine. No eMMC write here.
