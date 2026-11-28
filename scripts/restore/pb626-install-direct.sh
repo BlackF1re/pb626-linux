@@ -73,6 +73,28 @@ case "$operation" in
         test -f /etc/pb626-spl-candidate.sha256
         cat /etc/pb626-spl-candidate.sha256
         ;;
+    native-check)
+        # BT0-only updates must not turn a stock or incompatible native
+        # installation into an unbootable machine. No eMMC write here.
+        length=$1; expected=$2; release=$3
+        number "$length"
+        test "$length" -ge 512 && test "$length" -le 8389120 && test $((length%512)) = 0
+        case "$expected" in *[!0-9a-f]*) fail "Invalid kernel hash";; esac
+        test "${#expected}" = 64
+        case "$release" in ''|*[!A-Za-z0-9_.+-]*) fail "Invalid kernel release";; esac
+        work=$(mktemp -d /run/pb626-install.XXXXXX)
+        dd if="$D" of="$work/kernel" bs=512 skip=80 count=$((length/512)) status=none
+        test "$(wc -c <"$work/kernel")" = "$length"
+        check_hash "$work/kernel" "$expected"
+        mkdir -p "$mnt"
+        mount -t ext4 -o ro,noload "$P" "$mnt"; mounted=1
+        grep -qx pb626-native-debian13-armhf-v1 "$mnt/etc/pb626-image-id"
+        test -s "$mnt/usr/lib/modules/$release/modules.dep"
+        test -s "$mnt/lib/firmware/pb626/default.wbf"
+        busybox umount "$mnt"; mounted=0
+        identity
+        echo PB626_NATIVE_VERIFIED
+        ;;
     write)
         kind=$1; idx=$2; format=$3; bytes=$4; expected=$5; length=$6
         number "$idx"; number "$length"

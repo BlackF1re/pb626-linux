@@ -93,3 +93,10 @@ record in private/sessions marks the latest potentially destructive write
 before transmission; no passwords or payloads are logged. Progress reflects
 acknowledged blocks. After a failed write keep the book powered; do not
 reboot or retry SPL automatically. Use -BackupDir to supply a verified dump.
+
+BT0-only operations additionally verify the installed raw kernel byte for
+byte against this kit, mount p1 read-only without journal replay, and
+check the native image ID, matching module release and waveform. If the
+reader still runs factory firmware or another kernel, install the paired
+kernel/rootfs first. This restriction is intentional: a BT0-only operation
+must not replace the stock boot chain while leaving stock payloads in place.

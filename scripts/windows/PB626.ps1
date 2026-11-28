@@ -71,7 +71,7 @@ function Verify-Kit {
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $digest) { throw "Kit hash mismatch: $name" }
     }
     Write-Progress -Activity 'Verify firmware package' -Completed
-    foreach ($name in @('PB626.ps1','windows-fel.py','install-direct.py','dump-network.py','host/python/python.exe','host/sunxi-fel.exe','host/fdtget.exe','host/openssl.exe','host/direct-entry.bin','native/BUILD-COMMIT','native/SHA256SUMS','native/raw-linux.img','native/pb626-rootfs.ext4.gz','native/pb626-rootfs.bmap.json','native/pb626-bt0-menu.raw','recovery/BUILD-COMMIT','recovery/pb626-megi-zImage','recovery/pb626-megi-initramfs.cpio.gz','recovery/pb626-elan-emmc-backup.dtb','recovery/pb626-elan-emmc-windows-rndis.dtb',$candidate,'qualification/emulation.json','PROFILE')) {
+    foreach ($name in @('PB626.ps1','windows-fel.py','install-direct.py','dump-network.py','host/python/python.exe','host/sunxi-fel.exe','host/fdtget.exe','host/openssl.exe','host/direct-entry.bin','native/BUILD-COMMIT','native/KERNELRELEASE','native/SHA256SUMS','native/raw-linux.img','native/pb626-rootfs.ext4.gz','native/pb626-rootfs.bmap.json','native/pb626-bt0-menu.raw','recovery/BUILD-COMMIT','recovery/pb626-megi-zImage','recovery/pb626-megi-initramfs.cpio.gz','recovery/pb626-elan-emmc-backup.dtb','recovery/pb626-elan-emmc-windows-rndis.dtb',$candidate,'qualification/emulation.json','PROFILE')) {
         if (!$seen.ContainsKey($name)) { throw "Missing kit file: $name" }
     }
     $native=(Get-Content -Raw -LiteralPath (Join-Path $kit 'native/BUILD-COMMIT')).Trim()
@@ -304,10 +304,10 @@ try {
     } else { Write-Host 'No device writes requested. Recovery remains running.' }
 } finally { Disconnect-Recovery }
 }
-$exitCode=0
+$exitCode=1
 try {
     Main
-    if ($script:HandedOff) { $exitCode=$script:ChildExit }
+    $exitCode=if ($script:HandedOff) { $script:ChildExit } else { 0 }
 } catch [OperationCanceledException] {
     Write-Host 'Cancelled. No additional writes requested.' -ForegroundColor Yellow
     $exitCode=2
@@ -324,6 +324,8 @@ try {
             if ($state.Count -and $state[0] -eq 'writing') {
                 Write-Host "WRITE STATE UNCERTAIN: $($state[1])" -ForegroundColor Red
                 Write-Host 'Keep the reader powered and connected. Do not reboot. Relaunch using running recovery to restore or reflash; no block is automatically retried.' -ForegroundColor Yellow
+            } elseif ($state.Count -and $state[0] -eq 'verified') {
+                Write-Host 'Device writes were verified, but a later host-side step failed. Check the reported error before disconnecting.' -ForegroundColor Yellow
             } elseif ($script:FelStarted) {
                 Write-Host 'No eMMC write was started in this session. Do not repeat SPL in this power cycle; use running recovery or a full cold power-off.' -ForegroundColor Yellow
             } else { Write-Host 'No eMMC write was started in this session.' }

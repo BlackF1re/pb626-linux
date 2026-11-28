@@ -70,6 +70,7 @@ case "$1" in
         case "$1" in
             write) test "$#" = 8 ;;
             file) test "$#" = 6 ;;
+            native-check) test "$#" = 5 ;;
             reset-data|check-data|personalize|bootloader-hash|spl-check) test "$#" = 2 ;;
             *) fail 'Invalid direct operation' ;;
         esac

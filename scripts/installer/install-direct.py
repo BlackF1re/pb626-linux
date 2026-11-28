@@ -373,7 +373,7 @@ def checked_inputs(kit, spl_mode='qualified'):
             and (kit/'recovery/BUILD-COMMIT').read_text().strip() == rev,
             'Native/recovery commits differ')
     sums = manifest(native/'SHA256SUMS')
-    for name in ('BUILD-COMMIT', 'raw-linux.img', 'pb626-rootfs.ext4.gz', 'pb626-rootfs.bmap.json',
+    for name in ('BUILD-COMMIT', 'KERNELRELEASE', 'raw-linux.img', 'pb626-rootfs.ext4.gz', 'pb626-rootfs.bmap.json',
                  'pb626-bt0-menu.raw', 'pb626-native-zImage', 'pb626-elan-emmc-native.dtb'):
         require(filehash(native/name) == sums.get(name), 'Invalid artifact: '+name)
     sys.path.insert(0, str(kit/'source/scripts'))
@@ -499,6 +499,14 @@ def main():
             print('Candidate SHA256:', sha(spl), flush=True)
             confirm('Type RISK '+cid+' to accept this (anything else cancels): ','RISK '+cid)
         if args.spl_only:
+            release=(kit/'native/KERNELRELEASE').read_text().strip()
+            require(re.fullmatch(r'[A-Za-z0-9_.+-]+',release), 'Invalid kernel release')
+            print('Checking installed native kernel and matching modules (read-only)...',flush=True)
+            try:
+                rows=r.run('{} native-check {} {} {} {}'.format(REMOTE,cid,len(raw),sha(raw),release))
+                require('PB626_NATIVE_VERIFIED' in rows,'Missing native compatibility confirmation')
+            except RuntimeError as exc:
+                raise RuntimeError('BT0-only update requires the native kernel/rootfs from this kit. Use paired installation first. '+str(exc)) from exc
             confirm('Type BOOTLOADER '+cid+' to write only LBA 16-63: ','BOOTLOADER '+cid)
             journal(args.journal,'writing','BT0 block 0')
             send_block(r, cid, 'spl-candidate' if args.spl == 'candidate' else 'spl', 0, spl)
