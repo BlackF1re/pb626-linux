@@ -120,13 +120,98 @@ jobs:
           key: ${{ steps.deep.outputs.cache-primary-key }}
       - name: Record qualification limits
         run: |
-          printf '%s\n' 'Linked laboratory kernel and SRAM control-flow model only. No board resume qualification, no approved SPL pairing, not for flash.' > deep-resume-lab/STATUS
+          printf '%s\n' 'Linked laboratory kernel and SRAM control-flow model only. No board resume qualification, not for ordinary flash.' > deep-resume-lab/STATUS
+          git rev-parse HEAD >deep-resume-lab/BUILD-COMMIT
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: pb626-deep-resume-lab-NOT-FOR-FLASH
           path: deep-resume-lab/
           if-no-files-found: error
+
+  windows-deep-kit:
+    name: Pair experimental deep kernel and rootfs for explicit Windows lab flashing
+    needs: [full, deep-resume-lab]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-native-debian13-armhf
+          path: native-stage
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-deep-resume-lab-NOT-FOR-FLASH
+          path: deep-resume-lab
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-debian-recovery
+          path: recovery-stage
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-windows-host-tools
+          path: windows-host
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-fel-host-tools
+          path: fel-host
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-source-boot-candidates-NOT-FOR-FLASH
+          path: source-boot-candidates
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-spl-emulation-report
+          path: qualification
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cpio device-tree-compiler kmod clang lld llvm e2fsprogs
+          (cd native-stage && sha256sum -c SHA256SUMS)
+          (cd deep-resume-lab && sha256sum -c SHA256SUMS)
+          test "$(cat native-stage/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
+          test "$(cat deep-resume-lab/BUILD-COMMIT)" = "$(git rev-parse HEAD)"
+      - uses: actions/cache@v4
+        id: deep-native
+        with:
+          path: deep-native
+          key: pb626-deep-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native-stage/pb626-native-rootfs.tar.gz','native-stage/KERNELRELEASE','deep-resume-lab/kernel-modules.tar.gz','deep-resume-lab/KERNELRELEASE','deep-resume-lab/zImage','deep-resume-lab/pb626-elan-emmc-native.dtb','deep-resume-lab/experimental.config','scripts/windows/build-deep-native.sh','scripts/build-direct-image.sh','scripts/build-rootfs-bmap.py','BT0-uncaged/pack-kernel.py','BT0-uncaged/kernel-entry.S','BT0-uncaged/early-menu.S') }}
+      - if: steps.deep-native.outputs.cache-hit != 'true'
+        run: bash scripts/windows/build-deep-native.sh deep-native
+      - name: Assemble and authorize only the exact same-run deep pair
+        run: |
+          set -euo pipefail
+          (cd deep-native && sha256sum -c SHA256SUMS)
+          cmp deep-native/KERNELRELEASE deep-resume-lab/KERNELRELEASE
+          cmp deep-native/pb626-native-zImage deep-resume-lab/zImage
+          cmp deep-native/pb626-elan-emmc-native.dtb deep-resume-lab/pb626-elan-emmc-native.dtb
+          git rev-parse HEAD >deep-native/BUILD-COMMIT
+          (cd deep-native && sha256sum pb626-* KERNELRELEASE raw-linux.img BUILD-COMMIT >SHA256SUMS)
+          mv native-stage ordinary-native
+          cp -a deep-native native-stage
+          PB626_WINDOWS_PROFILE=deep-lab bash scripts/windows/assemble-kit.sh windows-deep-kit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pb626-windows-deep-lab-EXPERIMENTAL
+          path: windows-deep-kit/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+  windows-deep-check:
+    name: Verify complete deep Windows bundle using PowerShell 5.1
+    needs: [windows-deep-kit]
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pb626-windows-deep-lab-EXPERIMENTAL
+          path: windows-deep-kit
+      - shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & .\windows-deep-kit\PB626.ps1 -Action Validate
+          if ((Get-Content -Raw .\windows-deep-kit\PROFILE).Trim() -ne 'deep-lab') { throw 'Wrong deep profile' }
 
   # Experimental builds never feed the production firmware or its caches.
   kernel-size-audit:
