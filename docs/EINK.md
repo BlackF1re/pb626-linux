@@ -228,3 +228,15 @@ intrinsic optical flash of a factory waveform; verify text entry, window
 open/close and images on hardware. Compare logged mode, ACK and optical
 latency at equal temperature. Host tests exhaust all source/target levels
 and check mixed-tile fallback and legacy approximation.
+
+### Grayscale ghosting budget
+
+GL16 is not a substitute for a mandatory same-level GC16 scrub. Count
+acknowledged changed GL16 pixels in the existing saturated per-pixel
+budget, just like DU/A2/DU4, without extra memory. This preserves bounded
+cleanup when exact-first scheduling bypasses fast preview entirely. The
+counter remains conservative: approximate mode can count both preview
+and settle, and no optical equivalence of those waveforms is assumed.
+The threshold, halo radius, optional masks and idle delays are unchanged.
+Only an ACK consumes the budget or clears a scrub. Host regressions cover
+repeated gray-only changes, saturation and successful local cleanup.

@@ -1256,7 +1256,9 @@ static int a2_eligible(const struct shared_frame *frame, const uint8_t *panel)
 
 enum fast_profile { FAST_DU, FAST_A2, FAST_DU4, FAST_AUTO };
 
-/* Count completed fast transitions. This budget does not model reflectance. */
+/* Count completed non-scrub transitions, including GL16. A direct
+ * grayscale update must not bypass the bounded ghosting budget.
+ * This conservative budget does not model optical reflectance. */
 static uint8_t fast_changes[PACKED_PIXELS];
 _Static_assert(CLEAN_AFTER <= 15, "ghosting counter fits a nibble");
 static uint16_t cleanup_pixels[TILE_ROWS][TILE_COLS];
@@ -1489,7 +1491,8 @@ static void acknowledge(uint8_t command, const struct shared_frame *frame,
 							cleanup_pixels[ty][tx]--;
 						nibble_set(fast_changes, i, 0);
 					} else if ((command == PREVIEW || command == PREVIEW_A2 ||
-                             command == PREVIEW_DU4) && nibble_get(panel, i) != level &&
+                             command == PREVIEW_DU4 || command == SETTLE) &&
+                             nibble_get(panel, i) != level &&
                              nibble_get(fast_changes, i) < CLEAN_AFTER) {
 						nibble_set(fast_changes, i, nibble_get(fast_changes, i) + 1);
 						if (nibble_get(fast_changes, i) == CLEAN_AFTER)

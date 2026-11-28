@@ -510,6 +510,34 @@ static void test_optional_halo_filters(void)
 	shadow_stage = 0;
 }
 
+static void test_settle_cleanup_budget(void)
+{
+	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
+	static struct shared_frame frame;
+	const size_t pixel = WIDTH + 1;
+	memset(desired, 0xff, sizeof(desired));
+	memset(panel, 0xff, sizeof(panel));
+	memset(fast_changes, 0, sizeof(fast_changes));
+	memset(cleanup_pixels, 0, sizeof(cleanup_pixels));
+	memset(dirty_tiles, 0, sizeof(dirty_tiles));
+	for (int i = 0; i < CLEAN_AFTER + 2; i++) {
+		nibble_set(desired, pixel, i & 1 ? 6 : 9);
+		dirty_tiles[0][0] = 1;
+		assert(prepare(SETTLE, desired, panel, &frame) == 1);
+		/* Preparation alone must not consume the budget. */
+		assert(nibble_get(fast_changes, pixel) == (i < CLEAN_AFTER ? i : CLEAN_AFTER));
+		acknowledge(SETTLE, &frame, desired, panel);
+	}
+	assert(nibble_get(fast_changes, pixel) == CLEAN_AFTER && cleanup_pixels[0][0] == 1);
+	int old_halo = clean_halo;
+	clean_halo = 0;
+	assert(prepare(CLEAN, desired, panel, &frame) == 1);
+	assert(frame.pixels[pixel] == (nibble_get(panel, pixel) | SCRUB));
+	acknowledge(CLEAN, &frame, desired, panel);
+	assert(!nibble_get(fast_changes, pixel) && !cleanup_pixels[0][0]);
+	clean_halo = old_halo;
+}
+
 static void test_exact_preview_policy(void)
 {
 	static uint8_t desired[PACKED_PIXELS], panel[PACKED_PIXELS];
@@ -574,6 +602,7 @@ int main(void)
 	test_stock_sleep();
 	test_optional_halo_filters();
 	test_exact_preview_policy();
+	test_settle_cleanup_budget();
 	assert(binding_index(KEY_LEFT) == 0 && binding_index(KEY_RIGHT) == 1);
 	assert(binding_index(KEY_HOME) == 2 && binding_index(KEY_MENU) == 3);
 	assert(binding_index(KEY_POWER) == -1);
