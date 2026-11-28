@@ -196,6 +196,11 @@ static void test_waveform_policy(void)
 	renderer.driven[GC16][0x8f] = true;
 	assert(!supports(&renderer, DU, active));
 	assert(supports(&renderer, GC16, active));
+	active[0xff] = true;
+	assert(!supports(&renderer, GC16, active));
+	renderer.driven[GC16][0xff] = true;
+	assert(supports(&renderer, GC16, active));
+	active[0xff] = false;
 	renderer.cache[GC16].count = 4;
 	set_cached_signal(&renderer.cache[GC16], 0, 0x8f, 1);
 	set_cached_signal(&renderer.cache[GC16], 1, 0x8f, 1);

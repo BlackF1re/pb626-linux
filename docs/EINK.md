@@ -376,3 +376,13 @@ The target and source classes are checked explicitly; ties preserve the
 validated baseline. Manual mode preferences and approximate preview are
 unchanged. GC16 cleanup and required fallback are never replaced. The
 mixed planner subsequently compares against this selected baseline.
+
+### Mandatory scrub validation
+
+A same-level GC16 transition exists only for an explicit SCRUB sample.
+Validate that the temperature-specific decoded waveform actually drives
+that transition before acknowledging the update. A missing pulse sequence
+must not silently clear the bridge's ghosting counter. The known factory
+matrix includes all 256 GC16 transitions; malformed or incompatible WBF
+files fail closed using the existing recovery path. Host regression
+checks missing and present white-to-white scrub eligibility.

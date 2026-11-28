@@ -355,7 +355,11 @@ static void cache_mode(struct renderer *renderer, enum mode mode)
 static bool supports(const struct renderer *renderer, enum mode mode, const bool *active)
 {
 	for (unsigned int t = 0; t < TRANSITIONS; t++)
-		if (active[t] && t % (LEVELS + 1) && !renderer->driven[mode][t])
+		/* Same-level GC16 transitions are explicit SCRUB requests,
+		 * not ordinary unchanged pixels. Do not acknowledge a scrub
+		 * with no drive pulses and silently reset its ghosting budget. */
+		if (active[t] && (mode == GC16 || t % (LEVELS + 1)) &&
+		    !renderer->driven[mode][t])
 			return false;
 	return true;
 }
