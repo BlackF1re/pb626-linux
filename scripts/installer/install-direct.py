@@ -421,6 +421,23 @@ def send_block(r, cid, kind, i, data):
     require('PB626_WRITTEN' in rows, 'Missing verified write acknowledgement')
 
 
+def matching_block(r, cid, kind, index, data):
+    rows=r.run('{} chunk-hash {} {} {} {}'.format(REMOTE,cid,kind,index,len(data)))
+    require(len(rows)==1 and re.fullmatch(r'BLOCK '+str(index)+r' [0-9a-f]{64}',rows[0]),
+            'Invalid device chunk-hash acknowledgement')
+    return rows[0].split()[2]==sha(data)
+
+
+def write_if_different(r, cid, kind, index, data, record=None, compare=True):
+    # A journal is advisory; actual media bytes decide whether to skip.
+    # This also handles a write that completed just before its ACK was lost.
+    if compare and matching_block(r,cid,kind,index,data):
+        return False
+    journal(record,'writing',f'{kind} chunk {index}')
+    send_block(r,cid,kind,index,data)
+    return True
+
+
 def hash_password(distro, openssl=None):
     require(sys.stdin.isatty(), 'Interactive terminal required for password entry')
     while True:
@@ -508,8 +525,7 @@ def main():
             except RuntimeError as exc:
                 raise RuntimeError('BT0-only update requires the native kernel/rootfs from this kit. Use paired installation first. '+str(exc)) from exc
             confirm('Type BOOTLOADER '+cid+' to write only LBA 16-63: ','BOOTLOADER '+cid)
-            journal(args.journal,'writing','BT0 block 0')
-            send_block(r, cid, 'spl-candidate' if args.spl == 'candidate' else 'spl', 0, spl)
+            write_if_different(r,cid,'spl-candidate' if args.spl == 'candidate' else 'spl',0,spl,args.journal,args.windows)
             require('CID='+cid in r.lines('probe'), 'Final identity check failed')
             journal(args.journal,'verified','BT0 only')
             print('SUCCESS: BT0 alone written and read back; rootfs and kernel unchanged.', flush=True)
@@ -533,18 +549,20 @@ def main():
         require('PB626_DATA_VERIFIED' in r.run('{} check-data {}'.format(REMOTE,cid)),
                 'Personalization input verification failed')
         print('Streaming sparse ext4: {} mapped chunks of 1741'.format(len(mapped)),flush=True)
-        done = 0
+        done = written = 0
+        if args.windows:
+            print('Comparing mapped chunks with the actual eMMC; matching chunks are not written again.',flush=True)
         started=time.monotonic()
         with gzip.open(str(kit/'native/pb626-rootfs.ext4.gz'), 'rb') as image:
             for i, data in image_blocks(image, P1_BYTES):
                 if i not in mapped:
                     require(data == bytes(len(data)), 'Nonzero omitted rootfs chunk')
                     continue
-                journal(args.journal,'writing',f'rootfs chunk {i}; {done}/{len(mapped)} acknowledged')
-                send_block(r, cid, 'rootfs', i, data)
+                written += write_if_different(r,cid,'rootfs',i,data,args.journal,args.windows)
                 done += 1
                 progress('Rootfs',done,len(mapped),started)
         require(done==len(mapped), 'Incomplete sparse rootfs')
+        print(f'Rootfs: {written} written, {done-written} already matching.',flush=True)
         print('Personalizing rootfs on device...', flush=True)
         journal(args.journal,'writing','rootfs personalization')
         require('PB626_PERSONALIZED' in r.run('{} personalize {}'.format(REMOTE,cid), timeout=240),
@@ -557,8 +575,7 @@ def main():
             started=time.monotonic()
             total=(len(image)+CHUNK-1)//CHUNK
             for i, offset in enumerate(range(0,len(image),CHUNK)):
-                journal(args.journal,'writing',f'{kind} chunk {i}')
-                send_block(r,cid,kind,i,image[offset:offset+CHUNK])
+                write_if_different(r,cid,kind,i,image[offset:offset+CHUNK],args.journal,args.windows)
                 progress(kind,i+1,total,started)
         require('CID='+cid in r.lines('probe'),
                 'Final identity check failed')

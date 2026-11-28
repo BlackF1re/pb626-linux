@@ -62,7 +62,35 @@ receive() {
     test "$(wc -c <"$work/payload")" = "$bytes"
 }
 check_hash() { printf '%s  %s\n' "$2" "$1" | sha256sum -c -; }
+# The exact same bounds are used for read-only comparison and writes.
+extent() {
+    number "$idx"; number "$length"
+    test "$length" -gt 0 && test "$length" -le 4194304 && test $((length%512)) = 0 || fail "Invalid extent length"
+        case "$kind" in
+            rootfs) dev=$P; bs=4194304; seek=$idx; count=1
+                test "$idx" -lt 1741
+                if test "$idx" = 1740; then test "$length" = 3145728; else test "$length" = 4194304; fi ;;
+            kernel) dev=$D; bs=512; seek=$((80+idx*8192)); count=$((length/512))
+                test "$idx" -le 2; test $((seek+count)) -le 16465
+                if test "$idx" = 2; then test "$length" = 512; fi ;;
+            spl|spl-candidate) dev=$D; bs=512; seek=16; count=48
+                test "$idx" = 0 && test "$length" = 24576 || fail "Invalid BT0 extent"
+                ;;
+            *) fail "Invalid write region";;
+        esac
+
+}
 case "$operation" in
+    chunk-hash)
+        kind=$1; idx=$2; length=$3
+        extent
+        work=$(mktemp -d /run/pb626-install.XXXXXX)
+        blockdev --flushbufs "$dev"
+        dd if="$dev" of="$work/chunk" bs="$bs" skip="$seek" count="$count" status=none
+        test "$(wc -c <"$work/chunk")" = "$length"
+        digest=$(sha256sum "$work/chunk")
+        printf 'BLOCK %s %s\n' "$idx" "${digest%% *}"
+        ;;
     bootloader-hash)
         work=$(mktemp -d /run/pb626-install.XXXXXX)
         dd if="$D" of="$work/current-spl" bs=512 skip=16 count=48 status=none
@@ -97,17 +125,9 @@ case "$operation" in
         ;;
     write)
         kind=$1; idx=$2; format=$3; bytes=$4; expected=$5; length=$6
-        number "$idx"; number "$length"
-        test "$length" -gt 0 && test "$length" -le 4194304 && test $((length%512)) = 0 || fail "Invalid write length"
+        extent
         case "$kind" in
-            rootfs) dev=$P; bs=4194304; seek=$idx; count=1
-                test "$idx" -lt 1741
-                if test "$idx" = 1740; then test "$length" = 3145728; else test "$length" = 4194304; fi ;;
-            kernel) dev=$D; bs=512; seek=$((80+idx*8192)); count=$((length/512))
-                test "$idx" -le 2; test $((seek+count)) -le 16465
-                if test "$idx" = 2; then test "$length" = 512; fi ;;
-            spl|spl-candidate) dev=$D; bs=512; seek=16; count=48
-                test "$idx" = 0 && test "$length" = 24576 || fail "Invalid BT0 extent"
+            spl|spl-candidate)
                 if test "$kind" = spl; then
                     test "$expected" = 1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6
                 else
@@ -116,8 +136,8 @@ case "$operation" in
                     # can alter the authorization file or write another SPL.
                     test -f /etc/pb626-spl-candidate.sha256
                     test "$expected" = "$(cat /etc/pb626-spl-candidate.sha256)"
-                fi ;;
-            *) fail "Invalid write region";;
+                fi
+                ;;
         esac
         receive "$bytes" "$expected"
         case "$format" in
