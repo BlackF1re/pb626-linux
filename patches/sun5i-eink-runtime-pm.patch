@@ -20,7 +20,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  
  	// tcon0/debe
  	struct clk_bulk_data *clks;
-@@ -246,66 +245,71 @@
+@@ -246,66 +245,77 @@
   * (the TPS65185 sequences the individual rails internally and waits
   * for power good), VCOM last; power down in reverse order.
   */
@@ -35,20 +35,26 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
 -		return 0;
 +	if (eink->vcom_on) {
 +		ret = regulator_disable(eink->vcom_supply);
-+		if (ret)
++		if (ret) {
++			dev_err(eink->dev, "VCOM disable failed: %d\n", ret);
 +			return ret;
++		}
 +		eink->vcom_on = false;
 +	}
 +	if (eink->drive_on) {
 +		ret = regulator_disable(eink->drive_supply);
-+		if (ret)
++		if (ret) {
++			dev_err(eink->dev, "VPOS/VNEG disable failed: %d\n", ret);
 +			return ret;
++		}
 +		eink->drive_on = false;
 +	}
 +	if (eink->vdd_on) {
 +		ret = regulator_disable(eink->vdd_supply);
-+		if (ret)
++		if (ret) {
++			dev_err(eink->dev, "VDD disable failed: %d\n", ret);
 +			return ret;
++		}
 +		eink->vdd_on = false;
 +	}
 +	return 0;
@@ -135,7 +141,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  // }}}
  // {{{ Scanout engine
  
-@@ -700,10 +704,13 @@
+@@ -700,10 +710,13 @@
  	unsigned long flags;
  	int ret;
  
@@ -151,7 +157,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  
  	spin_lock_irqsave(&eink->lock, flags);
  	buf = list_first_entry(&eink->buf_list, struct eink_buffer, list);
-@@ -717,6 +724,8 @@
+@@ -717,6 +730,8 @@
  	eink_tcon_start(eink);
  	return 0;
  
@@ -160,7 +166,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  err_return:
  	eink_return_buffers(eink, VB2_BUF_STATE_QUEUED);
  	return ret;
-@@ -763,7 +772,8 @@
+@@ -763,7 +778,8 @@
  	flush_workqueue(eink->wq);
  	eink_return_buffers(eink, VB2_BUF_STATE_ERROR);
  
@@ -170,7 +176,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  }
  
  static const struct vb2_ops eink_qops = {
-@@ -867,10 +877,15 @@
+@@ -867,10 +883,15 @@
  		    t->vsync < 1 || t->vsync > 0x7ff)
  			return -EINVAL;
  		if (t->sclk_hz) {
@@ -188,7 +194,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  		}
  		if (t->dclk_div)
  			eink->timing.dclk_div = t->dclk_div;
-@@ -903,10 +918,28 @@
+@@ -903,10 +924,28 @@
  	.vidioc_default			= eink_vidioc_default,
  };
  
@@ -218,7 +224,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  	.unlocked_ioctl	= video_ioctl2,
  	.mmap		= vb2_fop_mmap,
  	.poll		= vb2_fop_poll,
-@@ -943,6 +976,94 @@
+@@ -943,6 +982,98 @@
  	{ .id = "be_ram" },
  };
  
@@ -266,15 +272,19 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
 +	disable_irq(eink->irq);
 +	flush_workqueue(eink->wq);
 +	ret = pinctrl_select_state(eink->pinctrl, eink->pinctrl_idle);
-+	if (ret)
++	if (ret) {
++		dev_err(dev, "idle pinctrl failed: %d\n", ret);
 +		goto err_irq;
++	}
 +	regmap_write(eink->tcon_regs, SUN4I_TCON0_IO_TRI_REG, ~0);
 +	ret = eink_set_power(eink, false);
 +	if (ret)
 +		goto err_irq;
 +	ret = reset_control_assert(eink->rstc);
-+	if (ret)
++	if (ret) {
++		dev_err(dev, "assert reset failed: %d\n", ret);
 +		goto err_irq;
++	}
 +	clk_bulk_disable_unprepare(eink->num_clks, eink->clks);
 +	return 0;
 +
@@ -313,7 +323,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  static int eink_probe(struct platform_device *pdev)
  {
  	struct eink_dev *eink;
-@@ -963,9 +1084,7 @@
+@@ -963,9 +1094,7 @@
  	INIT_LIST_HEAD(&eink->buf_list);
  	INIT_WORK(&eink->idle_work, eink_idle_work);
  	INIT_WORK(&eink->restart_work, eink_restart_work);
@@ -323,7 +333,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  
  	eink->timing = eink_default_timing;
  	/* identity palette; userspace must upload a real pin-state table */
-@@ -998,15 +1117,15 @@
+@@ -998,15 +1127,15 @@
  	}
  
  	eink->pinctrl_active = pinctrl_lookup_state(eink->pinctrl, "active");
@@ -345,7 +355,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  	}
  
  	ret = pinctrl_select_state(eink->pinctrl, eink->pinctrl_idle);
-@@ -1089,56 +1208,28 @@
+@@ -1089,56 +1218,28 @@
  		return ret;
  	}
  
@@ -411,7 +421,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  
  	q = &eink->queue;
  	q->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-@@ -1167,23 +1258,37 @@
+@@ -1167,23 +1268,37 @@
  	eink->vdev.queue = q;
  	video_set_drvdata(&eink->vdev, eink);
  
@@ -451,7 +461,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  	reset_control_assert(eink->rstc);
  	return ret;
  }
-@@ -1195,12 +1300,27 @@
+@@ -1195,12 +1310,27 @@
  	video_unregister_device(&eink->vdev);
  	v4l2_device_unregister(&eink->v4l2_dev);
  
@@ -483,7 +493,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  }
  
  static const struct of_device_id eink_of_match[] = {
-@@ -1212,9 +1332,14 @@
+@@ -1212,9 +1342,14 @@
  static struct platform_driver eink_platform_driver = {
  	.probe = eink_probe,
  	.remove = eink_remove,
@@ -501,47 +511,41 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
 diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
 --- a/drivers/regulator/tps65185.c
 +++ b/drivers/regulator/tps65185.c
-@@ -61,27 +61,42 @@
- 	bool vcom_on;		/* enable state when there is no ctrl gpio */
+@@ -58,48 +58,62 @@
+ 	struct mutex wake_lock;
+ 	int wake_refs;
+ 	unsigned int vcom_sel;	/* last requested VCOM, reapplied on wake */
+-	bool vcom_on;		/* enable state when there is no ctrl gpio */
++	bool v3p3_on;		/* owns a wake reference */
++	bool vposneg_on;	/* owns a wake reference */
++	bool vcom_on;		/* owns a wake reference */
  };
  
--static int tps65185_wake_get(struct tps65185_data *data)
--{
--	guard(mutex)(&data->wake_lock);
--
+ static int tps65185_wake_get(struct tps65185_data *data)
+ {
++	int ret;
++
+ 	guard(mutex)(&data->wake_lock);
+ 
 -	if (data->wake_refs++ > 0 || !data->wakeup_gpio)
--		return 0;
--
++	if (!data->wakeup_gpio || data->wake_refs++ > 0)
+ 		return 0;
+ 
 -	gpiod_set_value_cansleep(data->wakeup_gpio, 1);
--	usleep_range(3000, 4000);
--
++	ret = gpiod_set_value_cansleep(data->wakeup_gpio, 1);
++	if (ret)
++		goto err_sleep;
+ 	usleep_range(3000, 4000);
+ 
 -	/* SLEEP reset the registers; restore the cached configuration */
--	regcache_mark_dirty(data->regmap);
++	/* Never enable panel rails with an unverified register restore. */
+ 	regcache_mark_dirty(data->regmap);
 -	regcache_sync(data->regmap);
 -	/* re-apply VCOM in full: a value requested while the chip slept
 -	 * only reached vcom_sel, and the msb register is volatile */
 -	regmap_write(data->regmap, TPS65185_REG_VCOM1, data->vcom_sel & 0xFF);
 -	regmap_update_bits(data->regmap, TPS65185_REG_VCOM2, BIT(0),
 -			   data->vcom_sel >> 8);
--
--	return 0;
--}
-+static int tps65185_wake_get(struct tps65185_data *data)
-+{
-+	int ret;
-+
-+	guard(mutex)(&data->wake_lock);
-+
-+	if (data->wake_refs++ > 0 || !data->wakeup_gpio)
-+		return 0;
-+
-+	ret = gpiod_set_value_cansleep(data->wakeup_gpio, 1);
-+	if (ret)
-+		goto err_sleep;
-+	usleep_range(3000, 4000);
-+
-+	/* Never enable panel rails with an unverified register restore. */
-+	regcache_mark_dirty(data->regmap);
 +	ret = regcache_sync(data->regmap);
 +	if (ret)
 +		goto err_sleep;
@@ -553,48 +557,279 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
 +				 data->vcom_sel >> 8);
 +	if (ret)
 +		goto err_sleep;
-+
-+	return 0;
+ 
+ 	return 0;
 +
 +err_sleep:
 +	data->wake_refs--;
 +	regcache_mark_dirty(data->regmap);
 +	gpiod_set_value_cansleep(data->wakeup_gpio, 0);
 +	return ret;
-+}
+ }
  
  static void tps65185_wake_put(struct tps65185_data *data)
  {
-@@ -117,17 +132,21 @@
- 	if (ret)
- 		return ret;
+ 	guard(mutex)(&data->wake_lock);
  
--	reinit_completion(&data->tmst_completion);
--	/* start acquisition */
+-	if (--data->wake_refs > 0 || !data->wakeup_gpio)
++	if (!data->wakeup_gpio)
+ 		return;
++	if (WARN_ON_ONCE(data->wake_refs <= 0))
++		return;
++	if (--data->wake_refs > 0)
++		return;
+ 
+ 	gpiod_set_value_cansleep(data->wakeup_gpio, 0);
+ }
+ 
+-static bool tps65185_is_awake(struct tps65185_data *data)
+-{
+-	guard(mutex)(&data->wake_lock);
+-
+-	return data->wake_refs > 0 || !data->wakeup_gpio;
+-}
+-
+ static const struct hwmon_channel_info *tps65185_info[] = {
+ 	HWMON_CHANNEL_INFO(chip, HWMON_C_REGISTER_TZ),
+ 	HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT),
+@@ -119,11 +133,15 @@
+ 
+ 	reinit_completion(&data->tmst_completion);
+ 	/* start acquisition */
 -	regmap_update_bits(data->regmap, TPS65185_REG_TMST1,
 -			   TPS65185_READ_THERM, TPS65185_READ_THERM);
--	wait_for_completion_timeout(&data->tmst_completion,
--				    msecs_to_jiffies(PGOOD_TIMEOUT_MSECS));
--	ret = regmap_read(data->regmap, TPS65185_REG_TMST1, &val);
--	if (!(val & TPS65185_CONV_END)) {
--		ret = -ETIMEDOUT;
--		goto out_sleep;
--	}
-+	reinit_completion(&data->tmst_completion);
-+	/* start acquisition */
 +	ret = regmap_update_bits(data->regmap, TPS65185_REG_TMST1,
 +				 TPS65185_READ_THERM, TPS65185_READ_THERM);
 +	if (ret)
 +		goto out_sleep;
-+	wait_for_completion_timeout(&data->tmst_completion,
-+				    msecs_to_jiffies(PGOOD_TIMEOUT_MSECS));
-+	ret = regmap_read(data->regmap, TPS65185_REG_TMST1, &val);
+ 	wait_for_completion_timeout(&data->tmst_completion,
+ 				    msecs_to_jiffies(PGOOD_TIMEOUT_MSECS));
+ 	ret = regmap_read(data->regmap, TPS65185_REG_TMST1, &val);
 +	if (ret)
 +		goto out_sleep;
-+	if (!(val & TPS65185_CONV_END)) {
-+		ret = -ETIMEDOUT;
-+		goto out_sleep;
+ 	if (!(val & TPS65185_CONV_END)) {
+ 		ret = -ETIMEDOUT;
+ 		goto out_sleep;
+@@ -193,6 +211,8 @@
+ 	ret = regulator_enable_regmap(rdev);
+ 	if (ret)
+ 		tps65185_wake_put(data);
++	else
++		data->v3p3_on = true;
+ 
+ 	return ret;
+ }
+@@ -202,9 +222,18 @@
+ 	struct tps65185_data *data = rdev_get_drvdata(rdev);
+ 	int ret;
+ 
++	/* A rail enabled by this driver keeps the IC awake until this
++	 * transaction completes. A firmware-enabled rail may not own a ref.
++	 */
++	ret = tps65185_wake_get(data);
++	if (ret)
++		return ret;
+ 	ret = regulator_disable_regmap(rdev);
+-	if (!ret)
++	if (!ret && data->v3p3_on) {
++		data->v3p3_on = false;
+ 		tps65185_wake_put(data);
++	}
++	tps65185_wake_put(data);
+ 
+ 	return ret;
+ }
+@@ -213,9 +242,12 @@
+ {
+ 	struct tps65185_data *data = rdev_get_drvdata(rdev);
+ 
+-	if (!tps65185_is_awake(data))
++	/* The boot/probe path and successful enable callback own the
++	 * reference. Do not let an unrelated awake user cause the core
++	 * to adopt an unowned enable state on a wake-controlled chip.
++	 */
++	if (data->wakeup_gpio && !data->v3p3_on)
+ 		return 0;
+-
+ 	return regulator_is_enabled_regmap(rdev);
+ }
+ 
+@@ -230,6 +262,14 @@
+ {
+ 	struct tps65185_data *data = rdev_get_drvdata(rdev);
+ 
++	/* PGOOD is open drain and can read high while the IC sleeps.
++	 * It is a power-good indication, not the enable state. In
++	 * GPIO mode PWRUP is the actual enable control.
++	 */
++	if (data->pwrup_gpio)
++		return gpiod_get_value_cansleep(data->pwrup_gpio);
++	if (data->wakeup_gpio)
++		return data->vposneg_on;
+ 	return gpiod_get_value_cansleep(data->pgood_gpio);
+ }
+ 
+@@ -328,6 +368,7 @@
+ 	if (ret)
+ 		goto err_powerdown;
+ 	dev_dbg(data->dev, "turned on");
++	data->vposneg_on = true;
+ 
+ 	return 0;
+ 
+@@ -360,7 +401,10 @@
+ 
+ 	/* powering down the high voltage rails takes up to 100ms */
+ 	msleep(100);
+-	tps65185_wake_put(data);
++	if (data->vposneg_on) {
++		data->vposneg_on = false;
++		tps65185_wake_put(data);
 +	}
  
- 	ret = regmap_read(data->regmap, TPS65185_REG_TMST_VALUE, &val);
+ 	return 0;
+ }
+@@ -370,17 +414,21 @@
+ 	struct tps65185_data *data = rdev_get_drvdata(rdev);
+ 	int ret;
+ 
+-	data->vcom_sel = selector;
++	guard(mutex)(&data->wake_lock);
+ 
+-	/* in SLEEP the registers are inaccessible; applied on next wake */
+-	if (!tps65185_is_awake(data))
++	/* In SLEEP the registers are inaccessible; apply on next wake. */
++	if (!data->wake_refs && data->wakeup_gpio) {
++		data->vcom_sel = selector;
+ 		return 0;
++	}
+ 
+ 	ret = regmap_update_bits(data->regmap, TPS65185_REG_VCOM2, BIT(0), selector >> 8);
+ 	if (ret < 0)
+ 		return ret;
+-
+-	return regmap_write(data->regmap, TPS65185_REG_VCOM1, selector & 0xFF);
++	ret = regmap_write(data->regmap, TPS65185_REG_VCOM1, selector & 0xFF);
++	if (!ret)
++		data->vcom_sel = selector;
++	return ret;
+ }
+ 
+ static int tps65185_vcom_get_voltage_sel(struct regulator_dev *rdev)
+@@ -389,7 +437,8 @@
+ 	int ret;
+ 	unsigned int sel, sel2;
+ 
+-	if (!tps65185_is_awake(data))
++	guard(mutex)(&data->wake_lock);
++	if (!data->wake_refs && data->wakeup_gpio)
+ 		return data->vcom_sel;
+ 
+ 	ret = regmap_read(data->regmap, TPS65185_REG_VCOM1, &sel);
+@@ -415,7 +464,11 @@
  	if (ret)
+ 		return ret;
+ 
+-	gpiod_set_value_cansleep(data->vcom_ctrl_gpio, 1);
++	ret = gpiod_set_value_cansleep(data->vcom_ctrl_gpio, 1);
++	if (ret) {
++		tps65185_wake_put(data);
++		return ret;
++	}
+ 	data->vcom_on = true;
+ 
+ 	return 0;
+@@ -425,10 +478,16 @@
+ {
+ 	struct tps65185_data *data = rdev_get_drvdata(rdev);
+ 
+-	gpiod_set_value_cansleep(data->vcom_ctrl_gpio, 0);
++	int ret;
++
++	ret = gpiod_set_value_cansleep(data->vcom_ctrl_gpio, 0);
++	if (ret)
++		return ret;
+ 	usleep_range(5000, 6000);
+-	data->vcom_on = false;
+-	tps65185_wake_put(data);
++	if (data->vcom_on) {
++		data->vcom_on = false;
++		tps65185_wake_put(data);
++	}
+ 
+ 	return 0;
+ }
+@@ -515,6 +574,13 @@
+ 	unsigned int int_status_1, int_status_2;
+ 	int ret;
+ 
++	/* A late interrupt must not access the sleeping chip. Keep the
++	 * WAKEUP transition serialized with the register accesses.
++	 */
++	guard(mutex)(&data->wake_lock);
++	if (!data->wake_refs && data->wakeup_gpio)
++		return IRQ_NONE;
++
+ 	/* read both status to have irq cleared */
+ 	ret = regmap_read(data->regmap, TPS65185_REG_INT1, &int_status_1);
+ 	if (ret)
+@@ -592,6 +658,12 @@
+ 	init_completion(&data->tmst_completion);
+ 	mutex_init(&data->wake_lock);
+ 
++	/* WAKEUP was requested high; hold it through regulator registration. */
++	if (data->wakeup_gpio) {
++		usleep_range(10000, 12000);
++		data->wake_refs = 1;
++	}
++
+ 	if (data->pgood_irq > 0) {
+ 		ret = devm_request_threaded_irq(&client->dev, data->pgood_irq,
+ 						NULL, pgood_handler,
+@@ -612,10 +684,7 @@
+ 					     "failed to request irq\n");
+ 	}
+ 
+-	/* the chip is awake here: wakeup gpio (if any) was requested high */
+-	if (data->wakeup_gpio)
+-		usleep_range(10000, 12000);
+-
++	/* The initial wake reference keeps the chip accessible. */
+ 	ret = regmap_read(data->regmap, TPS65185_REG_REVID, &revid);
+ 	if (ret)
+ 		return dev_err_probe(&client->dev, ret, "chip id read failed\n");
+@@ -634,6 +703,20 @@
+ 		return dev_err_probe(&client->dev, ret,
+ 				     "failed to enable temp irq\n");
+ 
++	if (data->wakeup_gpio) {
++		unsigned int enable;
++
++		ret = regmap_read(data->regmap, TPS65185_REG_ENABLE, &enable);
++		if (ret)
++			return dev_err_probe(&client->dev, ret, "enable register read failed\n");
++		if (enable & BIT(5)) {
++			ret = tps65185_wake_get(data);
++			if (ret)
++				return ret;
++			data->v3p3_on = true;
++		}
++	}
++
+ 	config.driver_data = data;
+ 	config.dev = &client->dev;
+ 	config.regmap = data->regmap;
+@@ -661,11 +744,8 @@
+ 			dev_notice(&client->dev, "failed to register hwmon\n");
+ 	}
+ 
+-	/* enter SLEEP unless a boot-on regulator took a wake reference */
+-	scoped_guard(mutex, &data->wake_lock) {
+-		if (!data->wake_refs)
+-			gpiod_set_value_cansleep(data->wakeup_gpio, 0);
+-	}
++	/* Release only the probe reference; enabled rails own their own. */
++	tps65185_wake_put(data);
+ 
+ 	return 0;
+ }
