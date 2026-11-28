@@ -211,6 +211,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           & .\windows-deep-kit\PB626.ps1 -Action Validate
+          if ($LASTEXITCODE -ne 0) { throw 'Actual deep package validation failed' }
           if ((Get-Content -Raw .\windows-deep-kit\PROFILE).Trim() -ne 'deep-lab') { throw 'Wrong deep profile' }
 
   # Experimental builds never feed the production firmware or its caches.

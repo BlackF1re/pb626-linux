@@ -724,6 +724,7 @@ jobs:
           [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\windows-kit\PB626.ps1).Path,[ref]$tokens,[ref]$errors)
           if ($errors.Count) { throw ($errors -join '; ') }
           & .\windows-kit\PB626.ps1 -Action Validate
+          if ($LASTEXITCODE -ne 0) { throw 'Actual Windows package validation failed' }
           & .\windows-kit\host\python\python.exe .\tests\test-windows-flasher.py
           if ($LASTEXITCODE -ne 0) { throw 'Windows transport model failed' }
 

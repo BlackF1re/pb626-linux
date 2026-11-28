@@ -86,3 +86,10 @@ embeddable distribution. MSYS2 UCRT64 packages are used only in CI.
 Zadig is an optional separately downloaded application (GPL; source at
 https://github.com/pbatard/libwdi/tree/v1.5.1); it installs Microsoft's
 WinUSB driver for FEL, not a replacement for sunxi-fel.
+
+The menu accepts 0 to cancel and invalid selections can be corrected.
+The launcher offers to reuse an existing same-build recovery. A session
+record in private/sessions marks the latest potentially destructive write
+before transmission; no passwords or payloads are logged. Progress reflects
+acknowledged blocks. After a failed write keep the book powered; do not
+reboot or retry SPL automatically. Use -BackupDir to supply a verified dump.

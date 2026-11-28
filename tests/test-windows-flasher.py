@@ -53,4 +53,36 @@ class Tests(unittest.TestCase):
         with patch.object(direct.os,"name","nt"), patch.object(direct.socket,"socket",return_value=Sock()):
             direct.EthernetRecovery(windows=True)
         self.assertEqual(calls[:3],[("bind",("169.254.62.2",0)),("connect",("169.254.62.1",6262)),("send",b"PB626/1 hello\n")])
+    def test_journal_before_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"session.txt"
+            direct.journal(path,"preflight")
+            self.assertEqual(path.read_text().splitlines()[0],"preflight")
+            direct.journal(path,"writing","rootfs chunk 1")
+            self.assertEqual(path.read_text().splitlines(),["writing","rootfs chunk 1"])
+            direct.journal(path,"verified","firmware")
+            self.assertEqual(path.read_text().splitlines(),["verified","firmware"])
+    def test_recovery_identity_and_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit=Path(directory)
+            (kit/"native").mkdir()
+            (kit/"native/BUILD-COMMIT").write_text("a"*40)
+            (kit/"candidate").mkdir()
+            candidate=direct.candidate_path(kit)
+            candidate.write_bytes(b"spl")
+            expected="a"*40+" standard "+direct.filehash(candidate)
+            class Mock:
+                def __init__(self,identity,rows): self.identity=identity; self.rows=rows
+                def lines(self,verb,timeout):
+                    return [self.identity] if verb=="identity" else self.rows
+            with self.assertRaises(RuntimeError):
+                direct.check_windows_recovery(Mock("wrong",[]),kit)
+            with self.assertRaises(RuntimeError):
+                direct.check_windows_recovery(Mock(expected,[]),kit)
+            self.assertEqual(direct.check_windows_recovery(Mock(expected,[]),kit,ready=False),[])
+            rows=["CID="+"a"*32]
+            self.assertEqual(direct.check_windows_recovery(Mock(expected,rows),kit),rows)
+    def test_cancel_is_not_write(self):
+        with patch("builtins.input",return_value="no"), self.assertRaises(direct.Cancelled):
+            direct.confirm("Type FLASH: ","FLASH")
 if __name__=="__main__": unittest.main()
