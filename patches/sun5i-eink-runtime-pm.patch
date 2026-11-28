@@ -224,7 +224,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  	.unlocked_ioctl	= video_ioctl2,
  	.mmap		= vb2_fop_mmap,
  	.poll		= vb2_fop_poll,
-@@ -943,6 +982,98 @@
+@@ -943,6 +982,111 @@
  	{ .id = "be_ram" },
  };
  
@@ -276,10 +276,23 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
 +		dev_err(dev, "idle pinctrl failed: %d\n", ret);
 +		goto err_irq;
 +	}
-+	regmap_write(eink->tcon_regs, SUN4I_TCON0_IO_TRI_REG, ~0);
-+	ret = eink_set_power(eink, false);
++	ret = regmap_write(eink->tcon_regs, SUN4I_TCON0_IO_TRI_REG, ~0);
 +	if (ret)
 +		goto err_irq;
++	ret = eink_set_power(eink, false);
++	if (ret) {
++		/* A failed final VDD disable can leave a usable parked engine.
++		 * Only return a retryable Runtime PM error if VDD is verified
++		 * on and both high-voltage supplies are already released.
++		 * The next STREAMON reacquires drive and VCOM in order.
++		 */
++		if (!eink->vcom_on && !eink->drive_on && eink->vdd_on &&
++		    regulator_is_enabled(eink->vdd_supply) > 0) {
++			dev_warn_ratelimited(dev, "VDD still on; refusing suspend (%d)\n", ret);
++			ret = -EBUSY;
++		}
++		goto err_irq;
++	}
 +	ret = reset_control_assert(eink->rstc);
 +	if (ret) {
 +		dev_err(dev, "assert reset failed: %d\n", ret);
@@ -323,7 +336,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  static int eink_probe(struct platform_device *pdev)
  {
  	struct eink_dev *eink;
-@@ -963,9 +1094,7 @@
+@@ -963,9 +1107,7 @@
  	INIT_LIST_HEAD(&eink->buf_list);
  	INIT_WORK(&eink->idle_work, eink_idle_work);
  	INIT_WORK(&eink->restart_work, eink_restart_work);
@@ -333,7 +346,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  
  	eink->timing = eink_default_timing;
  	/* identity palette; userspace must upload a real pin-state table */
-@@ -998,15 +1127,15 @@
+@@ -998,15 +1140,15 @@
  	}
  
  	eink->pinctrl_active = pinctrl_lookup_state(eink->pinctrl, "active");
@@ -355,7 +368,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  	}
  
  	ret = pinctrl_select_state(eink->pinctrl, eink->pinctrl_idle);
-@@ -1089,56 +1218,28 @@
+@@ -1089,56 +1231,28 @@
  		return ret;
  	}
  
@@ -421,7 +434,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  
  	q = &eink->queue;
  	q->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-@@ -1167,23 +1268,37 @@
+@@ -1167,23 +1281,37 @@
  	eink->vdev.queue = q;
  	video_set_drvdata(&eink->vdev, eink);
  
@@ -461,7 +474,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  	reset_control_assert(eink->rstc);
  	return ret;
  }
-@@ -1195,12 +1310,27 @@
+@@ -1195,12 +1323,27 @@
  	video_unregister_device(&eink->vdev);
  	v4l2_device_unregister(&eink->v4l2_dev);
  
@@ -493,7 +506,7 @@ diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
  }
  
  static const struct of_device_id eink_of_match[] = {
-@@ -1212,9 +1342,14 @@
+@@ -1212,9 +1355,14 @@
  static struct platform_driver eink_platform_driver = {
  	.probe = eink_probe,
  	.remove = eink_remove,
@@ -610,7 +623,16 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  	if (!(val & TPS65185_CONV_END)) {
  		ret = -ETIMEDOUT;
  		goto out_sleep;
-@@ -193,6 +211,8 @@
+@@ -186,6 +204,8 @@
+ 	struct tps65185_data *data = rdev_get_drvdata(rdev);
+ 	int ret;
+ 
++	if (data->v3p3_on)
++		return regulator_enable_regmap(rdev);
+ 	ret = tps65185_wake_get(data);
+ 	if (ret)
+ 		return ret;
+@@ -193,6 +213,8 @@
  	ret = regulator_enable_regmap(rdev);
  	if (ret)
  		tps65185_wake_put(data);
@@ -619,7 +641,7 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  
  	return ret;
  }
-@@ -202,9 +222,18 @@
+@@ -202,9 +224,18 @@
  	struct tps65185_data *data = rdev_get_drvdata(rdev);
  	int ret;
  
@@ -639,7 +661,7 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  
  	return ret;
  }
-@@ -213,9 +242,12 @@
+@@ -213,9 +244,12 @@
  {
  	struct tps65185_data *data = rdev_get_drvdata(rdev);
  
@@ -654,7 +676,12 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  	return regulator_is_enabled_regmap(rdev);
  }
  
-@@ -230,6 +262,14 @@
+@@ -226,10 +260,18 @@
+ 	.is_enabled = tps65185_v3p3_is_enabled,
+ };
+ 
+-static int tps65185_check_powergood(struct regulator_dev *rdev)
++static int tps65185_vposneg_is_enabled(struct regulator_dev *rdev)
  {
  	struct tps65185_data *data = rdev_get_drvdata(rdev);
  
@@ -669,7 +696,39 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  	return gpiod_get_value_cansleep(data->pgood_gpio);
  }
  
-@@ -328,6 +368,7 @@
+@@ -255,9 +297,14 @@
+ 
+ static int tps65185_vposneg_get_voltage_sel(struct regulator_dev *rdev)
+ {
++	struct tps65185_data *data = rdev_get_drvdata(rdev);
+ 	int ret;
+ 
++	ret = tps65185_wake_get(data);
++	if (ret)
++		return ret;
+ 	ret = regulator_get_voltage_sel_regmap(rdev);
++	tps65185_wake_put(data);
+ 	if (ret < 0)
+ 		return ret;
+ 
+@@ -267,7 +314,15 @@
+ 
+ static int tps65185_vposneg_set_voltage_sel(struct regulator_dev *rdev, unsigned int selector)
+ {
+-	return regulator_set_voltage_sel_regmap(rdev, 6 - selector);
++	struct tps65185_data *data = rdev_get_drvdata(rdev);
++	int ret;
++
++	ret = tps65185_wake_get(data);
++	if (ret)
++		return ret;
++	ret = regulator_set_voltage_sel_regmap(rdev, 6 - selector);
++	tps65185_wake_put(data);
++	return ret;
+ }
+ 
+ static irqreturn_t pgood_handler(int irq, void *dev_id)
+@@ -328,6 +383,7 @@
  	if (ret)
  		goto err_powerdown;
  	dev_dbg(data->dev, "turned on");
@@ -677,7 +736,7 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  
  	return 0;
  
-@@ -360,7 +401,10 @@
+@@ -360,7 +416,10 @@
  
  	/* powering down the high voltage rails takes up to 100ms */
  	msleep(100);
@@ -689,7 +748,7 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  
  	return 0;
  }
-@@ -370,17 +414,21 @@
+@@ -370,17 +429,21 @@
  	struct tps65185_data *data = rdev_get_drvdata(rdev);
  	int ret;
  
@@ -716,7 +775,7 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  }
  
  static int tps65185_vcom_get_voltage_sel(struct regulator_dev *rdev)
-@@ -389,7 +437,8 @@
+@@ -389,7 +452,8 @@
  	int ret;
  	unsigned int sel, sel2;
  
@@ -726,7 +785,7 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  		return data->vcom_sel;
  
  	ret = regmap_read(data->regmap, TPS65185_REG_VCOM1, &sel);
-@@ -415,7 +464,11 @@
+@@ -415,7 +479,11 @@
  	if (ret)
  		return ret;
  
@@ -739,13 +798,13 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  	data->vcom_on = true;
  
  	return 0;
-@@ -425,10 +478,16 @@
+@@ -424,11 +492,16 @@
+ static int tps65185_vcom_disable(struct regulator_dev *rdev)
  {
  	struct tps65185_data *data = rdev_get_drvdata(rdev);
++	int ret;
  
 -	gpiod_set_value_cansleep(data->vcom_ctrl_gpio, 0);
-+	int ret;
-+
 +	ret = gpiod_set_value_cansleep(data->vcom_ctrl_gpio, 0);
 +	if (ret)
 +		return ret;
@@ -759,7 +818,16 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  
  	return 0;
  }
-@@ -515,6 +574,13 @@
+@@ -458,7 +531,7 @@
+ 	.map_voltage = regulator_map_voltage_linear,
+ 	.enable = tps65185_vposneg_enable,
+ 	.disable = tps65185_vposneg_disable,
+-	.is_enabled = tps65185_check_powergood,
++	.is_enabled = tps65185_vposneg_is_enabled,
+ 	.set_voltage_sel = tps65185_vposneg_set_voltage_sel,
+ 	.get_voltage_sel = tps65185_vposneg_get_voltage_sel,
+ };
+@@ -515,6 +588,13 @@
  	unsigned int int_status_1, int_status_2;
  	int ret;
  
@@ -773,7 +841,7 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  	/* read both status to have irq cleared */
  	ret = regmap_read(data->regmap, TPS65185_REG_INT1, &int_status_1);
  	if (ret)
-@@ -592,6 +658,12 @@
+@@ -592,6 +672,12 @@
  	init_completion(&data->tmst_completion);
  	mutex_init(&data->wake_lock);
  
@@ -786,7 +854,7 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  	if (data->pgood_irq > 0) {
  		ret = devm_request_threaded_irq(&client->dev, data->pgood_irq,
  						NULL, pgood_handler,
-@@ -612,10 +684,7 @@
+@@ -612,10 +698,7 @@
  					     "failed to request irq\n");
  	}
  
@@ -798,7 +866,7 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  	ret = regmap_read(data->regmap, TPS65185_REG_REVID, &revid);
  	if (ret)
  		return dev_err_probe(&client->dev, ret, "chip id read failed\n");
-@@ -634,6 +703,20 @@
+@@ -634,6 +717,20 @@
  		return dev_err_probe(&client->dev, ret,
  				     "failed to enable temp irq\n");
  
@@ -819,7 +887,7 @@ diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
  	config.driver_data = data;
  	config.dev = &client->dev;
  	config.regmap = data->regmap;
-@@ -661,11 +744,8 @@
+@@ -661,11 +758,8 @@
  			dev_notice(&client->dev, "failed to register hwmon\n");
  	}
  
