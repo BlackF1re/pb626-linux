@@ -1,4 +1,4 @@
-Full qualification request: correct deep build concurrency, bound SRAM failure paths and build isolated linked deep kernel
+Full qualification request: source SPL LED handoff and FEL priority regression
 Source branch: optimization/debian-runtime
-Source head before request: 4a105da497262e885a2dbac019570e74013eaa72
-Scope: production firmware and independent deep kernel/modules/DTB plus actual SRAM fault model. No change to production sleep or installer qualification gates.
+Source head before request: 6f7f0d150ae692d4796d0d9a6b5b0680ed0baa97
+Scope: production firmware, isolated deep kernel and rebuilt source SPL candidates. Recheck native LBA, Menu/FEL with an armed RTC marker and real ARM LED handoff. Do not change the qualified historical SPL or installer gates.
