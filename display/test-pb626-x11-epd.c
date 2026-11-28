@@ -701,6 +701,12 @@ int main(void)
 	test_capture_coordinates();
 	assert(damage_capture_due(0, 1000) == 1000 + CAPTURE_COALESCE_US);
 	assert(damage_capture_due(100000, 1000) == 100000);
+	int window_coalescing = 0;
+	assert(window_capture_due(0, 1000, &window_coalescing) == 1000 + WINDOW_COALESCE_US);
+	assert(window_coalescing);
+	assert(window_capture_due(65000, 2000, &window_coalescing) == 65000);
+	window_coalescing = 0;
+	assert(window_capture_due(200000, 1000, &window_coalescing) == 200000);
 	assert(may_retry_capture(1, 0, 0, 0));
 	assert(!may_retry_capture(0, 0, 0, 0));
 	assert(!may_retry_capture(1, 1, 0, 0));

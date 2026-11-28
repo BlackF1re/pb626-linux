@@ -38,7 +38,7 @@
 #endif
 
 enum { MENU_HOLD_US = 1000000, LAYOUT_QUIET_US = 180000, QUIET_US = 300000,
-       MAX_PENDING_US = 850000, CAPTURE_COALESCE_US = 24000,
+       MAX_PENDING_US = 850000, CAPTURE_COALESCE_US = 24000, WINDOW_COALESCE_US = 64000,
        CLEAN_QUIET_US = 1200000, LARGE_CLEAN_QUIET_US = 5000000,
        LARGE_CLEAN_PIXELS = PIXELS / 16, CLEAN_AFTER = 8, MAX_REGIONS = 8 };
 enum { KEYBOARD_SHOW = 1, KEYBOARD_HIDE, KEYBOARD_TOGGLE };
@@ -1361,6 +1361,15 @@ static uint64_t damage_capture_due(uint64_t next_capture, uint64_t now)
 	return next_capture > coalesce ? next_capture : coalesce;
 }
 
+static uint64_t window_capture_due(uint64_t next_capture, uint64_t now, int *coalescing)
+{
+	if (*coalescing)
+		return next_capture;
+	*coalescing = 1;
+	uint64_t due = now + WINDOW_COALESCE_US;
+	return next_capture > due ? next_capture : due;
+}
+
 static int may_retry_capture(int has_frame, int manual, int lock_pending, int retried)
 {
 	return has_frame && !manual && !lock_pending && !retried;
@@ -1786,7 +1795,7 @@ int main(int argc, char **argv)
 	}
 	enum pb_rotation panel_rotation = capture_rotation;
 	XSetErrorHandler(handle_x_error);
-	XSelectInput(display, root, PropertyChangeMask | StructureNotifyMask);
+	XSelectInput(display, root, PropertyChangeMask | StructureNotifyMask | SubstructureNotifyMask);
 	int randr_event, randr_error;
 	int randr = XRRQueryExtension(display, &randr_event, &randr_error);
 	if (randr)
@@ -1894,7 +1903,7 @@ int main(int argc, char **argv)
 	unsigned int cleanup_count = 0;
 	uint64_t last_damage = 0, pending_since = 0, next_capture = 0, layout_until = 0;
 	uint64_t damage_seen = 0;
-	int capture_retry = 0;
+	int capture_retry = 0, window_coalescing = 0;
 
 	for (;;) {
 		XEvent event;
@@ -1909,7 +1918,16 @@ int main(int argc, char **argv)
 						next_capture = damage_capture_due(next_capture, now_us());
 					dirty = 1;
 				}
-			} else if (event.type == ConfigureNotify ||
+			} else if (event.type == MapNotify || event.type == UnmapNotify) {
+				/* Root child windows (menus, dialogs, clients) may be
+				 * mapped before their first paint, or unmapped before
+				 * the uncovered window has repainted. Coalesce once. */
+				if (damage && !screen_locked &&
+				    may_retry_capture(has_frame, controls.clean_requested, lock_pending, capture_retry)) {
+					next_capture = window_capture_due(next_capture, now_us(), &window_coalescing);
+					dirty = 1;
+				}
+			} else if ((event.type == ConfigureNotify && event.xconfigure.window == root) ||
 				   (randr && (event.type == randr_event + RRScreenChangeNotify ||
 					      event.type == randr_event + RRNotify))) {
 				if (randr && event.type == randr_event + RRScreenChangeNotify)
@@ -2123,6 +2141,7 @@ int main(int argc, char **argv)
 				continue;
 			}
 			capture_retry = 0;
+			window_coalescing = 0;
 		}
 
 		if (!has_frame && !captured)

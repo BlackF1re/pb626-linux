@@ -386,3 +386,16 @@ must not silently clear the bridge's ghosting counter. The known factory
 matrix includes all 256 GC16 transitions; malformed or incompatible WBF
 files fail closed using the existing recovery path. Host regression
 checks missing and present white-to-white scrub eligibility.
+
+### Bounded top-level window coalescing
+
+Observe root child MapNotify/UnmapNotify in addition to XDamage. For
+normal interactive windows/menus, allow a single 64 ms window from the
+first structural event to collect initial painting or the uncovered
+window's redraw. Subsequent structural events do not extend the deadline.
+Ordinary text and cursor damage retain 24 ms, and manual reset, startup,
+lock and resume bypass the extra window. Child ConfigureNotify is not
+mistaken for root geometry changes. The latency trade-off is deliberate:
+up to 40 ms extra compared with ordinary coalescing to avoid a full
+unnecessary physical update. Slow applications can still paint after the
+deadline; physical testing is required to tune it.
