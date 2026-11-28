@@ -4,8 +4,8 @@ proc exec {args} {
     if {[lindex $args 0] eq "/usr/bin/timeout"} {set args [lrange $args 4 end]}
     if {[lindex $args 0] eq "/usr/bin/doas"} {
         switch [lindex $args 2] {
-            desktop-status {return "PB626_BUTTONS=pages\nPB626_EPD_GRAY_PROFILE=photo\nPB626_EPD_TONE=cie-lstar\nPB626_EPD_GAMMA=1.2\nPB626_UI_DPI=144"}
-            desktop-display - desktop-buttons - desktop-idle - desktop-hold - desktop-dpi {
+            desktop-status {return "PB626_BUTTONS=pages\nPB626_EPD_GRAY_PROFILE=photo\nPB626_EPD_TONE=cie-lstar\nPB626_EPD_GAMMA=1.2\nPB626_UI_DPI=144\nPB626_PANEL_SIZE=56\nPB626_TITLEBAR_SIZE=48"}
+            desktop-display - desktop-buttons - desktop-idle - desktop-hold - desktop-dpi - desktop-appearance {
                 set ::lastSave [lrange $args 2 end-1]
                 return ""
             }
@@ -37,6 +37,11 @@ if {$::uiDpi ne "144"} {error "Application DPI not restored"}
 set ::uiDpi 120
 desktopApply dpi
 if {$::lastSave ne {desktop-dpi 120}} {error "Application DPI not saved"}
+if {$::panelSize ne "56" || $::titlebarSize ne "48"} {error "Panel sizes not restored"}
+set ::panelSize 64
+set ::titlebarSize 56
+desktopApply appearance
+if {$::lastSave ne {desktop-appearance 64 56}} {error "Panel sizes not saved"}
 desktopApply keys
 if {[lindex $::lastSave 0] ne "desktop-buttons"} {error "Button save overwrites other tabs"}
 set ::holdMs 750

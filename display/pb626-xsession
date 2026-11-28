@@ -78,11 +78,25 @@ supervise_client() (
         sleep "$delay"
     done
 )
-supervise_client matchbox-window-manager -theme PB626 -use_titlebar yes &
+panel_size=48
+wm_theme=PB626
+if [ -f /etc/debian_version ]; then
+    case ${PB626_PANEL_SIZE:-48} in
+        32|40|48|56|64|72) panel_size=${PB626_PANEL_SIZE:-48} ;;
+    esac
+    case ${PB626_TITLEBAR_SIZE:-40} in
+        32|48|56|64)
+            if [ -r "/usr/share/themes/PB626-$PB626_TITLEBAR_SIZE/matchbox/theme.xml" ]; then
+                wm_theme=PB626-$PB626_TITLEBAR_SIZE
+            fi
+            ;;
+    esac
+fi
+supervise_client matchbox-window-manager -theme "$wm_theme" -use_titlebar yes &
 wm=$!
 panel=
 if command -v matchbox-panel >/dev/null; then
-    supervise_client matchbox-panel --orientation south --size 48 --bgcolor white --no-session \
+    supervise_client matchbox-panel --orientation south --size "$panel_size" --bgcolor white --no-session \
         --default-apps 'mb-applet-menu-launcher,mb-applet-launcher --desktop /etc/pb626/keyboard.desktop,mb-applet-battery,mb-applet-clock' &
     panel=$!
 fi

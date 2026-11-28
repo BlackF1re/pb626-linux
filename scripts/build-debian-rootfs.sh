@@ -107,6 +107,11 @@ sudo install -D -m 644 display/eink-fonts.conf "$pkg/etc/fonts/conf.d/99-pb626-e
 sudo install -D -m 644 display/no-color.sh "$pkg/etc/profile.d/pb626-no-color.sh"
 sudo install -d "$pkg/usr/share/themes/PB626/matchbox" "$pkg/usr/share/applications"
 sudo install -m 644 display/matchbox/PB626/* "$pkg/usr/share/themes/PB626/matchbox/"
+python3 scripts/build-matchbox-themes.py "$work/themes"
+for height in 32 48 56 64; do
+    sudo install -d "$pkg/usr/share/themes/PB626-$height/matchbox"
+    sudo install -m 644 "$work/themes/PB626-$height/matchbox/"* "$pkg/usr/share/themes/PB626-$height/matchbox/"
+done
 sudo install -m 644 display/matchbox/{pb626-calculator,pb626-editor,pb626-files}.desktop "$pkg/usr/share/applications/"
 sudo install -m 644 display/native/*.desktop "$pkg/usr/share/applications/"
 sudo install -m 644 display/matchbox/htop.desktop "$pkg/usr/share/applications/pb626-monitor.desktop"
