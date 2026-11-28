@@ -91,14 +91,14 @@ Fit Matchbox Keyboard to a portrait E Ink screen and accept WM geometry.
 -
 +  held = mb_kbd_key_is_held(kbd, key);
 +  XSetForeground(xdpy, xft_backend->xgc,
-+                 BlackPixel(xdpy, xscreen));
++                 WhitePixel(xdpy, xscreen));
    XFillRectangles(xdpy, backbuffer, xft_backend->xgc, &rect, 1);
 -
 -  /* draw 'main border' */
 -
 -  XSetForeground(xdpy, xft_backend->xgc, xft_backend->xcol_c5c5c5.pixel);
 -
-+  XSetForeground(xdpy, xft_backend->xgc, WhitePixel(xdpy, xscreen));
++  XSetForeground(xdpy, xft_backend->xgc, BlackPixel(xdpy, xscreen));
    XDrawRectangles(xdpy, backbuffer, xft_backend->xgc, &rect, 1);
 +  if (held && rect.width > 6 && rect.height > 6)
 +    XDrawRectangle(xdpy, backbuffer, xft_backend->xgc, rect.x + 3, rect.y + 3, rect.width - 6, rect.height - 6);
@@ -174,7 +174,7 @@ Fit Matchbox Keyboard to a portrait E Ink screen and accept WM geometry.
    /* Background */
    XSetForeground(mb_kbd_ui_x_display(ui), 
 -		 xft_backend->xgc, xft_backend->xcol_f4f4f4.pixel);
-+		 xft_backend->xgc, BlackPixel(mb_kbd_ui_x_display(ui), mb_kbd_ui_x_screen(ui)));
++		 xft_backend->xgc, WhitePixel(mb_kbd_ui_x_display(ui), mb_kbd_ui_x_screen(ui)));
  
    XFillRectangle(mb_kbd_ui_x_display(ui), 
  		 mb_kbd_ui_backbuffer(ui), 
@@ -193,7 +193,7 @@ Fit Matchbox Keyboard to a portrait E Ink screen and accept WM geometry.
 -		     &xft_backend->font_col);
 +  for (int held = 0; held < 2; held++)
 +    {
-+      coltmp.red = coltmp.green = coltmp.blue = 0xffff;
++      coltmp.red = coltmp.green = coltmp.blue = 0x0000;
 +      coltmp.alpha = 0xffff;
 +      XftColorAllocValue(mb_kbd_ui_x_display(ui),
 +                         DefaultVisual(mb_kbd_ui_x_display(ui), mb_kbd_ui_x_screen(ui)),
