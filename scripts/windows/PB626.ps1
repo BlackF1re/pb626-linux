@@ -4,9 +4,19 @@ param(
     [ValidateSet('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader','Backup','Restore','Preflight','Validate','Prepare','Recovery')][string]$Action,
     [ValidateSet('Auto','NCM','RNDIS')][string]$UsbProfile='Auto',
     [string]$DataDir,
-    [switch]$UseRunningRecovery
+    [string]$BackupDir,
+    [switch]$UseRunningRecovery,
+    [switch]$PauseOnExit
 )
 $ErrorActionPreference='Stop'
+$script:JournalPath=$null
+$script:FelStarted=$false
+$script:HandedOff=$false
+$script:ChildExit=0
+$script:Mutex=$null
+$script:OwnMutex=$false
+function Cancel-Operation { throw [OperationCanceledException]::new('Cancelled by user') }
+function Main {
 $kit=$PSScriptRoot
 $python=Join-Path $kit 'host\python\python.exe'
 $firmwareProfile=(Get-Content -Raw -LiteralPath (Join-Path $kit 'PROFILE')).Trim()
@@ -15,20 +25,52 @@ $candidate=if ($firmwareProfile -eq 'deep-lab') { 'candidate/BT0-uncaged-deep-ca
 if (!$DataDir) { $DataDir=Join-Path $kit 'private' }
 function Say([string]$Message) { Write-Host $Message -ForegroundColor Cyan }
 function Invoke-Python([string[]]$Arguments) {
-    & $python @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "Operation failed (exit $LASTEXITCODE). No automatic write retry." }
+    $previous=$ErrorActionPreference
+    try {
+        $ErrorActionPreference='Continue'
+        & $python @Arguments
+        $code=$LASTEXITCODE
+    } finally { $ErrorActionPreference=$previous }
+    if ($code -eq 2) { Cancel-Operation }
+    if ($code -ne 0) { throw "Operation failed (exit $code). No automatic write retry." }
+}
+function Invoke-Probe([string[]]$Arguments) {
+    $previous=$ErrorActionPreference
+    try {
+        $ErrorActionPreference='Continue'
+        $lines=@(& $python @Arguments 2>&1)
+        $code=$LASTEXITCODE
+    } finally { $ErrorActionPreference=$previous }
+    [pscustomobject]@{Code=$code; Lines=$lines}
+}
+function Read-Directory([string]$Prompt,[string]$Default='') {
+    while ($true) {
+        $hint=if ($Default) { " [$Default]" } else { '' }
+        $answer=(Read-Host "$Prompt$hint (0 = cancel)").Trim()
+        if ($answer -eq '0') { Cancel-Operation }
+        if (!$answer) { $answer=$Default }
+        $answer=$answer.Trim('"')
+        if ($answer -and (Test-Path -LiteralPath $answer -PathType Container)) { return [IO.Path]::GetFullPath($answer) }
+        Write-Host 'Directory not found. Try again.' -ForegroundColor Yellow
+    }
 }
 function Verify-Kit {
     $seen=@{}
-    foreach ($line in Get-Content -LiteralPath (Join-Path $kit 'SHA256SUMS')) {
+    $entries=@(Get-Content -LiteralPath (Join-Path $kit 'SHA256SUMS'))
+    $n=0
+    Say 'Verifying package integrity...'
+    foreach ($line in $entries) {
+        $n++
         if ($line -notmatch '^([a-f0-9]{64})  ([A-Za-z0-9_.+/-]+)$') { throw 'Malformed kit manifest' }
         $digest=$Matches[1]; $name=$Matches[2]
         if ($name.StartsWith('/') -or $name.Split('/') -contains '..' -or $seen.ContainsKey($name)) { throw 'Unsafe manifest path' }
         $seen[$name]=$true
         $path=Join-Path $kit $name
+        Write-Progress -Activity 'Verify firmware package' -Status "$n/$($entries.Count) : $name" -PercentComplete (100*$n/[Math]::Max(1,$entries.Count))
         if ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Unexpected link: $name" }
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $digest) { throw "Kit hash mismatch: $name" }
     }
+    Write-Progress -Activity 'Verify firmware package' -Completed
     foreach ($name in @('PB626.ps1','windows-fel.py','install-direct.py','dump-network.py','host/python/python.exe','host/sunxi-fel.exe','host/fdtget.exe','host/openssl.exe','host/direct-entry.bin','native/BUILD-COMMIT','native/SHA256SUMS','native/raw-linux.img','native/pb626-rootfs.ext4.gz','native/pb626-rootfs.bmap.json','native/pb626-bt0-menu.raw','recovery/BUILD-COMMIT','recovery/pb626-megi-zImage','recovery/pb626-megi-initramfs.cpio.gz','recovery/pb626-elan-emmc-backup.dtb','recovery/pb626-elan-emmc-windows-rndis.dtb',$candidate,'qualification/emulation.json','PROFILE')) {
         if (!$seen.ContainsKey($name)) { throw "Missing kit file: $name" }
     }
@@ -95,21 +137,29 @@ function Connect-Recovery {
     $script:AdapterIndex=$index
     if (!$existing.Count) {
         $script:RestoreDhcp=((Get-NetIPInterface -InterfaceIndex $index -AddressFamily IPv4).Dhcp -eq 'Enabled')
-        New-NetIPAddress -InterfaceIndex $index -IPAddress '169.254.62.2' -PrefixLength 30 -AddressFamily IPv4 | Out-Null
         $script:AddedAddress=$true
+        New-NetIPAddress -InterfaceIndex $index -IPAddress '169.254.62.2' -PrefixLength 30 -AddressFamily IPv4 -PolicyStore ActiveStore | Out-Null
     } elseif ($existing[0].PrefixLength -ne 30) { throw 'Existing recovery address has the wrong subnet.' }
     # No default gateway, DNS changes, Internet sharing or firewall edits.
-    $until=(Get-Date).AddSeconds(45)
+    $until=(Get-Date).AddSeconds(65)
+    $verb=if ($Action -eq 'Recovery') { 'hello' } else { 'ready' }
     do {
-        & $python (Join-Path $kit 'windows-fel.py') hello 2>$null
-        if ($LASTEXITCODE -eq 0) { return }
+        Write-Progress -Activity 'Connecting to RAM recovery' -Status 'Waiting for recovery and storage'
+        $result=Invoke-Probe @((Join-Path $kit 'windows-fel.py'),$verb)
+        if ($result.Code -eq 0) {
+            Write-Progress -Activity 'Connecting to RAM recovery' -Completed
+            Write-Host ($result.Lines -join ' ') -ForegroundColor Green
+            return
+        }
+        if (($result.Lines -join ' ') -match 'Wrong RAM recovery build/profile') { break }
         Start-Sleep -Seconds 1
     } while ((Get-Date) -lt $until)
-    throw 'Recovery did not answer the fixed protocol. No eMMC writes attempted.'
+    Write-Progress -Activity 'Connecting to RAM recovery' -Completed
+    throw "Recovery unavailable or incompatible: $($result.Lines -join ' '). Boot recovery from this bundle."
 }
 function Disconnect-Recovery {
     if ($script:AddedAddress) {
-        Remove-NetIPAddress -InterfaceIndex $script:AdapterIndex -IPAddress '169.254.62.2' -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-NetIPAddress -InterfaceIndex $script:AdapterIndex -IPAddress '169.254.62.2' -PolicyStore ActiveStore -Confirm:$false -ErrorAction SilentlyContinue
     }
     if ($script:RestoreDhcp) {
         Set-NetIPInterface -InterfaceIndex $script:AdapterIndex -AddressFamily IPv4 -Dhcp Enabled -ErrorAction SilentlyContinue
@@ -120,46 +170,34 @@ Write-Host '========================================================' -Foregroun
 Write-Host '   PB626 UNCAGED  |  Native Windows firmware console' -ForegroundColor Cyan
 Write-Host '   ELAN / eMMC   |  PowerShell 5.1   |  no WSL' -ForegroundColor Gray
 Write-Host '========================================================' -ForegroundColor DarkCyan
-if (!$Action -and $firmwareProfile -eq 'deep-lab') {
-    Write-Host '  DEEP LAB / NOT HARDWARE QUALIFIED' -ForegroundColor Yellow
-    Write-Host '  1   Install deep kernel, paired rootfs/modules and resume SPL' -ForegroundColor Yellow
-    Write-Host '  2   Backup complete eMMC'
-    Write-Host '  3   Restore verified eMMC dump'
-    Write-Host '  4   Read-only restore preflight'
-    Write-Host '  5   Boot RAM recovery only'
-    Write-Host '  6   Verify package (offline)'
-    Write-Host '  7   Prepare historical FEL SPL'
-    $Action=switch (Read-Host 'Select 1-7') {
-        '1' {'InstallDeepLab'} '2' {'Backup'} '3' {'Restore'} '4' {'Preflight'}
-        '5' {'Recovery'} '6' {'Validate'} '7' {'Prepare'} default {throw 'Cancelled'}
-    }
-}
+Write-Host "  Profile: $firmwareProfile | Data: $DataDir" -ForegroundColor Gray
 if (!$Action) {
-    Write-Host '  1   Install paired Debian + kernel (keep current BT0)'
-    Write-Host '  2   Install paired Debian + kernel + qualified BT0'
-    Write-Host '  3   Install paired Debian + kernel + NEW experimental BT0' -ForegroundColor Yellow
-    Write-Host '  4   Update only BT0 to NEW experimental candidate' -ForegroundColor Yellow
-    Write-Host '  5   Restore only the historical qualified BT0'
-    Write-Host '  6   Backup complete eMMC'
-    Write-Host '  7   Restore verified eMMC dump'
-    Write-Host '  8   Read-only restore preflight'
-    Write-Host '  9   Boot RAM recovery only'
-    Write-Host ' 10   Verify package (offline)'
-    Write-Host ' 11   Prepare historical FEL SPL (no device access)'
-    $Action=switch (Read-Host 'Select 1-11') {
-        '1' {'Install'} '2' {'InstallQualified'} '3' {'InstallCandidate'} '4' {'Bootloader'}
-        '5' {'RestoreBootloader'} '6' {'Backup'} '7' {'Restore'} '8' {'Preflight'}
-        '9' {'Recovery'} '10' {'Validate'} '11' {'Prepare'} default {throw 'Cancelled'}
+    if ($firmwareProfile -eq 'deep-lab') {
+        $menu=[ordered]@{'1'=@('InstallDeepLab','Install experimental deep kernel + modules + resume SPL');'2'=@('Backup','Back up complete eMMC');'3'=@('Restore','Restore verified eMMC dump');'4'=@('Preflight','Read-only restore preflight');'5'=@('Recovery','Boot RAM recovery only');'6'=@('Validate','Verify package (offline)');'7'=@('Prepare','Prepare historical FEL inputs')}
+        Write-Warning 'DEEP LAB: not hardware qualified.'
+    } else {
+        $menu=[ordered]@{'1'=@('Install','Update Debian + kernel; keep recognized BT0');'2'=@('InstallQualified','Install Debian + kernel + historical qualified BT0');'3'=@('InstallCandidate','Install Debian + kernel + experimental BT0');'4'=@('Bootloader','Update ONLY BT0 (experimental)');'5'=@('RestoreBootloader','Restore ONLY historical BT0');'6'=@('Backup','Back up complete eMMC');'7'=@('Restore','Restore verified eMMC dump');'8'=@('Preflight','Read-only restore preflight');'9'=@('Recovery','Boot RAM recovery only');'10'=@('Validate','Verify package (offline)');'11'=@('Prepare','Prepare historical FEL inputs')}
+    }
+    foreach ($key in $menu.Keys) {
+        $color=if ($menu[$key][0] -in @('InstallDeepLab','InstallCandidate','Bootloader','Restore','InstallQualified','RestoreBootloader')) {'Yellow'} else {'Gray'}
+        Write-Host ('  {0,2}   {1}' -f $key,$menu[$key][1]) -ForegroundColor $color
+    }
+    Write-Host '   0   Exit'
+    while (!$Action) {
+        $choice=(Read-Host 'Select operation').Trim()
+        if ($choice -eq '0' -or !$choice) { Cancel-Operation }
+        if ($menu.Contains($choice)) { $Action=$menu[$choice][0] }
+        else { Write-Host 'Invalid choice. Enter a listed number.' -ForegroundColor Yellow }
     }
 }
-Verify-Kit
 if ($firmwareProfile -eq 'deep-lab' -and $Action -in @('Install','InstallQualified','InstallCandidate','Bootloader','RestoreBootloader')) { throw 'Deep profile requires the paired InstallDeepLab action' }
 if ($firmwareProfile -eq 'standard' -and $Action -eq 'InstallDeepLab') { throw 'Use the separate deep lab bundle' }
 if ($Action -eq 'Validate') {
+    Verify-Kit
     Invoke-Python @((Join-Path $kit 'windows-fel.py'),'validate')
     return
 }
-if ($Action -eq 'Prepare') { Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare'); return }
+if ($Action -eq 'Prepare') { Verify-Kit; Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare'); return }
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $principal=New-Object Security.Principal.WindowsPrincipal($identity)
 if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -168,15 +206,132 @@ if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if ($fullData.EndsWith('\')) { $fullData+='.' }
     $launch='-NoLogo -NoProfile -ExecutionPolicy Bypass -File "'+$PSCommandPath+'" -Action '+$Action+' -UsbProfile '+$UsbProfile+' -DataDir "'+$fullData+'"'
     if ($UseRunningRecovery) { $launch+=' -UseRunningRecovery' }
+    if ($PauseOnExit) { $launch+=' -PauseOnExit' }
+    if ($BackupDir) {
+        $fullBackup=[IO.Path]::GetFullPath($BackupDir)
+        if ($fullBackup.EndsWith('\')) { $fullBackup+='.' }
+        if ($fullBackup.Contains('"')) { throw 'Invalid backup directory' }
+        $launch+=' -BackupDir "'+$fullBackup+'"'
+    }
     $child=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -ArgumentList $launch -Wait -PassThru
-    exit $child.ExitCode
+    $script:HandedOff=$true
+    $script:ChildExit=$child.ExitCode
+    return
 }
+$script:Mutex=[Threading.Mutex]::new($false,'Global\PB626-Windows-Flasher')
+try { $script:OwnMutex=$script:Mutex.WaitOne(0) }
+catch [Threading.AbandonedMutexException] { $script:OwnMutex=$true }
+if (!$script:OwnMutex) { throw 'Another PB626 flasher is running.' }
+Verify-Kit
+$journalDir=Join-Path $DataDir 'sessions'
+$null=New-Item -ItemType Directory -Force -Path $journalDir
+$script:JournalPath=Join-Path $journalDir ((Get-Date -Format 'yyyyMMdd-HHmmss-fff')+'-'+$PID+'.txt')
 if ($Action -in @('InstallCandidate','Bootloader','InstallDeepLab')) {
     Write-Warning 'NEW SPL is experimental. A successful CI or FEL RAM boot does NOT prove recovery after replacing installed BT0. Keep a complete verified backup and independent hardware recovery.'
     if ($Action -eq 'InstallDeepLab') { Write-Warning 'Paired deep laboratory kernel and modules; deep sleep remains qualification-gated and s2idle is the default.' }
-    if ((Read-Host 'Type EXPERIMENTAL to continue') -cne 'EXPERIMENTAL') { throw 'Cancelled' }
+    if ((Read-Host 'Type EXPERIMENTAL to continue (anything else cancels)') -cne 'EXPERIMENTAL') { Cancel-Operation }
+    if (!$BackupDir) {
+        $recent=Get-ChildItem -LiteralPath $DataDir -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'SHA256SUMS') -PathType Leaf } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        $default=if ($recent) {$recent.FullName} else {''}
+        $BackupDir=Read-Directory 'Complete verified backup for this reader' $default
+    }
+    if (!(Test-Path -LiteralPath (Join-Path $BackupDir 'SHA256SUMS') -PathType Leaf)) { throw 'Backup manifest missing' }
 }
 if ($Action -like 'Install*') { Write-Warning 'Installation replaces the complete Debian p1 partition, including user files. Back up first.' }
+if (!$UseRunningRecovery -and $null -ne (Find-Adapter)) {
+    $answer=(Read-Host 'Recovery adapter detected. Reuse running recovery [y/N/0=cancel]?').Trim()
+    if ($answer -eq '0') { Cancel-Operation }
+    if ($answer -match '^[yY] @((Join-Path $kit 'windows-fel.py'),'prepare')
+    Say 'STEP 1 / Cold FEL'
+    while ($true) {
+        $answer=Read-Host 'Power off fully, unplug, hold Menu, reconnect USB; Enter to check (0 = cancel)'
+        if ($answer -eq '0') { Cancel-Operation }
+        $fel=@(Find-Fel)
+        if ($fel.Count -gt 1) { throw 'Multiple FEL devices. Disconnect other readers.' }
+        if ($fel.Count -eq 1) {
+            $result=Invoke-Probe @((Join-Path $kit 'windows-fel.py'),'probe')
+            if ($result.Code -eq 0) {
+                Write-Host 'FEL: Allwinner A13 accessible.' -ForegroundColor Green
+                break
+            }
+            Write-Host ($result.Lines -join ' ') -ForegroundColor Yellow
+            if (($result.Lines -join ' ') -match 'Unexpected FEL SoC') { throw 'Incorrect SoC; refusing to initialize DRAM' }
+            Offer-Zadig
+        } else {
+            Write-Host 'Windows has not enumerated 1F3A:EFE8. Check the cable and cold Menu sequence.' -ForegroundColor Yellow
+            if ((Read-Host 'Open driver instructions anyway? [y/N]') -match '^[yY]$') { Offer-Zadig }
+        }
+    }
+    $profile=$UsbProfile.ToLowerInvariant()
+    if ($profile -eq 'auto') {
+        $build=[int](Get-CimInstance Win32_OperatingSystem).BuildNumber
+        $profile=if ($build -ge 22000) {'ncm'} else {'rndis'}
+    }
+    Say "STEP 2 / Load recovery into RAM ($profile)"
+    $script:FelStarted=$true
+    Invoke-Python @((Join-Path $kit 'windows-fel.py'),'boot','--profile',$profile)
+}
+Say 'STEP 3 / Establish native USB Ethernet connection'
+$script:AddedAddress=$false; $script:RestoreDhcp=$false
+try {
+    Connect-Recovery
+    if ($Action -eq 'Recovery') { Write-Host 'RAM recovery verified. No eMMC write.' -ForegroundColor Green; return }
+    Say 'STEP 4 / Device and data verification'
+    if ($Action -in @('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader')) {
+        $mode=switch ($Action) { 'Install' {'keep'} 'InstallQualified' {'qualified'} 'InstallCandidate' {'candidate'} 'InstallDeepLab' {'candidate'} 'Bootloader' {'candidate'} 'RestoreBootloader' {'qualified'} }
+        if ($mode -eq 'qualified') { Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare') }
+        $argsList=@((Join-Path $kit 'install-direct.py'),'--kit',$kit,'--windows','--spl',$mode,'--journal',$script:JournalPath)
+        if ($Action -in @('Bootloader','RestoreBootloader')) { $argsList+='--spl-only' }
+        if ($mode -eq 'candidate') {
+            $argsList+=@('--candidate-backup',[IO.Path]::GetFullPath($BackupDir))
+        }
+        Invoke-Python $argsList
+    } else {
+        if ($Action -eq 'Backup') {
+            $null=New-Item -ItemType Directory -Force -Path $DataDir
+            $target=Join-Path $DataDir ('backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+        } else {
+            $target=Read-Directory 'Verified dump directory' $BackupDir
+        }
+        Invoke-Python @((Join-Path $kit 'dump-network.py'),$Action.ToLowerInvariant(),$target,'--windows','--journal',$script:JournalPath)
+    }
+    Write-Host 'SUCCESS / All requested operations verified.' -ForegroundColor Green
+    if ($Action -in @('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader','Restore')) {
+        Write-Host 'Writes verified. Power off and boot normally. Check Menu/FEL again before further changes.' -ForegroundColor Green
+    } else { Write-Host 'No device writes requested. Recovery remains running.' }
+} finally { Disconnect-Recovery }
+}
+$exitCode=0
+try {
+    Main
+    if ($script:HandedOff) { $exitCode=$script:ChildExit }
+} catch [OperationCanceledException] {
+    Write-Host 'Cancelled. No additional writes requested.' -ForegroundColor Yellow
+    $exitCode=2
+} catch {
+    Write-Host "ERROR / $($_.Exception.Message)" -ForegroundColor Red
+    $exitCode=1
+} finally {
+    if ($script:OwnMutex) { $script:Mutex.ReleaseMutex() }
+    if ($script:Mutex) { $script:Mutex.Dispose() }
+    if (!$script:HandedOff) {
+        if ($exitCode -ne 0) {
+            $state=@()
+            if ($script:JournalPath -and (Test-Path -LiteralPath $script:JournalPath)) { $state=@(Get-Content -LiteralPath $script:JournalPath) }
+            if ($state.Count -and $state[0] -eq 'writing') {
+                Write-Host "WRITE STATE UNCERTAIN: $($state[1])" -ForegroundColor Red
+                Write-Host 'Keep the reader powered and connected. Do not reboot. Relaunch using running recovery to restore or reflash; no block is automatically retried.' -ForegroundColor Yellow
+            } elseif ($script:FelStarted) {
+                Write-Host 'No eMMC write was started in this session. Do not repeat SPL in this power cycle; use running recovery or a full cold power-off.' -ForegroundColor Yellow
+            } else { Write-Host 'No eMMC write was started in this session.' }
+            if ($script:JournalPath -and (Test-Path -LiteralPath $script:JournalPath)) { Write-Host "Session record: $script:JournalPath" }
+        }
+        if ($PauseOnExit) { $null=Read-Host 'Press Enter to close' }
+    }
+}
+exit $exitCode
+) { $UseRunningRecovery=$true }
+}
 if (!$UseRunningRecovery) {
     Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare')
     Say 'STEP 1 / Cold FEL'
