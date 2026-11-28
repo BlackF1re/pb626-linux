@@ -119,6 +119,15 @@ class Tests(unittest.TestCase):
     def test_cancel_is_not_write(self):
         with patch("builtins.input",return_value="no"), self.assertRaises(direct.Cancelled):
             direct.confirm("Type FLASH: ","FLASH")
+    def test_windows_confirmation(self):
+        for value in ("", "n", "no", "FLASH", "yes"):
+            with patch("builtins.input",return_value=value), self.assertRaises(direct.Cancelled):
+                direct.confirm_write("Replace BT0","a"*32,True,"FLASH")
+        with patch("builtins.input",return_value="Y") as ask:
+            direct.confirm_write("Replace BT0","a"*32,True,"FLASH")
+            ask.assert_called_once()
+        self.assertIn("NO BACKUP",direct.experimental_warning(None))
+        self.assertIn("backup verified",direct.experimental_warning(Path("dump")))
     def test_lost_write_ack(self):
         class Device:
             media=b"old"

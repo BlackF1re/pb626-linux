@@ -39,7 +39,7 @@ offline behavior.
    exceptions, default routes or Internet sharing are created.
 5. The installer validates the model, CID, partition layout, random
    4 MiB TCP transfer, waveform, VCOM and sleep artwork; enter a
-   new Linux root password and confirm the displayed CID. Every
+   new Linux root password and confirm the operation with y (default: cancel). Every
    written chunk is synced, relocked and read back with SHA256.
    Rootfs first, kernel/DTB second, BT0 last only if requested.
    No automatic retry after a failed write.
@@ -49,11 +49,12 @@ offline behavior.
 - Install: paired Debian rootfs + kernel, preserve recognized BT0.
 - InstallQualified: same payload plus historical hash-qualified BT0.
 - InstallCandidate: same payload plus new **experimental** source BT0
-  with LED animation. Requires a complete verified backup for the same
-  CID, an exact same-run recovery authorization, and extra confirmations.
+  with LED animation. Requires exact same-run recovery authorization.
+  A complete same-CID backup is optional; pass -BackupDir to verify it.
+  A single final confirmation explicitly states when no backup is supplied.
 - Bootloader / RestoreBootloader: write just LBA 16–63 (24 KiB), leaving
   rootfs, kernel and all other sectors unchanged. Experimental option
-  has the same backup and confirmation gates.
+  has the same optional backup and final confirmation.
 - Backup / Restore / Preflight: existing full eMMC dump format, including
   hardware boot regions and EXT_CSD verification. Restore is destructive.
 - Recovery: verified RAM-only boot; no writes.
@@ -73,8 +74,7 @@ retained-DRAM SPL. It keeps production sleep policy and module
 compatibility. The separate `pb626-windows-deep-lab-EXPERIMENTAL` artifact
 from full qualification has the same launcher, but only the explicit
 InstallDeepLab option writes its paired deep kernel, matching modules
-inside the rootfs, and deep-resume SPL last. It requires a full verified
-backup and the same risk confirmations. It still leaves systemd's
+inside the rootfs, and deep-resume SPL last. It supports an optional full verified backup and requires the same single risk confirmation. It still leaves systemd's
 s2idle default and the suspend-qualified gate untouched. Do not mix a
 lab zImage with production rootfs modules or try deep until physical
 cold boot and Menu/FEL have been checked repeatedly.
@@ -92,7 +92,7 @@ The launcher offers to reuse an existing same-build recovery. A session
 record in private/sessions marks the latest potentially destructive write
 before transmission; no passwords or payloads are logged. Progress reflects
 acknowledged blocks. After a failed write keep the book powered; do not
-reboot or retry SPL automatically. Use -BackupDir to supply a verified dump.
+reboot or retry SPL automatically. Use -BackupDir to supply a verified dump (recommended); without it the final confirmation explicitly warns that no backup is present.
 
 BT0-only operations additionally verify the installed raw kernel byte for
 byte against this kit, mount p1 read-only without journal replay, and

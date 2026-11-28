@@ -61,6 +61,20 @@ def confirm(prompt, expected):
         raise Cancelled("Cancelled by user; no additional writes requested")
 
 
+def experimental_warning(backup):
+    return ("; experimental BT0 may prevent FEL recovery" +
+            ("; NO BACKUP" if backup is None else "; backup verified"))
+
+
+def confirm_write(description, cid, windows, verb):
+    print(f"{description}. CID={cid}", flush=True)
+    if windows:
+        if input(f"{verb}? [y/N]: ").strip().lower() != "y":
+            raise Cancelled("Cancelled")
+    else:
+        confirm(f"Type {verb} {cid} to continue: ",f"{verb} {cid}")
+
+
 def progress(label, done, total, started):
     elapsed=max(time.monotonic()-started,0.001)
     width=24
@@ -511,12 +525,16 @@ def main():
     partial.add_argument('--kernel-only',action='store_true',help='Replace kernel only if installed modules match the bundle')
     ap.add_argument('--candidate-backup', type=Path, help='Verified full dump for experimental BT0')
     ap.add_argument('--journal',type=Path,help='Local write-state record')
+    ap.add_argument('--allow-no-backup', action='store_true',
+                    help='Allow experimental Windows BT0 without a dump')
     args = ap.parse_args()
     kit = args.kit.resolve()
     require(not args.spl_only or args.spl != 'keep', 'No SPL selected')
     require(not (args.rootfs_only or args.kernel_only) or (args.windows and args.spl=='keep'),
             'Partial kernel/rootfs operations preserve BT0 and require native Windows recovery')
     require(args.spl != 'candidate' or args.windows, 'Experimental SPL is restricted to Windows lab recovery')
+    require(not args.allow_no_backup or (args.windows and args.spl == 'candidate' and args.candidate_backup is None),
+            'Backup waiver is only for experimental Windows BT0 without a supplied dump')
     profile=kit_profile(kit)
     require(profile!='deep-lab' or (args.windows and args.spl=='candidate' and not (args.spl_only or args.rootfs_only or args.kernel_only)),
             'Deep lab kernel/rootfs and resume SPL must be installed as one explicit pair')
@@ -551,21 +569,21 @@ def main():
         if args.spl == 'candidate':
             require(r.run('{} spl-check {}'.format(REMOTE,cid)) == [sha(spl)],
                     'Running recovery does not authorize this exact same-run candidate')
-            require(args.candidate_backup is not None, 'A full verified backup is required')
-            backup = args.candidate_backup
-            sums = manifest(backup/'SHA256SUMS')
-            sizes = {'pb626-emmc-user.img':15269888*512, 'pb626-emmc-boot0.img':CHUNK,
-                     'pb626-emmc-boot1.img':CHUNK, 'pb626-emmc-ext-csd.bin':512}
-            require((backup/'pb626-emmc-cid.txt').read_text().strip()==cid
-                    and filehash(backup/'pb626-emmc-cid.txt')==sums.get('pb626-emmc-cid.txt'),
-                    'Backup belongs to a different card or CID is corrupt')
-            print('Verifying full recovery backup...',flush=True)
-            for name,size in sizes.items():
-                path=backup/name
-                require(path.stat().st_size==size and filehash(path)==sums.get(name),'Invalid backup: '+name)
-            print('EXPERIMENTAL BT0: physical FEL has not been qualified; a bad SPL may make the reader unrecoverable.', flush=True)
+            if args.candidate_backup is None:
+                require(args.allow_no_backup, 'Supply a verified backup or explicitly waive it')
+            else:
+                backup = args.candidate_backup
+                sums = manifest(backup/'SHA256SUMS')
+                sizes = {'pb626-emmc-user.img':15269888*512, 'pb626-emmc-boot0.img':CHUNK,
+                         'pb626-emmc-boot1.img':CHUNK, 'pb626-emmc-ext-csd.bin':512}
+                require((backup/'pb626-emmc-cid.txt').read_text().strip()==cid
+                        and filehash(backup/'pb626-emmc-cid.txt')==sums.get('pb626-emmc-cid.txt'),
+                        'Backup belongs to a different card or CID is corrupt')
+                print('Verifying full recovery backup...',flush=True)
+                for name,size in sizes.items():
+                    path=backup/name
+                    require(path.stat().st_size==size and filehash(path)==sums.get(name),'Invalid backup: '+name)
             print('Candidate SHA256:', sha(spl), flush=True)
-            confirm('Type RISK '+cid+' to accept this (anything else cancels): ','RISK '+cid)
         if args.rootfs_only:
             print('Checking the installed raw kernel against this bundle...',flush=True)
             for i,offset in enumerate(range(0,len(raw),CHUNK)):
@@ -582,7 +600,7 @@ def main():
             print('Checking the installed module tree and native rootfs (read-only)...',flush=True)
             require(r.run('{} modules-check {} {} {}'.format(REMOTE,cid,release,digest))==['PB626_MODULES_VERIFIED'],
                     'Installed modules do not match; use paired installation')
-            confirm('Type KERNEL '+cid+' to replace only raw kernel/DTB: ','KERNEL '+cid)
+            confirm_write('Replace kernel/DTB only',cid,args.windows,'KERNEL')
             for i,offset in enumerate(range(0,len(raw),CHUNK)):
                 write_if_different(r,cid,'kernel',i,raw[offset:offset+CHUNK],args.journal)
             require('CID='+cid in r.lines('probe'),'Final identity check failed')
@@ -598,7 +616,10 @@ def main():
                 require('PB626_NATIVE_VERIFIED' in rows,'Missing native compatibility confirmation')
             except RuntimeError as exc:
                 raise RuntimeError('BT0-only update requires the native kernel/rootfs from this kit. Use paired installation first. '+str(exc)) from exc
-            confirm('Type BOOTLOADER '+cid+' to write only LBA 16-63: ','BOOTLOADER '+cid)
+            description = 'Replace BT0 only (LBA 16-63)'
+            if args.spl == 'candidate':
+                description += experimental_warning(args.candidate_backup)
+            confirm_write(description,cid,args.windows,'BOOTLOADER')
             write_if_different(r,cid,'spl-candidate' if args.spl == 'candidate' else 'spl',0,spl,args.journal,args.windows)
             require('CID='+cid in r.lines('probe'), 'Final identity check failed')
             journal(args.journal,'verified','BT0 only')
@@ -611,9 +632,12 @@ def main():
         personal.update(theme_module.decode_theme(theme))
         require('CID='+cid in r.lines('probe'), 'CID changed')
         personal['password'] = hash_password(args.distro, kit/'host/openssl.exe' if args.windows else None)
-        print('Only p1 will be replaced. Kernel and BT0 preserved.' if args.rootfs_only else
-              'Only p1, raw kernel/DTB and selected BT0 (if any) will be replaced. No full backup.',flush=True)
-        confirm('Type FLASH '+cid+' to continue (anything else cancels): ','FLASH '+cid)
+        description = 'Replace p1 (all files)' if args.rootfs_only else 'Replace p1 (all files) and kernel/DTB'
+        if spl is not None:
+            description += ' and BT0'
+        if args.spl == 'candidate':
+            description += experimental_warning(args.candidate_backup)
+        confirm_write(description,cid,args.windows,'FLASH')
         # Verify recovery supports the new protocol before any write. This operation
         # only creates a private directory in RAM, not on eMMC.
         r.run('{} reset-data {}'.format(REMOTE, cid))

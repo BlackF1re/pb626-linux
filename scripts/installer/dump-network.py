@@ -217,7 +217,7 @@ def main():
         d.require((path/name).stat().st_size==size,"Invalid image size "+name)
     print("Dump and device preflight passed",flush=True)
     if args.action=="preflight": return
-    d.confirm("Type RESTORE "+cid+" to continue (anything else cancels): ","RESTORE "+cid)
+    d.confirm_write("Overwrite all selected dump regions",cid,args.windows,"RESTORE")
     for region,name,size in images:
         print("Scanning current device region:",region,flush=True)
         count=(size+CHUNK-1)//CHUNK

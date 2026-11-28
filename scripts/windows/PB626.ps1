@@ -226,18 +226,9 @@ Verify-Kit
 $journalDir=Join-Path $DataDir 'sessions'
 $null=New-Item -ItemType Directory -Force -Path $journalDir
 $script:JournalPath=Join-Path $journalDir ((Get-Date -Format 'yyyyMMdd-HHmmss-fff')+'-'+$PID+'.txt')
-if ($Action -in @('InstallCandidate','Bootloader','InstallDeepLab')) {
-    Write-Warning 'NEW SPL is experimental. A successful CI or FEL RAM boot does NOT prove recovery after replacing installed BT0. Keep a complete verified backup and independent hardware recovery.'
-    if ($Action -eq 'InstallDeepLab') { Write-Warning 'Paired deep laboratory kernel and modules; deep sleep remains qualification-gated and s2idle is the default.' }
-    if ((Read-Host 'Type EXPERIMENTAL to continue (anything else cancels)') -cne 'EXPERIMENTAL') { Cancel-Operation }
-    if (!$BackupDir) {
-        $recent=Get-ChildItem -LiteralPath $DataDir -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'SHA256SUMS') -PathType Leaf } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        $default=if ($recent) {$recent.FullName} else {''}
-        $BackupDir=Read-Directory 'Complete verified backup for this reader' $default
-    }
+if ($Action -in @('InstallCandidate','Bootloader','InstallDeepLab') -and $BackupDir) {
     if (!(Test-Path -LiteralPath (Join-Path $BackupDir 'SHA256SUMS') -PathType Leaf)) { throw 'Backup manifest missing' }
 }
-if ($Action -like 'Install*' -or $Action -eq 'RootfsOnly') { Write-Warning 'Installation replaces the complete Debian p1 partition, including user files. Back up first.' }
 if (!$UseRunningRecovery -and $null -ne (Find-Adapter)) {
     $answer=(Read-Host 'Recovery adapter detected. Reuse running recovery [y/N/0=cancel]?').Trim()
     if ($answer -eq '0') { Cancel-Operation }
@@ -332,7 +323,8 @@ try {
         if ($Action -eq 'RootfsOnly') { $argsList+='--rootfs-only' }
         if ($Action -eq 'KernelOnly') { $argsList+='--kernel-only' }
         if ($mode -eq 'candidate') {
-            $argsList+=@('--candidate-backup',[IO.Path]::GetFullPath($BackupDir))
+            if ($BackupDir) { $argsList+=@('--candidate-backup',[IO.Path]::GetFullPath($BackupDir)) }
+            else { $argsList+='--allow-no-backup' }
         }
         Invoke-Transfer $argsList
     } else {
