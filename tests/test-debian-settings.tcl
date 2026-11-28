@@ -4,8 +4,8 @@ proc exec {args} {
     if {[lindex $args 0] eq "/usr/bin/timeout"} {set args [lrange $args 4 end]}
     if {[lindex $args 0] eq "/usr/bin/doas"} {
         switch [lindex $args 2] {
-            desktop-status {return "PB626_BUTTONS=pages\nPB626_EPD_GRAY_PROFILE=photo\nPB626_EPD_TONE=cie-lstar\nPB626_EPD_GAMMA=1.2"}
-            desktop-display - desktop-buttons - desktop-idle - desktop-hold {
+            desktop-status {return "PB626_BUTTONS=pages\nPB626_EPD_GRAY_PROFILE=photo\nPB626_EPD_TONE=cie-lstar\nPB626_EPD_GAMMA=1.2\nPB626_UI_DPI=144"}
+            desktop-display - desktop-buttons - desktop-idle - desktop-hold - desktop-dpi {
                 set ::lastSave [lrange $args 2 end-1]
                 return ""
             }
@@ -33,6 +33,10 @@ if {[llength [.tabs tabs]] != 5 || $::level != 37 || $::buttons ne "pages" || $:
 }
 if {[.tabs.display.canvas.body.brightness cget -resolution] != 1} {exit 1}
 if {$::tone ne "cie-lstar" || $::gamma ne "1.2"} {error "Tone/gamma not restored"}
+if {$::uiDpi ne "144"} {error "Application DPI not restored"}
+set ::uiDpi 120
+desktopApply dpi
+if {$::lastSave ne {desktop-dpi 120}} {error "Application DPI not saved"}
 desktopApply keys
 if {[lindex $::lastSave 0] ne "desktop-buttons"} {error "Button save overwrites other tabs"}
 set ::holdMs 750

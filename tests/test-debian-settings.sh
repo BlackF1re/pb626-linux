@@ -118,8 +118,13 @@ if admin desktop-display photo 24 auto srgb 9.0 0 0; then exit 1; fi
 admin desktop-settings pages keyboard escape mono 16 0 auto
 admin desktop-status | grep -qx PB626_EPD_MIXED=1
 admin desktop-idle 0
+admin desktop-dpi 144
+admin desktop-status | grep -qx PB626_UI_DPI=144
+if admin desktop-dpi 0; then exit 1; fi
+if admin desktop-dpi '144; bad'; then exit 1; fi
 admin desktop-hold 750
 admin desktop-status | grep -qx PB626_BUTTON_HOLD_MS=750
+admin desktop-status | grep -qx PB626_UI_DPI=144
 admin desktop-status | grep -qx PB626_EPD_MIXED=1
 for value in 0 299 3000 0500 bad; do
     if admin desktop-hold "$value"; then exit 1; fi

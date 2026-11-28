@@ -42,6 +42,13 @@ if ! xrdb -nocpp -merge /etc/X11/pb626.Xresources; then
     echo 'PB626: xrdb failed; using session resource file' >&2
     export XENVIRONMENT=/etc/X11/pb626.Xresources
 fi
+if [ -f /etc/debian_version ]; then
+    case ${PB626_UI_DPI:-auto} in
+        96|120|144|168|192|216)
+            printf 'Xft.dpi: %s\n' "$PB626_UI_DPI" | xrdb -nocpp -merge || :
+            ;;
+    esac
+fi
 # Supervise every X client independently. Client failures must not terminate
 # xinit; only loss of X itself (or the legacy local E Ink renderer) ends the
 # session and lets the outer desktop service recover it.

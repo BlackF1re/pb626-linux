@@ -255,7 +255,7 @@ proc updateStatus {} {
     .tabs.system.canvas.body.info configure -state disabled -height [expr {max(12, $lines)}]
 }
 proc desktopApply {section} {
-    global buttons home menu gray depth idle fast tone gamma preview mixed holdMs feedback restartNeeded
+    global buttons home menu gray depth idle fast tone gamma preview mixed holdMs uiDpi feedback restartNeeded
     switch -- $section {
         display {
             if {$preview && $mixed} {
@@ -267,6 +267,7 @@ proc desktopApply {section} {
         keys {set ok [act desktop-buttons $buttons $home $menu]}
         idle {set ok [act desktop-idle $idle]}
         hold {set ok [act desktop-hold $holdMs]}
+        dpi {set ok [act desktop-dpi $uiDpi]}
         default {error "Unknown settings section"}
     }
     if {$ok} {
@@ -364,6 +365,7 @@ proc desktopRestart {} {
 }
 set buttons arrows
 set holdMs 1000
+set uiDpi auto
 set home keyboard
 set menu menu
 set gray balanced
@@ -381,6 +383,7 @@ if {![catch {query desktop-status} data]} {
         if {![regexp {^([A-Z0-9_]+)=([a-z0-9.-]+)$} $line -> key value]} {continue}
         switch -- $key {
             PB626_BUTTONS {set buttons $value}
+            PB626_UI_DPI {if {$value in {auto 96 120 144 168 192 216}} {set uiDpi $value}}
             PB626_BUTTON_HOLD_MS {if {$value in {300 500 750 1000 1500 2000}} {set holdMs $value}}
             PB626_HOME_KEY {set home $value}
             PB626_MENU_KEY {set menu $value}
@@ -470,6 +473,10 @@ proc scrollPage {units} {
 bind . <Button-4> {scrollPage -3}
 bind . <Button-5> {scrollPage 3}
 set p .tabs.display.canvas.body
+section $p scaleui "Application scaling" "DPI changes text and controls in DPI-aware applications. Fixed-pixel applications and panels may not scale. Native resolution stays unchanged."
+choose $p dpi "Application DPI (auto = system default)" uiDpi {auto 96 120 144 168 192 216}
+button $p.dpisave -text "Save application DPI" -command {desktopApply dpi}
+pack $p.dpisave -fill x -padx 12 -pady 5
 section $p light "Frontlight" "Brightness and power are saved independently."
 label $p.state -textvariable lightText -font {{Liberation Sans} 15 bold} -anchor w
 pack $p.state -fill x -padx 16 -pady 3

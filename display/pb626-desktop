@@ -137,6 +137,14 @@ case ${PB626_XORG_DEPTH:-} in
     '') set -- ;;
     *) echo 'PB626_XORG_DEPTH must be 16 or 24' >&2; exit 2 ;;
 esac
+# Change reported DPI, never the native scanout dimensions.
+if [ -f /etc/debian_version ]; then
+    case ${PB626_UI_DPI:-auto} in
+        96|120|144|168|192|216) set -- "$@" -dpi "$PB626_UI_DPI" ;;
+        auto) ;;
+        *) echo 'PB626: ignoring invalid UI DPI' >&2 ;;
+    esac
+fi
 xorg=/usr/bin/Xorg
 if [ -f /etc/debian_version ] && [ -x /usr/lib/xorg/Xorg ]; then
     xorg=/usr/lib/xorg/Xorg
