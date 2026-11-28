@@ -93,3 +93,46 @@ diff --git a/drivers/mfd/axp20x-i2c.c b/drivers/mfd/axp20x-i2c.c
  
  static void axp20x_i2c_remove(struct i2c_client *i2c)
  {
+diff --git a/drivers/power/supply/axp20x_usb_power.c b/drivers/power/supply/axp20x_usb_power.c
+--- a/drivers/power/supply/axp20x_usb_power.c
++++ b/drivers/power/supply/axp20x_usb_power.c
+@@ -94,6 +94,7 @@
+ 	int max_input_cur;
+ 	unsigned int old_status;
+ 	unsigned int online;
++	bool vbus_irq_wake;
+ 	unsigned int num_irqs;
+ 	unsigned int irqs[] __counted_by(num_irqs);
+ };
+@@ -864,8 +865,17 @@
+ 	 * As nested threaded IRQs are not automatically disabled during
+ 	 * suspend, we must explicitly disable the remainder of the IRQs.
+ 	 */
+-	if (device_may_wakeup(&power->supply->dev))
+-		enable_irq_wake(power->irqs[i++]);
++	power->vbus_irq_wake = false;
++	if (device_may_wakeup(&power->supply->dev) && power->num_irqs) {
++		int ret = enable_irq_wake(power->irqs[0]);
++
++		if (!ret) {
++			power->vbus_irq_wake = true;
++			i++;
++		} else {
++			dev_warn(dev, "VBUS wake unavailable: %d\n", ret);
++		}
++	}
+ 	while (i < power->num_irqs)
+ 		disable_irq(power->irqs[i++]);
+ 
+@@ -877,8 +887,10 @@
+ 	struct axp20x_usb_power *power = dev_get_drvdata(dev);
+ 	int i = 0;
+ 
+-	if (device_may_wakeup(&power->supply->dev))
++	if (power->vbus_irq_wake) {
+ 		disable_irq_wake(power->irqs[i++]);
++		power->vbus_irq_wake = false;
++	}
+ 	while (i < power->num_irqs)
+ 		enable_irq(power->irqs[i++]);
+ 
