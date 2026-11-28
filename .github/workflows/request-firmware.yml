@@ -23,6 +23,48 @@ jobs:
     with:
       debian_only: false
 
+  deep-resume-lab:
+    name: Deep resume ARM compile check (not for flash)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned-tree build prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends git gcc-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod
+      - name: Compile isolated deep-resume objects
+        env:
+          ARCH: arm
+          CROSS_COMPILE: arm-linux-gnueabihf-
+        run: |
+          set -euo pipefail
+          mkdir -p deep-resume-lab
+          bash scripts/build-megi-kernel.sh prepare
+          bash scripts/configure-megi-kernel.sh
+          cp linux/.config deep-resume-lab/production.config
+          for patch in patches/lab/sun5i-pm-twi-read.patch patches/lab/sun5i-pm-sram-abort.patch patches/lab/sun5i-pm-prepare-rollback.patch; do
+            git -C linux apply --check "$PWD/$patch"
+            git -C linux apply "$PWD/$patch"
+          done
+          linux/scripts/config --file linux/.config -e SUN5I_PM
+          make -C linux olddefconfig
+          grep -qx 'CONFIG_SUN5I_PM=y' linux/.config
+          grep -qx 'CONFIG_ARM_CPU_SUSPEND=y' linux/.config
+          cp linux/.config deep-resume-lab/experimental.config
+          make -C linux -j"$(nproc)" KCFLAGS=-Wno-error arch/arm/mach-sunxi/pm-sun5i.o arch/arm/mach-sunxi/sleep-sun5i.o
+          arm-linux-gnueabihf-objdump -dr linux/arch/arm/mach-sunxi/sleep-sun5i.o > deep-resume-lab/sram-disassembly.txt
+          arm-linux-gnueabihf-size linux/arch/arm/mach-sunxi/{pm-sun5i,sleep-sun5i}.o | tee deep-resume-lab/object-sizes.txt
+          git -C linux diff --check
+          printf '%s\n' 'Compile check only: no linked kernel, no board resume qualification, not for flash.' > deep-resume-lab/STATUS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pb626-deep-resume-lab-NOT-FOR-FLASH
+          path: deep-resume-lab/
+          if-no-files-found: error
+
   # Experimental builds never feed the production firmware or its caches.
   kernel-size-audit:
     if: ${{ inputs.kernel_audit }}
