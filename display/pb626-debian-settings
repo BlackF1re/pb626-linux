@@ -3,17 +3,49 @@
 tk_setPalette background white foreground black activeBackground #cccccc \
     activeForeground black selectBackground black selectForeground white
 option add *Font {{Liberation Sans} 15}
-option add *Button.padY 9
-option add *Button.padX 12
+option add *Button.padY 10
+option add *Button.padX 14
+option add *Button.anchor w
+option add *Button.relief solid
+option add *Button.borderWidth 1
+option add *Button.activeBackground black
+option add *Button.activeForeground white
+option add *Menubutton.relief solid
+option add *Menubutton.borderWidth 1
+option add *Menu.activeBackground black
+option add *Menu.activeForeground white
+option add *Menu.tearOff 0
 option add *Scale.sliderLength 40
 option add *highlightColor black
 ttk::style theme use clam
-ttk::style configure TNotebook -background white -borderwidth 2
-ttk::style configure TNotebook.Tab -padding {12 14} -font {{Liberation Sans} 15 bold} -foreground black -background white
-ttk::style map TNotebook.Tab -background {selected black} -foreground {selected white}
+ttk::style configure TNotebook -background white -borderwidth 0
+ttk::style configure TNotebook.Tab -padding {10 12} -font {{Liberation Sans} 14 bold} -foreground black -background white -borderwidth 1
+ttk::style map TNotebook.Tab -background {selected black active #eeeeee} -foreground {selected white}
 wm title . "PocketBook Settings"
 wm geometry . 700x840
 
+proc section {parent name title {description ""}} {
+    frame $parent.$name -background white
+    frame $parent.$name.line -height 1 -background black
+    label $parent.$name.title -text $title -anchor w -font {{Liberation Sans} 19 bold}
+    pack $parent.$name.line -fill x -pady {12 7}
+    pack $parent.$name.title -fill x
+    if {$description ne ""} {
+        label $parent.$name.description -text $description -anchor w -justify left -wraplength 540 -font {{Liberation Sans} 12}
+        pack $parent.$name.description -fill x -pady {2 4}
+    }
+    pack $parent.$name -fill x -padx 16 -pady {3 6}
+}
+proc gear {canvas} {
+    set points {}
+    for {set i 0} {$i < 32} {incr i} {
+        set radius [expr {$i % 4 in {1 2} ? 19.0 : 15.0}]
+        set angle [expr {$i * 2.0 * acos(-1) / 32}]
+        lappend points [expr {22 + $radius*cos($angle)}] [expr {22 + $radius*sin($angle)}]
+    }
+    $canvas create polygon $points -fill black -outline black
+    $canvas create oval 13 13 31 31 -fill white -outline white
+}
 proc readfile {path} {
     if {[catch {set fd [open $path r]}]} {return ""}
     set failed [catch {set value [string trim [read $fd]]}]
@@ -38,12 +70,12 @@ proc term {title args} {
 }
 proc choose {parent name caption variable choices} {
     frame $parent.$name
-    label $parent.$name.label -text $caption -anchor w
+    label $parent.$name.label -text $caption -anchor w -justify left
     tk_optionMenu $parent.$name.select $variable {*}$choices
-    $parent.$name.select configure -width 13 -anchor center -padx 8 -pady 9
-    pack $parent.$name.label -side left -fill x -expand 1
-    pack $parent.$name.select -side right
-    pack $parent.$name -fill x -padx 12 -pady 6
+    $parent.$name.select configure -width 13 -anchor w -padx 12 -pady 9
+    pack $parent.$name.label -fill x -pady {0 3}
+    pack $parent.$name.select -fill x
+    pack $parent.$name -fill x -padx 16 -pady 5
 }
 proc lightRefresh {} {
     global level lightState lightText
@@ -161,7 +193,8 @@ proc updateStatus {} {
     .tabs.system.canvas.body.info configure -state normal
     .tabs.system.canvas.body.info delete 1.0 end
     .tabs.system.canvas.body.info insert end $data
-    .tabs.system.canvas.body.info configure -state disabled
+    set lines [expr {[llength [split $data "\n"]] + 2}]
+    .tabs.system.canvas.body.info configure -state disabled -height [expr {max(12, $lines)}]
 }
 proc desktopApply {section} {
     global buttons home menu gray depth idle fast tone gamma preview mixed feedback restartNeeded
@@ -290,8 +323,16 @@ set host [info hostname]
 set powerKey lock
 if {![catch {query power-key-status} value]} {set powerKey $value}
 
-label .heading -text "PocketBook settings" -font {{Liberation Sans} 22 bold}
-pack .heading -pady 12
+frame .header -background white
+canvas .header.icon -width 44 -height 44 -background white -borderwidth 0 -highlightthickness 0
+gear .header.icon
+frame .header.text -background white
+label .header.text.title -text "Settings" -font {{Liberation Sans} 24 bold} -anchor w
+label .header.text.subtitle -text "PocketBook 626 Plus  /  Debian" -font {{Liberation Sans} 12} -anchor w
+pack .header.text.title .header.text.subtitle -fill x
+pack .header.icon -side left -padx {0 10}
+pack .header.text -side left -fill x -expand 1
+pack .header -fill x -padx 16 -pady {10 8}
 ttk::notebook .tabs
 # Fixed-size portrait layouts clip controls when the keyboard is visible
 # or the screen is rotated. Each page has an independent touch-sized
@@ -307,7 +348,7 @@ foreach {tab title} {display Display keys Buttons net Network power Power system
     set page .tabs.$tab
     frame $page -background white
     canvas $page.canvas -background white -highlightthickness 0 -borderwidth 0 -yscrollcommand [list $page.vscroll set] -yscrollincrement 20
-    scrollbar $page.vscroll -orient vertical -width 36 -command [list $page.canvas yview]
+    scrollbar $page.vscroll -orient vertical -width 32 -background black -activebackground black -troughcolor white -command [list $page.canvas yview]
     frame $page.canvas.body -background white
     set item [$page.canvas create window 0 0 -window $page.canvas.body -anchor nw]
     bind $page.canvas.body <Configure> [list tabRegion $page.canvas]
@@ -317,9 +358,16 @@ foreach {tab title} {display Display keys Buttons net Network power Power system
     .tabs add $page -text $title
 }
 pack .tabs -fill both -expand 1 -padx 8 -pady 4
+proc scrollPage {units} {
+    set page [.tabs select]
+    if {$page ne ""} {$page.canvas yview scroll $units units}
+}
+bind . <Button-4> {scrollPage -3}
+bind . <Button-5> {scrollPage 3}
 set p .tabs.display.canvas.body
-label $p.state -textvariable lightText -font {{Liberation Sans} 19 bold}
-pack $p.state -pady 8
+section $p light "Frontlight" "Brightness and power are saved independently."
+label $p.state -textvariable lightText -font {{Liberation Sans} 15 bold} -anchor w
+pack $p.state -fill x -padx 16 -pady 3
 scale $p.brightness -from 1 -to 100 -orient horizontal -variable level -resolution 1 -length 500 \
     -label "Brightness (%)" -width 36 -troughcolor #aaaaaa
 pack $p.brightness -fill x -padx 16 -pady 8
@@ -332,11 +380,12 @@ button $p.switch.on -text "Turn on" -command {lightSwitch light-on}
 button $p.switch.off -text "Turn off" -command {lightSwitch light-off}
 pack $p.switch.on $p.switch.off -side left -expand 1 -fill x -padx 3
 pack $p.switch -fill x -padx 12 -pady 4
+section $p rendering "E Ink rendering" "Exact rendering is recommended for reading. Fast modes retain their factory transition limits."
 choose $p gray "Grayscale profile" gray {balanced ui photo legacy mono}
 choose $p fast "Fast waveform" fast {du auto a2 du4}
 choose $p depth "X11 color depth" depth {16 24}
 label $p.note -text "Mono uses black and white only. Other profiles retain 16 gray levels.\nDisplay profile changes apply after restart." -justify left -wraplength 560
-pack $p.note -pady 6
+pack $p.note -fill x -padx 16 -pady 6
 choose $p tone "Tone curve" tone {srgb cie-lstar}
 choose $p gamma "Gamma" gamma {0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0}
 checkbutton $p.preview -text "Approximate motion preview" -variable preview -anchor w -command {if {$preview} {set mixed 0}}
@@ -350,17 +399,19 @@ if {$mixedQualified} {
 }
 button $p.save -text "Save display settings" -command {desktopApply display}
 pack $p.save -fill x -padx 12 -pady 5
+section $p appearance "Power-off appearance"
 button $p.offimage -text "Power-off image…" -command shutdownPicker
 pack $p.offimage -fill x -padx 12 -pady 4
 button $p.restart -text "Restart desktop" -command desktopRestart
 pack $p.restart -fill x -padx 12 -pady 5
 
 set p .tabs.keys.canvas.body
+section $p basic "Physical buttons" "Choose short-press defaults or configure individual gestures below."
 choose $p arrows "Left / Right" buttons {arrows pages}
 choose $p home "Home button" home {keyboard home}
 choose $p menu "Menu short press" menu {menu escape}
 label $p.note -text "Advanced bindings override these defaults.\nWithout touch, hardware pointer controls remain available." -justify left -wraplength 560
-pack $p.note -pady 10
+pack $p.note -fill x -padx 16 -pady 10
 button $p.bindings -text "Advanced button bindings…" -command buttonSettings
 pack $p.bindings -fill x -padx 12 -pady 5
 button $p.save -text "Save button settings" -command {desktopApply keys}
@@ -368,6 +419,7 @@ button $p.restart -text "Restart desktop" -command desktopRestart
 pack $p.save $p.restart -fill x -padx 12 -pady 5
 
 set p .tabs.net.canvas.body
+section $p wireless "Wireless network" "Turn Wi-Fi on and connect to a saved or new network."
 button $p.on -text "Wi-Fi networks (iwgtk)" -command wifi
 button $p.off -text "Turn Wi-Fi off" -command {act wifi-off}
 button $p.cli -text "Wi-Fi terminal (iwctl)" -command {if {[act wifi-on]} {term "Wi-Fi" iwctl}}
@@ -375,6 +427,7 @@ button $p.dns -text "Network and DNS status" -command {term "Network status" sh 
 foreach w {on off cli dns} {pack $p.$w -fill x -padx 12 -pady 7}
 
 set p .tabs.power.canvas.body
+section $p energy "Energy and performance" "Manage the indicator and CPU frequency policy."
 if {$ledMode ne "unavailable"} {
     choose $p led "Power indicator" ledMode {heartbeat on off}
     button $p.ledapply -text "Save indicator state" -command {act led $ledMode}
@@ -386,9 +439,10 @@ if {[llength $governors]} {
     pack $p.cpuapply -fill x -padx 12 -pady 4
     if {[string is integer -strict $cpuMin] && [string is integer -strict $cpuMax]} {
         label $p.cpufreq -text "Allowed range: [expr {$cpuMin / 1000}]–[expr {$cpuMax / 1000}] MHz"
-        pack $p.cpufreq -pady 2
+        pack $p.cpufreq -fill x -padx 16 -pady 2
     }
 }
+section $p sleepSection "Power button and sleep"
 set keyChoices {lock ignore poweroff}
 if {$qualified} {lappend keyChoices s2idle}
 choose $p powerkey "Power key action" powerKey $keyChoices
@@ -402,27 +456,32 @@ if {$qualified} {
 } else {
     set idle 0
     label $p.sleepnote -text "Lock is available now. Real s2idle is disabled until wakeup is qualified; deep sleep needs a resume-aware SPL." -wraplength 560 -justify left
-    pack $p.sleepnote -padx 12 -pady 10
+    pack $p.sleepnote -fill x -padx 16 -pady 10
 }
+section $p batterySection "Battery protection"
 button $p.battery -text "Battery warning / shutdown…" -command batterySettings
 pack $p.battery -fill x -padx 12 -pady 4
+section $p shutdownSection "Restart and shut down" "Save open documents before restarting."
 button $p.reboot -text "Restart reader" -command {power reboot}
 button $p.off -text "Shut down" -command {power poweroff}
 pack $p.reboot $p.off -fill x -padx 12 -pady 4
 
 set p .tabs.system.canvas.body
+section $p storageSection "Storage"
 frame $p.storage
 button $p.storage.mount -text "Mount SD" -command {if {[act sd-mount]} {term "External SD" mc -b /media/sdcard}}
 button $p.storage.unmount -text "Eject SD" -command {if {[act sd-unmount]} {tk_messageBox -message "SD card can be removed."}}
 button $p.storage.status -text "SD status" -command {if {![catch {query sd-status} s]} {tk_messageBox -message $s}}
 pack $p.storage.mount $p.storage.unmount $p.storage.status -side left -expand 1 -fill x -padx 2
 pack $p.storage -fill x -padx 8 -pady 4
+section $p identity "Device identity"
 frame $p.host
-label $p.host.label -text "Hostname"
+label $p.host.label -text "Hostname" -anchor w
 entry $p.host.entry -textvariable host -width 18
-button $p.host.apply -text "Save" -command {act hostname $host}
-pack $p.host.label $p.host.entry $p.host.apply -side left -padx 4
-pack $p.host -fill x -padx 8 -pady 4
+button $p.host.apply -text "Save hostname" -command {if {[act hostname $host]} {set feedback "Hostname saved."}}
+pack $p.host.label $p.host.entry $p.host.apply -fill x -pady 3
+pack $p.host -fill x -padx 16 -pady 4
+section $p timeSection "Date and time"
 frame $p.ntp
 button $p.ntp.on -text "Automatic time on" -command {act ntp true; updateStatus}
 button $p.ntp.off -text "Automatic time off" -command {act ntp false; updateStatus}
@@ -434,12 +493,9 @@ button $p.actions.admin -text "Administrator" -command {term "Administrator logi
 button $p.actions.refresh -text "Refresh" -command updateStatus
 pack $p.actions.time $p.actions.admin $p.actions.refresh -side left -expand 1 -fill x -padx 2
 pack $p.actions -fill x -padx 8 -pady 5
-frame $p.details
-# Keep the widget path stable for updateStatus; no polling in this panel.
-text $p.info -height 15 -wrap word -font {{Liberation Mono} 12} -background white -foreground black -yscrollcommand [list $p.scroll set]
-scrollbar $p.scroll -orient vertical -width 40 -command [list $p.info yview]
-pack $p.scroll -side right -fill y
-pack $p.info -fill both -expand 1 -padx 8 -pady 5
+section $p diagnostics "System diagnostics" "A read-only snapshot. Refresh when needed."
+text $p.info -height 16 -wrap word -font {{Liberation Mono} 11} -background white -foreground black -state disabled -relief solid -borderwidth 1
+pack $p.info -fill x -padx 16 -pady 5
 label .feedback -textvariable feedback -anchor w -justify left -wraplength 620
 pack .feedback -fill x -padx 16 -pady 4
 button .close -text "Close settings" -command {destroy .}

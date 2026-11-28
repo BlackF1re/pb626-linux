@@ -2,5 +2,5 @@
 Type=Application
 Name=Settings
 Exec=pb626-control-center
-Icon=preferences-desktop
+Icon=/usr/share/pixmaps/pb626-settings.xpm
 Categories=Settings;Utility;

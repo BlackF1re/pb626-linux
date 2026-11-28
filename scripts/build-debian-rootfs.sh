@@ -95,6 +95,7 @@ sudo install -m 755 display/pb626-open-document display/pb626-shutdown-picker "$
 sed '1s|^#!/bin/sh$|#!/bin/bash|' display/pb626-desktop | sudo tee "$pkg/usr/bin/pb626-desktop" >/dev/null
 sudo chmod 755 "$pkg/usr/bin/pb626-desktop"
 sudo install -m 755 display/pb626-debian-settings "$pkg/usr/bin/pb626-control-center"
+sudo install -D -m 644 display/native/pb626-settings.xpm "$pkg/usr/share/pixmaps/pb626-settings.xpm"
 # Debian /bin/sh is dash; the existing X11 session uses wait -n.
 sed '1s|^#!/bin/sh$|#!/bin/bash|' display/pb626-xsession | sudo tee "$pkg/usr/bin/pb626-xsession" >/dev/null
 sudo chmod 755 "$pkg/usr/bin/pb626-xsession"

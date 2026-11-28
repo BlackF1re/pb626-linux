@@ -15,6 +15,7 @@ proc exec {args} {
             default {error "unexpected privileged operation"}
         }
     }
+    if {[lindex $args 0] eq "timedatectl" && [lindex $args 1] eq "list-timezones"} {return "Etc/UTC\nEurope/Berlin"}
     return ""
 }
 # Fail the process instead of opening a modal error dialog on CI.
@@ -33,6 +34,8 @@ desktopApply keys
 if {[lindex $::lastSave 0] ne "desktop-buttons"} {error "Button save overwrites other tabs"}
 desktopApply display
 if {[lindex $::lastSave 0] ne "desktop-display" || !$::restartNeeded} {error "Display save failed"}
+if {[.tabs.display.canvas.body.gray.label cget -anchor] ne "w"} {error "Setting label must align left"}
+if {![winfo exists .header.icon] || ![winfo exists .tabs.display.canvas.body.rendering]} {error "Settings visual hierarchy missing"}
 wm geometry . 640x480
 .tabs select .tabs.power
 update
@@ -44,5 +47,10 @@ update
 lassign [$canvas yview] top bottom
 if {$top <= 0.0 || $bottom < 0.99} {error "Cannot reach final power settings"}
 puts "Debian settings UI loaded with five tabs, persistent values and compact scrolling"
+timezoneDialog
+set ::zoneFilter Berlin
+timezoneFilter
+if {[.timezone.list size] != 1 || [.timezone.list get 0] ne "Europe/Berlin"} {error "Timezone filtering failed"}
+destroy .timezone
 destroy .
 exit 0
