@@ -640,25 +640,40 @@ static unsigned int index_groups(struct renderer *renderer)
 	return count;
 }
 
+static inline unsigned int phase_signal(const struct phase *phase, uint16_t code)
+{
+	return code ? phase->lut[code - 1] : 0;
+}
+
+static inline uint32_t pattern_pins(const struct phase *phase, const uint16_t *p)
+{
+	unsigned int data = (phase_signal(phase, p[0]) << 6) |
+			    (phase_signal(phase, p[1]) << 4) |
+			    (phase_signal(phase, p[2]) << 2) |
+			    phase_signal(phase, p[3]);
+	return htole32(source_word(data));
+}
+
 static void render(struct buffer *buffer, const struct renderer *renderer,
 		   const struct phase *phase, bool reset)
 {
-	uint32_t pins[4][TRANSITIONS + 1] = {0};
+	uint32_t pins[4][TRANSITIONS + 1];
 	buffer->data[3] = htole32(phase->scans - 1);
-	if (!reset) {
-		for (unsigned int pixel = 0; pixel < 4; pixel++)
-			for (unsigned int t = 0; t < TRANSITIONS; t++)
-				pins[pixel][t + 1] = htole32(source_word(phase->lut[t] << (6 - 2 * pixel)));
-	}
 	uint32_t uniform = htole32(source_word(phase->lut[0] * 0x55));
 	uint32_t group_pins[GROUP_CODES];
 	bool indexed = !reset && renderer->patterns_count;
-	if (indexed)
-		for (unsigned int i = 0; i < renderer->patterns_count; i++) {
-			const uint16_t *p = renderer->group_patterns[i];
-			group_pins[i] = pins[0][p[0]] | pins[1][p[1]] |
-					pins[2][p[2]] | pins[3][p[3]];
+	if (indexed) {
+		/* Indexed mode needs only the actual groups, not four complete
+		 * 257-entry transition tables for each scan. */
+		for (unsigned int i = 0; i < renderer->patterns_count; i++)
+			group_pins[i] = pattern_pins(phase, renderer->group_patterns[i]);
+	} else if (!reset) {
+		for (unsigned int pixel = 0; pixel < 4; pixel++) {
+			pins[pixel][0] = 0;
+			for (unsigned int t = 0; t < TRANSITIONS; t++)
+				pins[pixel][t + 1] = htole32(source_word(phase->lut[t] << (6 - 2 * pixel)));
 		}
+	}
 	for (unsigned int y = 0; y < GATES; y++) {
 		struct span_range old = buffer->rows[y];
 		struct span_range row = reset ? (struct span_range){0, GROUPS} : renderer->rows[y];

@@ -331,3 +331,13 @@ an inexact preview or rescanning a frame for A2/DU4 eligibility. The
 approximate motion policy retains its existing selection and dead band.
 The host test covers all 256 old/new pairs for all four fast preferences,
 plus mixed frames, and verifies the exact shared-frame sample.
+
+### Indexed phase preparation
+
+The default indexed worker now calculates PIN32 data directly from the
+four actual transition codes in each indexed group. It no longer expands
+four 257-entry pin tables before building the group table. Scalar and
+staged fallback retain their existing tables, and INIT needs neither.
+Tests compare all transition codes in each source position and the existing
+full-buffer scalar/indexed equivalence test remains mandatory. No change
+to physical scans, voltages or pixels selected for refresh.

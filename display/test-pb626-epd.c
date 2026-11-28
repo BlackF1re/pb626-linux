@@ -89,6 +89,23 @@ static void test_sparse_scan(void)
 		       FRAME_BYTES - SUN5I_EINK_HDR_SIZE));
 }
 
+static void test_pattern_pins(void)
+{
+	struct phase phase = {0};
+	for (unsigned int t = 0; t < TRANSITIONS; t++)
+		phase.lut[t] = t % 4;
+	for (unsigned int c = 0; c <= TRANSITIONS; c++)
+		for (unsigned int k = 0; k < 4; k++) {
+			uint16_t p[4] = {1, 256, 0, 17};
+			p[k] = c;
+			uint32_t expected = 0;
+			for (unsigned int i = 0; i < 4; i++)
+				if (p[i])
+					expected |= htole32(source_word(phase.lut[p[i]-1] << (6-2*i)));
+			assert(pattern_pins(&phase, p) == expected);
+		}
+}
+
 static void test_render_equivalence(void)
 {
 	static struct renderer renderer;
@@ -340,6 +357,7 @@ int main(void)
 	test_quantization();
 	test_sparse_scan();
 	test_render_equivalence();
+	test_pattern_pins();
 	test_packed_cache();
 	test_waveform_policy();
 	test_fast_mode_selection();
