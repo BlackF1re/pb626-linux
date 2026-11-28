@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a real Debian 13 armhf root on eMMC, independent of the Alpine RAM image.
+# Build a real Debian 13 armhf root on eMMC, with the paired kernel and modules.
 # Run on a Linux x86_64 host with ARM binfmt, mmdebstrap and Debian archive keys.
 set -Eeuo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)

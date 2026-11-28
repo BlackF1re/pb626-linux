@@ -30,7 +30,7 @@ for contract in 'After=pb626-desktop.service' 'Before=sleep.target systemd-suspe
     grep -Fxq "$contract" "$sleep_unit"
 done
 sleep_conf=boot/debian/rootfs/etc/systemd/sleep.conf.d/60-pb626.conf
-for contract in 'MemorySleepMode=s2idle' 'SuspendState=mem' \
+for contract in 'MemorySleepMode=deep' 'SuspendState=mem' \
     'AllowHibernation=no' 'AllowHybridSleep=no' 'AllowSuspendThenHibernate=no'; do
     grep -Fxq "$contract" "$sleep_conf"
 done

@@ -108,7 +108,7 @@ static int power_action(const char *action, const char *arg)
 	return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
 }
 
-enum power_policy { POWER_LOCK, POWER_S2IDLE, POWER_IGNORE, POWER_OFF };
+enum power_policy { POWER_LOCK, POWER_SUSPEND, POWER_IGNORE, POWER_OFF };
 static enum power_policy power_policy(void)
 {
 	char value[32];
@@ -119,7 +119,7 @@ static enum power_policy power_policy(void)
 	fclose(file);
 	if (got != 1)
 		return POWER_LOCK;
-	if (!strcmp(value, "s2idle")) return POWER_S2IDLE;
+	if (!strcmp(value, "suspend") || !strcmp(value, "s2idle")) return POWER_SUSPEND;
 	if (!strcmp(value, "ignore")) return POWER_IGNORE;
 	if (!strcmp(value, "poweroff")) return POWER_OFF;
 	return POWER_LOCK;
@@ -2100,7 +2100,7 @@ int main(int argc, char **argv)
 					lock_pending = dirty = 1;
 				} else if (policy == POWER_OFF) {
 					(void)power_action("poweroff", NULL);
-				} else if (policy == POWER_S2IDLE) {
+				} else if (policy == POWER_SUSPEND) {
 					/* systemd's required prepare unit owns the lock/filter
 					 * transaction. A refused request does not lock X11. */
 					if (power_action("suspend", NULL))

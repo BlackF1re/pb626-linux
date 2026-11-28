@@ -401,13 +401,16 @@ restart-desktop)
     ;;
 power-key)
     [ "$#" -eq 2 ] || exit 2
-    case "$2" in ignore|lock|poweroff) ;; s2idle) [ -f /etc/pb626/suspend-qualified ] || exit 2 ;; *) exit 2 ;; esac
+    case "$2" in ignore|lock|poweroff) ;; suspend|s2idle) [ -f /etc/pb626/suspend-qualified ] || exit 2 ;; *) exit 2 ;; esac
     lock_state
-    atomic_save power-key "$2"
+    if [ "$2" = s2idle ]; then atomic_save power-key suspend; else atomic_save power-key "$2"; fi
     ;;
 power-key-status)
     [ "$#" -eq 1 ] || exit 2
-    if [ -r "$state/power-key" ]; then cat "$state/power-key"; else echo lock; fi
+    if [ -r "$state/power-key" ]; then
+        value=$(cat "$state/power-key")
+        if [ "$value" = s2idle ]; then echo suspend; else printf '%s\n' "$value"; fi
+    else echo lock; fi
     ;;
 lock-indicator)
     [ "$#" -eq 2 ] || exit 2

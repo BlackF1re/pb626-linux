@@ -155,7 +155,7 @@ done
 test "$(admin power-key-status)" = lock
 admin power-key ignore
 test "$(admin power-key-status)" = ignore
-if admin power-key s2idle; then exit 1; fi
+if admin power-key suspend; then exit 1; fi
 if admin suspend-idle; then exit 1; fi
 admin power-key lock
 admin led heartbeat
@@ -189,8 +189,8 @@ touch "$tmp/backlight/panel/brightness"
 admin lock-indicator awake
 test ! -e "$tmp/indicator"
 touch "$tmp/qualified"
-admin power-key s2idle
-test "$(admin power-key-status)" = s2idle
+admin power-key suspend
+test "$(admin power-key-status)" = suspend
 admin desktop-settings arrows home menu balanced 24 30
 admin desktop-status | grep -qx PB626_IDLE_MINUTES=30
 test "$(admin button-bindings-status)" = 'Left none none Right none none Home recent-apps none Menu refresh none'

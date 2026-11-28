@@ -615,7 +615,7 @@ if {[llength $governors]} {
 }
 section $p sleepSection "Power button and sleep"
 set keyChoices {lock ignore poweroff}
-if {$qualified} {lappend keyChoices s2idle}
+if {$qualified} {lappend keyChoices suspend}
 choose $p powerkey "Power key action" powerKey $keyChoices
 button $p.keyapply -text "Save power key action" -command {if {[act power-key $powerKey]} {tk_messageBox -message "Saved; applies to the next short press."}}
 pack $p.keyapply -fill x -padx 12 -pady 4
@@ -628,7 +628,7 @@ if {$qualified} {
     pack $p.idleapply $p.sleep -fill x -padx 12 -pady 4
 } else {
     set idle 0
-    label $p.sleepnote -text "Lock is available now. Real s2idle is disabled until wakeup is qualified; deep sleep needs a resume-aware SPL." -anchor w -wraplength 560 -justify left
+    label $p.sleepnote -text "Lock is available now. Suspend is disabled until hardware wakeup is qualified." -anchor w -wraplength 560 -justify left
     pack $p.sleepnote -fill x -padx 16 -pady 10
 }
 section $p batterySection "Battery protection"
