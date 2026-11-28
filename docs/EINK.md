@@ -298,7 +298,7 @@ without adding resident storage; measure actual preparation latency.
 ### Experimental simultaneous transition waveforms
 
 The PIN32 worker already emits a per-transition signal in every scan.
-For ordinary exact SETTLE with known history, the candidate selects the
+For ordinary exact SETTLE or DU4 with known history, the candidate selects the
 shortest eligible waveform for each old/new transition: DU for binary
 targets, A2 for binary endpoints when selected by the fast policy,
 DU4 for 5/10 when selected, GL16 otherwise, and GC16 only for a missing
@@ -313,7 +313,8 @@ Mixed electrical sequences are not yet optically qualified: common panel
 behavior, edge crosstalk, charge balance and temperature dependence must
 be checked on the actual panel. The worker requires both the root-owned
 /etc/pb626/mixed-waveform-qualified marker and PB626_EPD_MIXED=1 in the
-service environment; without both, the existing exact SETTLE is used.
+service environment; without both, the existing exact update is used.
+Approximate preview disables mixed planning even with the marker present.
 For controlled lab qualification only, use a reversible service drop-in
 and remove the marker if residual images or edge artifacts increase.
 Compare identical black/white, gray and mixed charts over repeated

@@ -940,19 +940,22 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 			cache_mode(renderer, DU);
 			mode = select_a2_or_du(renderer, active);
 		}
-		if (fallback && mode == DU4 && !supports(renderer, mode, active)) {
-			mode = GL16;
-			cache_mode(renderer, mode);
-		}
-		/* The mixed candidate is limited to ordinary exact SETTLE
-		 * updates with known history, never RESET or CLEAN. */
-		if (fallback && mode == GL16 && renderer->mixed_enabled && !reset_first) {
+		/* Exact DU4 can itself contain both binary and gray targets.
+		 * Allow per-transition planning there too, but never mix an
+		 * approximate frame, unknown history, RESET or CLEAN. */
+		if (fallback && (mode == GL16 || mode == DU4) &&
+		    renderer->mixed_enabled && !reset_first) {
+			cache_mode(renderer, GL16);
 			cache_mode(renderer, GC16);
 			cache_mode(renderer, DU);
 			if (renderer->mixed_a2) cache_mode(renderer, A2);
 			if (renderer->mixed_du4) cache_mode(renderer, DU4);
 			if (plan_mixed(renderer, active))
 				mode = MIXED;
+		}
+		if (fallback && mode == DU4 && !supports(renderer, mode, active)) {
+			mode = GL16;
+			cache_mode(renderer, mode);
 		}
 		if (fallback && mode == GL16 && !supports(renderer, mode, active)) {
 			mode = GC16;
@@ -1098,7 +1101,9 @@ int main(int argc, char **argv)
 	renderer.mixed_a2 = renderer.auto_fast || (fast && !strcmp(fast, "a2"));
 	renderer.mixed_du4 = renderer.auto_fast || (fast && !strcmp(fast, "du4"));
 	const char *mixed = getenv("PB626_EPD_MIXED");
+	const char *approx = getenv("PB626_EPD_APPROX_PREVIEW");
 	renderer.mixed_enabled = serve && mixed && !strcmp(mixed, "1") &&
+		(!approx || strcmp(approx, "1")) &&
 		!access("/etc/pb626/mixed-waveform-qualified", F_OK);
 	if (mixed && !strcmp(mixed, "1") && !renderer.mixed_enabled)
 		fprintf(stderr, "epd: mixed waveform not qualified; retaining normal SETTLE\n");
