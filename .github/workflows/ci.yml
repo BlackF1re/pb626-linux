@@ -196,7 +196,25 @@ jobs:
           sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth tk \
             libfakekey-dev libxft-dev libexpat1-dev libpng-dev libxrender-dev fonts-dejavu-core x11-utils \
             xserver-xorg-dev xutils-dev libpciaccess-dev autoconf automake libtool pkg-config
-      - name: Fetch pinned kernel source files without raw-content rate limits
+      - name: Identify required pinned kernel paths
+        id: kernel-paths
+        run: |
+          set -euo pipefail
+          {
+            for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
+              sed -n 's|^--- a/||p' "$patch"
+            done
+            printf '%s\n' include/uapi/linux/sun5i-eink.h
+          } | sort -u > /tmp/pb626-kernel-paths
+          echo "fingerprint=$(sha256sum /tmp/pb626-kernel-paths | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Restore pristine pinned kernel sources
+        id: kernel-source
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/pb626-pinned-kernel
+          key: pb626-ci-kernel-source-v1-facc87117511221-${{ steps.kernel-paths.outputs.fingerprint }}
+      - name: Fetch pinned kernel sources on cache miss
+        if: steps.kernel-source.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           root=/tmp/pb626-pinned-kernel
@@ -206,14 +224,29 @@ jobs:
           git -C "$root" -c protocol.version=2 fetch --depth=1 --filter=blob:none https://github.com/Arnavion/linux.git "$pin"
           test "$(git -C "$root" rev-parse FETCH_HEAD)" = "$pin"
           mkdir -p "$root/.git/info"
-          {
-            for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
-              sed -n 's|^--- a/||p' "$patch"
-            done
-            printf '%s\n' include/uapi/linux/sun5i-eink.h
-          } | sort -u | sed 's|^|/|' > "$root/.git/info/sparse-checkout"
+          sed 's|^|/|' /tmp/pb626-kernel-paths > "$root/.git/info/sparse-checkout"
           git -C "$root" config core.sparseCheckout true
           git -C "$root" checkout --detach FETCH_HEAD
+      - name: Verify pinned sources against the Git tree
+        run: |
+          set -euo pipefail
+          root=/tmp/pb626-pinned-kernel
+          test "$(git -C "$root" rev-parse HEAD)" = facc87117511221bb61410e3f92ad8579697f736
+          git -C "$root" diff --exit-code HEAD --
+          while IFS= read -r path; do
+            test -f "$root/$path"
+            test "$(git -C "$root" hash-object "$root/$path")" = "$(git -C "$root" rev-parse "HEAD:$path")"
+          done < /tmp/pb626-kernel-paths
+      - name: Save verified pristine kernel sources
+        if: steps.kernel-source.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/pb626-pinned-kernel
+          key: ${{ steps.kernel-source.outputs.cache-primary-key }}
+      - name: Verify current patches and stage E Ink UAPI
+        run: |
+          set -euo pipefail
+          root=/tmp/pb626-pinned-kernel
           mkdir -p /tmp/pb626-uapi/linux
           cp "$root/include/uapi/linux/sun5i-eink.h" /tmp/pb626-uapi/linux/sun5i-eink.h
           for patch in patches/{pwm-backlight-disconnect-when-off,ektf2227-pocketbook-touch,a13-mbus-dma-devlink,sun5i-eink-runtime-pm,sun4i-lradc-system-pm,axp209-boot-source}.patch; do
