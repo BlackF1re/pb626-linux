@@ -37,9 +37,28 @@ class Cancelled(Exception):
     pass
 
 
+class TransportInterrupted(RuntimeError):
+    pass
+
+
+def pin_session(path, identity):
+    if path is None:
+        return
+    target=path.with_suffix(".identity.json")
+    if target.exists():
+        require(json.loads(target.read_text(encoding="utf-8"))==identity,
+                "Resume refused: device, operation or input changed")
+        return
+    tmp=target.with_suffix(".tmp")
+    with tmp.open("w",encoding="utf-8") as f:
+        json.dump(identity,f,sort_keys=True)
+        f.flush(); os.fsync(f.fileno())
+    os.replace(tmp,target)
+
+
 def confirm(prompt, expected):
     if input(prompt).strip() != expected:
-        raise Cancelled("Cancelled by user; no writes started")
+        raise Cancelled("Cancelled by user; no additional writes requested")
 
 
 def progress(label, done, total, started):
@@ -60,6 +79,9 @@ def journal(path, state, detail=""):
         return
     # A durable conservative record: mark *before* sending a write. A lost
     # ACK must never be interpreted as proof that nothing was written.
+    if state=="preflight" and path.exists():
+        # Never erase uncertainty from a prior attempt in the same session.
+        return
     tmp=path.with_suffix(".tmp")
     with tmp.open("w",encoding="ascii") as stream:
         stream.write(state+"\n"+detail+"\n")
@@ -74,6 +96,9 @@ def cli(main):
     except Cancelled as exc:
         print(str(exc),flush=True)
         raise SystemExit(2)
+    except TransportInterrupted as exc:
+        print("\nCONNECTION INTERRUPTED: "+str(exc),flush=True)
+        raise SystemExit(75)
     except (KeyboardInterrupt, EOFError):
         print("\nOperation interrupted.",flush=True)
         raise SystemExit(130)
@@ -209,7 +234,7 @@ class EthernetRecovery:
                     require(self.lines("hello", timeout=3)==["PB626-NCM-1"],
                             "Wrong recovery protocol")
                     break
-                except OSError:
+                except (OSError,TransportInterrupted):
                     if time.monotonic() >= deadline:
                         raise
                     time.sleep(0.5)
@@ -224,27 +249,31 @@ class EthernetRecovery:
                 "Invalid network request")
         header = ("PB626/1 "+" ".join(words)+"\n").encode("ascii")
         require(len(header) < 512, "Oversized request header")
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(timeout)
-            if self.interface:
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE,
-                             self.interface.encode()+b"\0")
-            if self.interface or self.source_address:
-                s.bind((self.source_address or "169.254.62.2",0))
-            s.connect((self.address,self.port))
-            s.sendall(header)
-            if payload is not None:
-                s.sendall(payload)
-            s.shutdown(socket.SHUT_WR)
-            out = bytearray()
-            while True:
-                part = s.recv(65536)
-                if not part:
-                    break
-                out.extend(part)
-                require(len(out) <= max_response, "Oversized recovery response")
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(timeout)
+                if self.interface:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE,
+                                 self.interface.encode()+b"\0")
+                if self.interface or self.source_address:
+                    s.bind((self.source_address or "169.254.62.2",0))
+                s.connect((self.address,self.port))
+                s.sendall(header)
+                if payload is not None:
+                    s.sendall(payload)
+                s.shutdown(socket.SHUT_WR)
+                out = bytearray()
+                while True:
+                    part = s.recv(65536)
+                    if not part:
+                        break
+                    out.extend(part)
+                    require(len(out) <= max_response, "Oversized recovery response")
+        except OSError as exc:
+            raise TransportInterrupted(str(exc)) from exc
         match = re.search(rb"\nPB626_STATUS ([0-9]+)\n\Z", out)
-        require(match is not None, "Incomplete TCP response; no automatic write retry")
+        if match is None:
+            raise TransportInterrupted("Incomplete TCP response; verify media before resuming")
         require(match[1] == b"0", "Recovery command failed: "+
                 bytes(out[:match.start()])[-1000:].decode("ascii","replace"))
         return bytes(out[:match.start()])
@@ -491,6 +520,10 @@ def main():
         ids = [x[4:] for x in rows if re.fullmatch(r'CID=[0-9a-f]{32}', x)]
         require(len(ids) == 1, 'Unqualified eMMC')
         cid = ids[0]
+        pin_session(args.journal,{"operation":"firmware","cid":cid,"revision":rev,
+                    "manifest":filehash(kit/'native/SHA256SUMS'),"spl":args.spl,
+                    "spl_only":args.spl_only,"rootfs_only":args.rootfs_only,
+                    "kernel_only":args.kernel_only})
         print('Verified reader CID:',cid,flush=True)
         require(r.lines('layout')==['1 1009664 14260224','2 73728 65536','8 275456 500736'],
                 'Unexpected partition layout')

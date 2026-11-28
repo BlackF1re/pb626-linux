@@ -79,7 +79,7 @@ def backup_region(r,cid,sectors,region,size,partial,finished):
             # still matches the complete local image.
             if local.stat().st_size==size and d.filehash(local)==digest(r,cid,sectors,region,"backup-hash"):
                 print("Already verified:",region,flush=True)
-                return
+                return d.filehash(local)
             local.rename(partial)
         mode="r+b"
     else:
@@ -108,6 +108,7 @@ def backup_region(r,cid,sectors,region,size,partial,finished):
     d.require(h.hexdigest()==digest(r,cid,sectors,region,"backup-hash"),"Full backup hash mismatch; keep partial and resume")
     d.require(d.filehash(partial)==h.hexdigest(),"Local backup readback mismatch")
     partial.rename(finished)
+    return h.hexdigest()
 
 
 def main():
@@ -124,7 +125,11 @@ def main():
         d.check_windows_recovery(r,Path(__file__).resolve().parent)
     cid,sectors,ext=info(r,args.sd)
     images=regions(args.sd,sectors)
-    path=args.directory
+    path=args.directory.resolve()
+    identity={"operation":args.action,"cid":cid,"sectors":sectors,"directory":str(path)}
+    if args.action!="backup":
+        identity["manifest"]=d.filehash(path/"SHA256SUMS")
+    d.pin_session(args.journal,identity)
     cidname="pb626-sd-cid.txt" if args.sd else "pb626-emmc-cid.txt"
     extname="pb626-emmc-ext-csd.bin"
     r.test_transport()
@@ -154,18 +159,16 @@ def main():
         d.require(shutil.disk_usage(path).free>=required+16*1024*1024,
                   f"Not enough disk space; remaining backup needs {required/1024**3:.2f} GiB plus metadata")
         print("Backup directory:",path,flush=True)
+        hashes={name:d.filehash(path/name) for name in names}
         for region,name,size in images:
-            backup_region(r,cid,sectors,region,size,path/(name+".partial"),path/name)
+            hashes[name]=backup_region(r,cid,sectors,region,size,path/(name+".partial"),path/name)
             names.append(name)
         d.require(info(r,args.sd)[0]==cid,"CID changed")
-        # Final manifest is the completion marker; never publish one for a
-        # partial dump. Verify all device regions again before publishing it.
-        for region,name,size in images:
-            d.require(d.filehash(path/name)==digest(r,cid,sectors,region,"backup-hash"),
-                      "Device changed during backup; resume to reconcile")
+        # Each region already passed full-device and local-file verification.
+        # Recovery holds storage read-only; avoid re-reading every region.
         pending=path/"SHA256SUMS.partial"
         with pending.open("w",encoding="ascii") as f:
-            f.write("".join(d.filehash(path/n)+"  "+n+"\n" for n in names))
+            f.write("".join(hashes[n]+"  "+n+"\n" for n in names))
             f.flush(); os.fsync(f.fileno())
         pending.replace(path/"SHA256SUMS")
         print("Verified full dump:",path,flush=True)
