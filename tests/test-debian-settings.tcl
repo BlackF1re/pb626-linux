@@ -13,6 +13,8 @@ proc exec {args} {
             power-key-status {return "ignore"}
             led-status {return "on"}
             button-bindings-status {return "Left none none Right none none Home none none Menu refresh none"}
+            battery-status {return "10 3"}
+            sd-status {return "No external SD card detected"}
             default {error "unexpected privileged operation"}
         }
     }
@@ -55,6 +57,14 @@ set ::bindAction(3) Page_Down
 setBindingKey Left
 if {$::bindAction(0) ne "Left" || $::bindAction(3) ne "Page_Down"} {error "Gesture state was lost"}
 destroy .bindings
+batterySettings
+set ::batteryWarn 5
+set ::batteryCritical 7
+.battery.save invoke
+if {![winfo exists .battery] || $::batteryMessage ne "Choose a warning threshold above shutdown."} {error "Invalid battery policy accepted"}
+destroy .battery
+storageSummary
+if {$::storageText ne "No external SD card detected"} {error "Storage status not shown"}
 timezoneDialog
 set ::zoneFilter Berlin
 timezoneFilter
