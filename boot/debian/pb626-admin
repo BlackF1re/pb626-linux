@@ -53,6 +53,20 @@ lock_state() {
     exec 9>"$state/settings.lock"
     flock -x -w 5 9 || { echo "Board settings are busy; retry" >&2; exit 1; }
 }
+# Called under settings.lock. Merge only the validated section's keys;
+# never source EnvironmentFile data or overwrite unrelated preferences.
+desktop_patch() {
+    keys=$1; shift
+    old=
+    if [ -r "$state/desktop.conf" ]; then
+        old=$(awk -F= -v keys="$keys" 'BEGIN {n=split(keys,k," "); for(i=1;i<=n;i++) drop[k[i]]=1} !($1 in drop)' "$state/desktop.conf")
+    fi
+    if [ -n "$old" ]; then
+        atomic_save desktop.conf "$old" "$@"
+    else
+        atomic_save desktop.conf "$@"
+    fi
+}
 valid_governor() {
     case "$1" in ondemand|conservative|powersave|performance|schedutil) return 0 ;; *) return 2 ;; esac
 }
@@ -312,8 +326,38 @@ desktop-settings)
     fast_mode=${8-du}
     case "$fast_mode" in du|auto|a2|du4) ;; *) exit 2 ;; esac
     lock_state
-    atomic_save desktop.conf "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" \
-        "PB626_MENU_KEY=$4" "PB626_EPD_GRAY_PROFILE=$5" "PB626_XORG_DEPTH=$6" "PB626_IDLE_MINUTES=$7" "PB626_EPD_FAST_MODE=$fast_mode"
+    desktop_patch 'PB626_BUTTONS PB626_HOME_KEY PB626_MENU_KEY PB626_EPD_GRAY_PROFILE PB626_XORG_DEPTH PB626_IDLE_MINUTES PB626_EPD_FAST_MODE' \
+        "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" "PB626_MENU_KEY=$4" "PB626_EPD_GRAY_PROFILE=$5" \
+        "PB626_XORG_DEPTH=$6" "PB626_IDLE_MINUTES=$7" "PB626_EPD_FAST_MODE=$fast_mode"
+    ;;
+desktop-display)
+    [ "$#" -eq 8 ] && valid_desktop arrows keyboard menu "$2" "$3" 0 || exit 2
+    case "$4" in du|auto|a2|du4) ;; *) exit 2 ;; esac
+    case "$5" in srgb|cie-lstar) ;; *) exit 2 ;; esac
+    case "$6" in 0.5|0.6|0.7|0.8|0.9|1.0|1.1|1.2|1.3|1.4|1.5|1.6|1.7|1.8|1.9|2.0) ;; *) exit 2 ;; esac
+    case "$7" in 0|1) ;; *) exit 2 ;; esac
+    case "$8" in 0) ;; 1) [ -f /etc/pb626/mixed-waveform-qualified ] && [ "$7" = 0 ] || exit 2 ;; *) exit 2 ;; esac
+    lock_state
+    desktop_patch 'PB626_EPD_GRAY_PROFILE PB626_XORG_DEPTH PB626_EPD_FAST_MODE PB626_EPD_TONE PB626_EPD_GAMMA PB626_EPD_APPROX_PREVIEW PB626_EPD_MIXED' \
+        "PB626_EPD_GRAY_PROFILE=$2" "PB626_XORG_DEPTH=$3" "PB626_EPD_FAST_MODE=$4" \
+        "PB626_EPD_TONE=$5" "PB626_EPD_GAMMA=$6" "PB626_EPD_APPROX_PREVIEW=$7" "PB626_EPD_MIXED=$8"
+    ;;
+desktop-buttons)
+    [ "$#" -eq 4 ] && valid_desktop "$2" "$3" "$4" balanced 16 0 || exit 2
+    lock_state
+    desktop_patch 'PB626_BUTTONS PB626_HOME_KEY PB626_MENU_KEY' \
+        "PB626_BUTTONS=$2" "PB626_HOME_KEY=$3" "PB626_MENU_KEY=$4"
+    ;;
+desktop-idle)
+    [ "$#" -eq 2 ] && valid_desktop arrows keyboard menu balanced 16 "$2" || exit 2
+    lock_state
+    desktop_patch 'PB626_IDLE_MINUTES' "PB626_IDLE_MINUTES=$2"
+    ;;
+timezone)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in ''|-*|*[!a-zA-Z0-9_+/-]*) exit 2 ;; esac
+    timedatectl list-timezones | grep -Fxq -- "$2" || exit 2
+    exec timedatectl set-timezone "$2"
     ;;
 restart-desktop)
     [ "$#" -eq 1 ] || exit 2

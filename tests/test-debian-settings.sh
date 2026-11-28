@@ -43,6 +43,7 @@ sed -e "s|export PATH=/sbin:/bin:/usr/sbin:/usr/bin|export PATH=$tmp/bin:/sbin:/
     -e "s|/sys/devices/system/cpu/cpufreq|$tmp/cpufreq|g" \
     -e "s|/run/pb626-lock-indicator|$tmp/indicator|g" \
     -e "s|/etc/pb626/suspend-qualified|$tmp/qualified|g" \
+    -e "s|/etc/pb626/mixed-waveform-qualified|$tmp/mixed-qualified|g" \
     boot/debian/pb626-admin >"$tmp/admin"
 admin() { sh "$tmp/admin" "$@"; }
 test "$(admin light-status)" = '0 50'
@@ -103,6 +104,21 @@ admin desktop-status | grep -qx PB626_EPD_FAST_MODE=du
 admin desktop-settings pages keyboard escape mono 16 0 auto
 admin desktop-status | grep -qx PB626_EPD_GRAY_PROFILE=mono
 admin desktop-status | grep -qx PB626_EPD_FAST_MODE=auto
+admin desktop-display photo 24 auto cie-lstar 1.2 0 0
+admin desktop-buttons arrows home menu
+admin desktop-status | grep -qx PB626_EPD_GAMMA=1.2
+admin desktop-status | grep -qx PB626_EPD_TONE=cie-lstar
+admin desktop-status | grep -qx PB626_BUTTONS=arrows
+admin desktop-status | grep -qx PB626_XORG_DEPTH=24
+if admin desktop-display photo 24 auto srgb 1.0 0 1; then exit 1; fi
+touch "$tmp/mixed-qualified"
+admin desktop-display photo 24 auto srgb 1.0 0 1
+if admin desktop-display photo 24 auto srgb 1.0 1 1; then exit 1; fi
+if admin desktop-display photo 24 auto srgb 9.0 0 0; then exit 1; fi
+admin desktop-settings pages keyboard escape mono 16 0 auto
+admin desktop-status | grep -qx PB626_EPD_MIXED=1
+admin desktop-idle 0
+admin desktop-status | grep -qx PB626_EPD_MIXED=1
 for args in 'frontlight -1' 'frontlight 101' 'frontlight 01' \
     'frontlight 1+2' 'light-on extra' 'light-level 0' 'governor bad' 'power-key bad' 'led bad' 'hostname -bad' 'ntp bad' \
     'desktop-settings pages keyboard menu mono 16 0 bad' 'desktop-settings bad keyboard menu ui 16 0' \
