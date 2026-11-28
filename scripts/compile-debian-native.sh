@@ -32,8 +32,18 @@ in_build /bin/bash -euc '
   read -ra cppflags <<< "$(dpkg-buildflags --get CPPFLAGS)"
   read -ra cflags <<< "$(dpkg-buildflags --get CFLAGS)"
   read -ra ldflags <<< "$(dpkg-buildflags --get LDFLAGS)"
+  # ARMv7 PB626 uses 4 KiB kernel pages. Keep RELRO and the GNU stack
+  # contract while avoiding the default 64 KiB ELF segment padding.
   native_cc() {
-    cc "${cppflags[@]}" "${cflags[@]}" "${ldflags[@]}" -Wall -Wextra -Werror "$@"
+    cc "${cppflags[@]}" "${cflags[@]}" "${ldflags[@]}" -Wl,-z,max-page-size=4096 -Wall -Wextra -Werror "$@"
+  }
+  check_native_elf() {
+    readelf -Wl "$1" | awk "
+      /LOAD/ { loads++; if (\$NF != \"0x1000\" || (\$0 ~ / W / && \$0 ~ / E /)) bad=1 }
+      /GNU_STACK/ { stack++; if (\$0 ~ / E /) bad=1 }
+      /GNU_RELRO/ { relro++ }
+      END { exit !(loads >= 2 && stack == 1 && relro == 1 && !bad) }
+    "
   }
   native_cc -O3 -I uapi pb626-epd.c -o pb626-epd
   native_cc -mfpu=neon -O2 pb626-x11-epd.c -o pb626-x11-epd -lX11 -lXext -lXtst -lXdamage -lXfixes -lXrandr -lm
@@ -47,6 +57,9 @@ in_build /bin/bash -euc '
   strip pb626-charge
   test "$(./pb626-epd --protocol)" = pb626-epd-shm-4
   strip pb626-epd pb626-x11-epd
+  for binary in pb626-epd pb626-x11-epd pb626-charge; do
+    check_native_elf "$binary"
+  done
   # Build against the actual target Xorg module ABI. The vendor package is
   # retained unmodified, and the private module is not selected by default.
   apt-get source --only-source xserver-xorg-video-dummy=1:0.4.0-1

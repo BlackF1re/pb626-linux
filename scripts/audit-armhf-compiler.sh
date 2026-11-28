@@ -90,12 +90,12 @@ for program in pb626-epd pb626-x11-epd pb626-charge; do
     if [ "$program" = pb626-charge ]; then
         release+=(-Os -ffunction-sections -fdata-sections -Wl,--gc-sections)
     fi
-    run_one "$program" release "${release[@]}"
-    # The PB626 kernel uses 4 KiB pages. Compare linker segment alignment
-    # independently; do not select a smaller maximum page size by default.
+    run_one "$program" release-before-page4k "${release[@]}"
+    # Production binaries must pass with the qualified 4 KiB load alignment.
+    run_one "$program" release "${release[@]}" -Wl,-z,max-page-size=4096
     run_one "$program" release-page4k "${release[@]}" -Wl,-z,max-page-size=4096
     run_one "$program" release-page4k-common "${release[@]}" -Wl,-z,max-page-size=4096,-z,common-page-size=4096
-    for profile in baseline release release-page4k release-page4k-common; do
+    for profile in baseline release-before-page4k release release-page4k-common; do
         if [ -s "$out/$profile/$program/elf.txt" ]; then
             printf '\n[%s] %s ELF load segments:\n' "$program" "$profile"
             grep -E 'LOAD|GNU_RELRO|GNU_STACK|INTERP' "$out/$profile/$program/elf.txt" || :

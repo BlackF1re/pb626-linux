@@ -365,11 +365,13 @@ optimization level overriding the distribution default; tests use matching
 release flags. The exact combined compact charger profile is a required
 CI candidate, not a hardware qualification.
 
-Stripped file sizes in the baseline audit were around 67 KiB each even
-when the text column changed considerably. The linker alignment candidates
-are reported separately; a smaller ELF maximum page size is not the
-production default. Check actual PT_LOAD alignment, RELRO, file size and
-loader behavior before changing it.
+Full qualification run 46084101571 confirmed the 4 KiB linker alignment
+for all three native executables under ARMhf QEMU. The production build now
+uses -Wl,-z,max-page-size=4096 and checks the PT_LOAD alignment, non-executable
+GNU_STACK and GNU_RELRO. This is specific to the PB626 4 KiB kernel; the
+ordinary Debian packages and Xorg DDX retain their distribution alignment.
+The stripped sizes fell from 201984 to 83200 bytes in total (58.8%).
+This is a file-size reduction, not a measured PSS saving.
 
 For physical comparison, run identical full and partial updates and input
 workloads at equal temperature, CPU governor, visual depth and waveform.
