@@ -115,7 +115,7 @@ def boot(kit, profile):
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument("action",choices=("prepare","probe","boot"))
+    ap.add_argument("action",choices=("prepare","probe","boot","hello"))
     ap.add_argument("--profile",choices=("ncm","rndis"),default="ncm")
     ap.add_argument("--kit",type=Path,default=Path(__file__).resolve().parent)
     args=ap.parse_args()
@@ -124,6 +124,11 @@ def main():
         print("Verified FEL input:",prepare(kit))
     elif args.action=="probe":
         print(probe(kit/"host/sunxi-fel.exe",kit))
+    elif args.action=="hello":
+        import importlib
+        recovery=importlib.import_module("install-direct").EthernetRecovery(windows=True)
+        recovery.close()
+        print("Recovery protocol OK")
     else:
         boot(kit,args.profile)
 if __name__=="__main__":

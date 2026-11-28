@@ -65,7 +65,7 @@ case "$1" in
         case "$1" in
             write) test "$#" = 8 ;;
             file) test "$#" = 6 ;;
-            reset-data|check-data|personalize) test "$#" = 2 ;;
+            reset-data|check-data|personalize|bootloader-hash|spl-check) test "$#" = 2 ;;
             *) fail 'Invalid direct operation' ;;
         esac
         cid_check "$2"

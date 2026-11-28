@@ -63,6 +63,16 @@ receive() {
 }
 check_hash() { printf '%s  %s\n' "$2" "$1" | sha256sum -c -; }
 case "$operation" in
+    bootloader-hash)
+        work=$(mktemp -d /run/pb626-install.XXXXXX)
+        dd if="$D" of="$work/current-spl" bs=512 skip=16 count=48 status=none
+        test "$(wc -c <"$work/current-spl")" = 24576
+        sha256sum "$work/current-spl" | awk '{print $1}'
+        ;;
+    spl-check)
+        test -f /etc/pb626-spl-candidate.sha256
+        cat /etc/pb626-spl-candidate.sha256
+        ;;
     write)
         kind=$1; idx=$2; format=$3; bytes=$4; expected=$5; length=$6
         number "$idx"; number "$length"

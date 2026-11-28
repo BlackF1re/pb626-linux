@@ -369,6 +369,7 @@ def main():
     ap.add_argument('--windows', action='store_true', help='Native Windows TCP; adapter configured by launcher')
     ap.add_argument('--spl', choices=('keep','qualified','candidate'), default='qualified')
     ap.add_argument('--spl-only', action='store_true', help='Only replace the selected primary SPL')
+    ap.add_argument('--candidate-backup', type=Path, help='Verified full dump for experimental BT0')
     args = ap.parse_args()
     kit = args.kit.resolve()
     require(not args.spl_only or args.spl != 'keep', 'No SPL selected')
@@ -386,7 +387,29 @@ def main():
         cid = ids[0]
         require(r.lines('layout')==['1 1009664 14260224','2 73728 65536','8 275456 500736'],
                 'Unexpected partition layout')
+        if args.spl == 'keep':
+            current = r.run('{} bootloader-hash {}'.format(REMOTE,cid))
+            allowed = {'1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6'}
+            candidate = kit/'candidate/BT0-uncaged-source-candidate.bin'
+            if candidate.is_file():
+                allowed.add(filehash(candidate))
+            require(len(current)==1 and current[0] in allowed,
+                    'Installed BT0 is not recognized; choose qualified installation instead of keep')
         if args.spl == 'candidate':
+            require(r.run('{} spl-check {}'.format(REMOTE,cid)) == [sha(spl)],
+                    'Running recovery does not authorize this exact same-run candidate')
+            require(args.candidate_backup is not None, 'A full verified backup is required')
+            backup = args.candidate_backup
+            sums = manifest(backup/'SHA256SUMS')
+            sizes = {'pb626-emmc-user.img':15269888*512, 'pb626-emmc-boot0.img':CHUNK,
+                     'pb626-emmc-boot1.img':CHUNK, 'pb626-emmc-ext-csd.bin':512}
+            require((backup/'pb626-emmc-cid.txt').read_text().strip()==cid
+                    and filehash(backup/'pb626-emmc-cid.txt')==sums.get('pb626-emmc-cid.txt'),
+                    'Backup belongs to a different card or CID is corrupt')
+            print('Verifying full recovery backup...',flush=True)
+            for name,size in sizes.items():
+                path=backup/name
+                require(path.stat().st_size==size and filehash(path)==sums.get(name),'Invalid backup: '+name)
             print('EXPERIMENTAL BT0: physical FEL has not been qualified; a bad SPL may make the reader unrecoverable.', flush=True)
             print('Candidate SHA256:', sha(spl), flush=True)
             require(input('Type RISK '+cid+' to accept this: ') == 'RISK '+cid, 'Cancelled')

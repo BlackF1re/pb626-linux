@@ -96,7 +96,7 @@ function Connect-Recovery {
     # No default gateway, DNS changes, Internet sharing or firewall edits.
     $until=(Get-Date).AddSeconds(45)
     do {
-        & $python -c 'import importlib; r=importlib.import_module("install-direct").EthernetRecovery(windows=True); print("Recovery protocol OK")' 2>$null
+        & $python (Join-Path $kit 'windows-fel.py') hello 2>$null
         if ($LASTEXITCODE -eq 0) { return }
         Start-Sleep -Seconds 1
     } while ((Get-Date) -lt $until)
@@ -139,7 +139,11 @@ if ($Action -eq 'Prepare') { Invoke-Python @((Join-Path $kit 'windows-fel.py'),'
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $principal=New-Object Security.Principal.WindowsPrincipal($identity)
 if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw 'Run PB626.cmd as administrator (USB adapter configuration requires elevation).'
+    if ($DataDir.Contains('"')) { throw 'Invalid data directory' }
+    $launch='-NoLogo -NoProfile -ExecutionPolicy Bypass -File "'+$PSCommandPath+'" -Action '+$Action+' -UsbProfile '+$UsbProfile+' -DataDir "'+([IO.Path]::GetFullPath($DataDir).TrimEnd('\'))+'"'
+    if ($UseRunningRecovery) { $launch+=' -UseRunningRecovery' }
+    $child=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -ArgumentList $launch -Wait -PassThru
+    exit $child.ExitCode
 }
 if ($Action -in @('InstallCandidate','Bootloader')) {
     Write-Warning 'NEW SPL is experimental. A successful CI or FEL RAM boot does NOT prove recovery after replacing installed BT0. Keep a complete verified backup and independent hardware recovery. Deep resume is NOT enabled by this candidate.'
@@ -182,6 +186,11 @@ try {
         if ($mode -eq 'qualified') { Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare') }
         $argsList=@((Join-Path $kit 'install-direct.py'),'--kit',$kit,'--windows','--spl',$mode)
         if ($Action -in @('Bootloader','RestoreBootloader')) { $argsList+='--spl-only' }
+        if ($mode -eq 'candidate') {
+            $backup=Read-Host 'Path to a complete verified eMMC backup for this reader'
+            if (!$backup) { throw 'A verified backup is required for experimental BT0' }
+            $argsList+=@('--candidate-backup',[IO.Path]::GetFullPath($backup))
+        }
         Invoke-Python $argsList
     } else {
         if ($Action -eq 'Backup') {
