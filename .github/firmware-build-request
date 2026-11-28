@@ -1,4 +1,4 @@
-Full qualification request: one-cycle exact E Ink update refinements
+Full qualification request: Debian runtime, CI and suspend/resume review
 Source branch: optimization/debian-runtime
-Source head before request: 9a67d6026a4a7944497221469d36d4cac97bc1a7
-Scope: exact one-pass selection, indexed scanout equivalence, prospective local scrub, bounded mixed and uniform Auto waveform selection, mandatory scrub validation, top-level window coalescing. Mixed waveforms remain physically qualification-gated.
+Source head before request: 9eb28e075f6970a0c10e401b70e09f1aa7eef471
+Scope: all selected firmware, native Debian armhf, Alpine/FEL, recovery, source bootloader candidates, host and target tests, Windows launcher and same-run flash kit. Deep suspend and other hardware qualification gates remain unchanged.
