@@ -135,6 +135,11 @@ CONTROL
 (cd "$pkg" && sudo find etc -type f -printf '/%p\n' | LC_ALL=C sort) | sudo tee "$pkg/DEBIAN/conffiles" >/dev/null
 sudo install -d "$pkg/usr/share/doc/pb626-runtime"
 sudo install -m 644 LICENSE "$pkg/usr/share/doc/pb626-runtime/copyright"
+# Match Debian package conventions: non-conffile payload hashes are
+# recorded by the package, and conffiles have their own dpkg metadata.
+(cd "$pkg" && sudo find usr -type f -print0 | LC_ALL=C sort -z | sudo xargs -0 -r md5sum) |
+    sudo tee "$pkg/DEBIAN/md5sums" >/dev/null
+test -s "$pkg/DEBIAN/md5sums"
 sudo dpkg-deb --root-owner-group --build "$pkg" "$work/pb626-runtime.deb"
 sudo install -m 644 "$work/pb626-runtime.deb" "$root/tmp/pb626-runtime.deb"
 in_root dpkg -i /tmp/pb626-runtime.deb
@@ -209,10 +214,15 @@ test "$(sudo stat -c '%a:%u:%g' "$root/usr/bin/doas")" = 4755:0:0
 
 # ARM-side checks verify real target loader, package state and privilege
 # metadata rather than accidentally resolving host paths.
-in_root /bin/bash -euc '
+in_root /bin/bash -euo pipefail -c '
   test "$(dpkg --print-architecture)" = armhf
   dpkg -s pb626-runtime | grep -qx "Status: install ok installed"
-  test -z "$(dpkg --audit)"
+  audit=$(dpkg --audit)
+  test -z "$audit" || { printf "%s\n" "$audit" >&2; exit 1; }
+  test -s /var/lib/dpkg/info/pb626-runtime.md5sums
+  verify=$(dpkg --verify pb626-runtime)
+  test -z "$verify" || { printf "%s\n" "$verify" >&2; exit 1; }
+  apt-get -o Dir::Cache::pkgcache="" -o Dir::Cache::srcpkgcache="" check
   test -x /sbin/init
   test "$(readlink -f /sbin/init)" = /usr/lib/systemd/systemd
   test "$(id -u reader)" = 1000
