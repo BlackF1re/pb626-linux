@@ -1,4 +1,4 @@
-Full qualification: Windows FEL byte-exact patch, console safety and UX audit
-Source head: 44bc2adcee102f4429290a0b1ffe9cf5a06c9fd1
-Scope: native Windows host, same-build recovery identity, explicit storage readiness, console exit paths, journal and full paired firmware bundles.
-No merge. No weakening of FEL patch or hardware qualification gates.
+Full qualification: Windows FEL patch, console UX, write-state and BT0 compatibility
+Source head: 8c4ceb0ad4c60eefd244930ddb247dff141cd580
+Scope: Windows native host, same-build recovery, eMMC readiness, console exit paths, journal, isolated BT0 kernel/rootfs guard, complete paired kits.
+No merge. Hardware qualification gates retained.
