@@ -1,4 +1,4 @@
-Full qualification: Windows native packaging fixes and resumable firmware/eMMC operations
-Source head: ad26466d3ac12bb5b5c0902667d03c33e5144f03
-Scope: native host manifest, PowerShell 5.1, standard and paired deep kits, guarded partial updates, verified chunk continuation and recovery diagnostics, real ARM BusyBox and file-backed recovery tests.
-No merge; physical qualification remains required.
+Full qualification: resumable Windows flasher and native packaging regression
+Source head: 19707395ce5a8ab87a04924f492f026265575025
+Scope: standard/deep Windows kits, PowerShell 5.1, native FEL, guarded partial updates, verified transfer continuation, ARM recovery fixture and read-only diagnostics.
+No merge. Hardware qualification remains required.
