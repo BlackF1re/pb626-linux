@@ -135,6 +135,7 @@ diff --git a/drivers/power/supply/axp20x_usb_power.c b/drivers/power/supply/axp2
 +	}
  	while (i < power->num_irqs)
  		enable_irq(power->irqs[i++]);
+ 
 diff --git a/drivers/irqchip/irq-sun4i.c b/drivers/irqchip/irq-sun4i.c
 --- a/drivers/irqchip/irq-sun4i.c
 +++ b/drivers/irqchip/irq-sun4i.c
