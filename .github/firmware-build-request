@@ -1,4 +1,4 @@
-Full qualification request: Debian runtime optimization
+Full qualification request: final runtime optimization candidates
 Source branch: optimization/debian-runtime
-Source head before request: 7424f0b979d6dc22fd86b24d1259d268af7e0119
-Scope: full firmware build graph, including Debian native firmware, RAM desktop, FEL recovery, flash kit, kernel optimization report, compiler comparisons and host regression tests.
+Source head before request: 1df507f3e70a212f65a12824d81bb82e1c53dbb4
+Scope: full paired firmware and recovery graph, native 4 KiB ELF layout, Cortex-A8 crypto policy, ARM Matchbox X11 smoke, packed transitions and capture regressions, isolated kernel compiler candidates.
