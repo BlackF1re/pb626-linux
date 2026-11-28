@@ -1,4 +1,4 @@
-Qualification: streamlined Windows firmware DAG
-Source head: 47d18ca90c40cfefffb48e0fe9f5e6a726d31bdf
-Scope: standard and deep Windows kits, same-run tests, cache-aware Debian rootfs, parallel deep packaging and strict final gate. Optional Alpine and standalone Linux artifacts remain available by manual input.
+Qualification: E Ink TPS65185 suspend and AXP USB wake fixes
+Source head: eaa4b6959f88a8e68b984d476d7f7edf3530f98a
+Scope: full Debian qualification, standard and experimental deep Windows kits, same-run recovery and host tests.
 No merge. Hardware qualification remains separate.
