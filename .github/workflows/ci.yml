@@ -193,9 +193,7 @@ jobs:
       - name: Install X11 test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth tk \
-            libfakekey-dev libxft-dev libexpat1-dev libpng-dev libxrender-dev fonts-dejavu-core x11-utils \
-            xserver-xorg-dev xutils-dev libpciaccess-dev autoconf automake libtool pkg-config
+          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev xvfb xauth
       - name: Identify required pinned kernel paths
         id: kernel-paths
         run: |
@@ -272,11 +270,36 @@ jobs:
           done
           gcc -O2 -Wall -Wextra -Werror -DPB626_PACKED_TRANSITIONS -I /tmp/pb626-uapi display/test-pb626-epd.c -o /tmp/test-pb626-packed
           /tmp/test-pb626-packed
+
+  desktop-ui:
+    name: Host-side settings and taskbar tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libx11-dev libxtst-dev xvfb xauth tk fonts-dejavu-core
+      - name: Test taskbar and settings
+        run: |
+          set -euo pipefail
           gcc -O2 -Wall -Wextra -Werror display/pb626-taskbar.c -o /tmp/pb626-taskbar -lX11
           gcc -O2 -Wall -Wextra -Werror display/test-pb626-taskbar.c -o /tmp/test-pb626-taskbar -lX11 -lXtst
           xvfb-run -a -s '-screen 0 760x1024x16' /tmp/test-pb626-taskbar /tmp/pb626-taskbar
           xvfb-run -a -s '-screen 0 760x1024x16' wish tests/test-debian-settings.tcl
           xvfb-run -a -s '-screen 0 760x1024x16 -dpi 216' wish tests/test-debian-settings.tcl
+
+  keyboard:
+    name: Host-side Matchbox Keyboard smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libx11-dev libxext-dev libfakekey-dev libxft-dev libexpat1-dev libpng-dev libxrender-dev fonts-dejavu-core xvfb xauth x11-utils autoconf automake libtool pkg-config
       - name: Smoke-test pinned Matchbox Keyboard with the PB626 flat layout
         run: |
           set -euo pipefail
@@ -304,6 +327,17 @@ jobs:
               xwininfo -root -tree | grep -F '"Keyboard"'
               kill -0 "$pid"
             '
+
+  shared-ddx:
+    name: Host-side optional shared DDX compilation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xserver-xorg-dev xutils-dev libpciaccess-dev autoconf automake libtool pkg-config
       - name: Compile the optional shared DDX against host Xorg headers
         run: |
           set -euo pipefail
