@@ -231,7 +231,7 @@ static void test_mixed_plan(void)
 			set_cached_signal(&r.cache[expected[j]], i, t, 1 + i % 2);
 		assert(mixed_transition(&r, t) == expected[j]);
 	}
-	assert(plan_mixed(&r, active));
+	assert(plan_mixed(&r, active, GL16));
 	unsigned int scan = 0;
 	for (unsigned int p = 0; p < r.planned.count; p++)
 		for (unsigned int n = 0; n < r.planned.phases[p].scans; n++, scan++)
@@ -243,13 +243,17 @@ static void test_mixed_plan(void)
 				assert(r.planned.phases[p].lut[t] == want);
 			}
 	assert(scan == 6);
+	/* The mixed plan must not be longer than the eligible baseline. */
+	assert(!plan_mixed(&r, active, DU4));
+	bool uniform[TRANSITIONS] = { [0x9f] = true };
+	assert(!plan_mixed(&r, uniform, GL16));
 	r.mixed_a2 = false;
 	assert(mixed_transition(&r, codes[0]) == GL16);
 	active[0xff] = true;
-	assert(!plan_mixed(&r, active));
+	assert(!plan_mixed(&r, active, GL16));
 	active[0xff] = false;
 	active[0x32] = true;
-	assert(!plan_mixed(&r, active));
+	assert(!plan_mixed(&r, active, GL16));
 }
 
 static void test_fast_mode_selection(void)

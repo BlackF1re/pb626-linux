@@ -356,3 +356,13 @@ uses the existing CLEAN command; counters reset only after ACK. Tests
 cover the tile-boundary halo, unrelated cleanup, and fast binary frames.
 GC16 is a complete factory update, but its optical appearance and the
 latency of this combined policy still require physical comparison.
+
+### Mixed planner cost and eligibility guard
+
+Compare mixed scan count against the already validated single-mode
+baseline for the current temperature. Reject a longer plan, a plan
+identical to the baseline, and any transaction requiring GC16 fallback.
+Expand only active transition codes per phase; no second framebuffer.
+This preserves the qualification gate and ensures that mixing cannot
+increase the nominal scan count. CPU and physical optical latency still
+need measurement. Host tests cover longer-plan and redundant-plan rejection.

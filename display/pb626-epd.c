@@ -419,10 +419,10 @@ static enum mode mixed_transition(const struct renderer *r, unsigned int t)
 	return best;
 }
 
-static bool plan_mixed(struct renderer *r, const bool *active)
+static bool plan_mixed(struct renderer *r, const bool *active, enum mode baseline)
 {
-	enum mode selected[TRANSITIONS];
-	unsigned int scans = 0, counts[DU4 + 1] = {0};
+	uint8_t codes[TRANSITIONS], selected[TRANSITIONS];
+	unsigned int used = 0, scans = 0, counts[DU4 + 1] = {0};
 	for (unsigned int t = 0; t < TRANSITIONS; t++) {
 		if (!active[t])
 			continue;
@@ -432,21 +432,24 @@ static bool plan_mixed(struct renderer *r, const bool *active)
 		enum mode m = mixed_transition(r, t);
 		if (!r->cache[m].count || !r->driven[m][t])
 			return false;
-		selected[t] = m;
+		codes[used] = t;
+		selected[used++] = m;
 		counts[m]++;
 		if (r->cache[m].count > scans)
 			scans = r->cache[m].count;
 	}
-	if (!scans)
+	/* Do not lengthen the overall transaction or synthesize a plan
+	 * identical to the already valid single-waveform baseline. */
+	if (!scans || scans > r->cache[baseline].count ||
+	    counts[baseline] == used)
 		return false;
 	struct update *u = &r->planned;
 	u->count = 0;
 	for (unsigned int i = 0; i < scans; i++) {
 		uint8_t phase[TRANSITIONS] = {0};
-		for (unsigned int t = 0; t < TRANSITIONS; t++) {
-			if (!active[t])
-				continue;
-			const struct cached_update *c = &r->cache[selected[t]];
+		for (unsigned int j = 0; j < used; j++) {
+			unsigned int t = codes[j];
+			const struct cached_update *c = &r->cache[selected[j]];
 			if (i < c->count)
 				phase[t] = packed_signal(c->lut + i * LUT_BYTES, t);
 		}
@@ -955,19 +958,6 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 			cache_mode(renderer, DU);
 			mode = select_a2_or_du(renderer, active);
 		}
-		/* Exact DU4 can itself contain both binary and gray targets.
-		 * Allow per-transition planning there too, but never mix an
-		 * approximate frame, unknown history, RESET or CLEAN. */
-		if (fallback && (mode == GL16 || mode == DU4) &&
-		    renderer->mixed_enabled && !reset_first) {
-			cache_mode(renderer, GL16);
-			cache_mode(renderer, GC16);
-			cache_mode(renderer, DU);
-			if (renderer->mixed_a2) cache_mode(renderer, A2);
-			if (renderer->mixed_du4) cache_mode(renderer, DU4);
-			if (plan_mixed(renderer, active))
-				mode = MIXED;
-		}
 		if (fallback && mode == DU4 && !supports(renderer, mode, active)) {
 			mode = GL16;
 			cache_mode(renderer, mode);
@@ -976,8 +966,20 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 			mode = GC16;
 			cache_mode(renderer, mode);
 		}
-		if (mode != MIXED && !supports(renderer, mode, active))
+		if (!supports(renderer, mode, active))
 			fail("this mode cannot perform every requested transition; use partial or full");
+		/* Compare against a proven eligible single-mode baseline.
+		 * A required GC16 fallback is never replaced by a mixture. */
+		if (fallback && (mode == GL16 || mode == DU4) &&
+		    renderer->mixed_enabled && !reset_first) {
+			cache_mode(renderer, GL16);
+			cache_mode(renderer, GC16);
+			cache_mode(renderer, DU);
+			if (renderer->mixed_a2) cache_mode(renderer, A2);
+			if (renderer->mixed_du4) cache_mode(renderer, DU4);
+			if (plan_mixed(renderer, active, mode))
+				mode = MIXED;
+		}
 	}
 	invalidate();
 	if (!renderer->buffers_count)
