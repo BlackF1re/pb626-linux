@@ -129,3 +129,21 @@ driver behavior are tested. Keep taskstats, Wi-Fi debugfs, wakelock ABI,
 module version checks and other diagnostic/compatibility facilities;
 removing an available interface solely to reduce code size does not meet
 the functional compatibility requirement.
+
+### Kernel compiler experiment results
+
+Full qualification run [46124456613](https://github.com/BlackF1re/pb626-linux/actions/runs/46124456613)
+completed all four isolated kernel builds successfully. GNU size and file
+sizes (bytes):
+
+| Profile | text | data | bss | zImage |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline | 7591711 | 2393288 | 220388 | 5548288 |
+| Thumb-2 | 5334135 | 2397372 | 220388 | 5039200 |
+| Dead-code elimination | 7453731 | 2355584 | 219300 | 5447296 |
+| Cortex-A8 tuning | 7591775 | 2393288 | 220388 | 5548256 |
+
+All four builds produced 62 modules. Thumb-2 is the strongest size candidate
+(about 2.15 MiB less text), but these results do not establish physical boot,
+module loading, E Ink correctness, resume or target timing. Keep production
+kernel flags unchanged pending on-device qualification.

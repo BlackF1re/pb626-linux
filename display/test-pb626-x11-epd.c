@@ -39,12 +39,14 @@ static void test_packed_rgb565(void)
 			nibble_set(packed, 1, j);
 			assert(nibble_get(packed, 0) == i && nibble_get(packed, 1) == j);
 		}
-	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++) {
-		setup_gray(profile, 0, 1.0);
-		for (unsigned int p = 0; p <= 65535; p++)
-			assert(rgb565_gray(p) == gray_value(channel(p, 0xf800),
-					channel(p, 0x07e0), channel(p, 0x001f)));
-	}
+	for (int profile = GRAY_BALANCED; profile <= GRAY_MONO; profile++)
+		for (int tone = 0; tone < 2; tone++)
+			for (int gamma = 0; gamma < 2; gamma++) {
+				setup_gray(profile, tone, gamma ? 1.2 : 1.0);
+				for (unsigned int p = 0; p <= 65535; p++)
+					assert(rgb565_gray(p) == gray_value(channel(p, 0xf800),
+						channel(p, 0x07e0), channel(p, 0x001f)));
+			}
 }
 
 static void test_gray_rows(void)
@@ -136,6 +138,11 @@ static void bench_rgb565_candidate(void)
 	setup_gray(GRAY_BALANCED, 0, 1.0);
 	init_candidate_gray();
 	puts("pattern,width,implementation,ns_per_pixel");
+#ifdef PB626_RGB565_ARITHMETIC
+	const char *production = "arithmetic";
+#else
+	const char *production = "expand96";
+#endif
 	for (int pattern = 0; pattern < 3; pattern++) {
 		uint32_t rng = 1;
 		for (unsigned int i = 0; i < ROW * ROWS; i++) {
@@ -164,7 +171,7 @@ static void bench_rgb565_candidate(void)
 				(void)sink;
 				printf("%s,%d,%s,%.2f\n",
 				       pattern == 0 ? "binary" : pattern == 1 ? "gray" : "color",
-				       width, lookup ? "lut" : "production",
+				       width, lookup ? "lut" : production,
 				       (double)elapsed / (REPEATS * ROWS * width));
 			}
 	}

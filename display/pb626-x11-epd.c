@@ -647,13 +647,14 @@ static void setup_quantization(void)
 	if (quant_reference)
 		return;
 	int period = gray_profile == GRAY_PHOTO ? 16 : 4;
-	for (int v = 0; v < 256; v++) {
+	for (int v = 0; v < 256; v++)
 		nearest_level[v] = quantize_reference(v, 48, 0, 0);
-		if (gray_profile != GRAY_UI && gray_profile != GRAY_MONO)
-			for (int y = 0; y < period; y++)
-				for (int x = 0; x < period; x++)
+	if (gray_profile != GRAY_UI && gray_profile != GRAY_MONO)
+		/* Fill complete phase rows, not one byte per cache line. */
+		for (int y = 0; y < period; y++)
+			for (int x = 0; x < period; x++)
+				for (int v = 0; v < 256; v++)
 					quant_table[y * period + x][v] = quantize_reference(v, 0, x, y);
-	}
 }
 
 static inline uint8_t quantize(unsigned int value, unsigned int contrast, int x, int y)
@@ -703,11 +704,39 @@ _Static_assert(PB626_CAPTURE_ROWS >= 16 && PB626_CAPTURE_ROWS <= 256,
 	       "capture strips must remain bounded");
 enum { CAPTURE_ROWS = PB626_CAPTURE_ROWS, CAPTURE_READ_ROWS = CAPTURE_ROWS + 2 };
 
+/* Exact floor expansion, not bit replication (which changes some colors).
+ * 96 read-only bytes instead of three constant divisions per colored pixel.
+ * Keep the arithmetic build available for Cortex-A8 CPU-time comparison. */
+#ifndef PB626_RGB565_ARITHMETIC
+static const uint8_t expand5[32] = {
+	0, 8, 16, 24, 32, 41, 49, 57,
+	65, 74, 82, 90, 98, 106, 115, 123,
+	131, 139, 148, 156, 164, 172, 180, 189,
+	197, 205, 213, 222, 230, 238, 246, 255,
+};
+static const uint8_t expand6[64] = {
+	0, 4, 8, 12, 16, 20, 24, 28,
+	32, 36, 40, 44, 48, 52, 56, 60,
+	64, 68, 72, 76, 80, 85, 89, 93,
+	97, 101, 105, 109, 113, 117, 121, 125,
+	129, 133, 137, 141, 145, 149, 153, 157,
+	161, 165, 170, 174, 178, 182, 186, 190,
+	194, 198, 202, 206, 210, 214, 218, 222,
+	226, 230, 234, 238, 242, 246, 250, 255,
+};
+#endif
+
 static inline uint8_t rgb565_gray(unsigned int pixel)
 {
+#ifdef PB626_RGB565_ARITHMETIC
 	return gray_value(((pixel >> 11) & 31) * 255 / 31,
 			  ((pixel >> 5) & 63) * 255 / 63,
 			  (pixel & 31) * 255 / 31);
+#else
+	return gray_value(expand5[(pixel >> 11) & 31],
+			  expand6[(pixel >> 5) & 63],
+			  expand5[pixel & 31]);
+#endif
 }
 
 /* In a typical UI many adjacent pixels are pure black/white or neutral.

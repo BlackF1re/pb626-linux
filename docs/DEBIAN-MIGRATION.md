@@ -426,3 +426,23 @@ live desktop; that regression paints its test pattern on a virtual root.
 
 The full firmware qualification and compiler experiments do not replace
 physical A13 boot, E Ink and power/recovery checks.
+
+### Follow-up compiler and RGB565 audit
+
+The RGB565 scalar path uses exact 5-bit and 6-bit channel expansion tables
+(96 read-only bytes total), preserving the NEON binary-pixel fast path and
+all color/tone/gamma semantics. The arithmetic path remains available as
+`PB626_RGB565_ARITHMETIC` for comparison; the compiler audit produces a
+`rgb565-arithmetic/pb626-x11-epd/test` alongside the normal release test.
+Run both with `PB626_BENCH_RGB565=1` on the reader. The full 64 KiB LUT is
+still experimental; do not select it from emulator timings. The quantization
+table is initialized phase-by-phase, avoiding strided stores without changing
+its contents. Exhaustive RGB565 tests compare all 65536 values against the
+independent channel reference for every profile, two tones and two gammas.
+
+The compiler audit also builds release-tune and release-lto with the exact
+release hardening and 4 KiB alignment. The private Matchbox clients and their
+compact alternatives inherit Debian's CPPFLAGS, CFLAGS and LDFLAGS; they
+retain their existing release optimization levels. Requalify the ARM X11
+smoke and full firmware after changing these flags. No target speedup is
+claimed without physical measurements.

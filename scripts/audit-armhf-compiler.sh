@@ -93,9 +93,13 @@ for program in pb626-epd pb626-x11-epd pb626-charge; do
     run_one "$program" release-before-page4k "${release[@]}"
     # Production binaries must pass with the qualified 4 KiB load alignment.
     run_one "$program" release "${release[@]}" -Wl,-z,max-page-size=4096
+    # Compare one change at a time against actual hardened release flags.
+    run_one "$program" release-tune "${release[@]}" -Wl,-z,max-page-size=4096 -mtune=cortex-a8
+    run_one "$program" release-lto "${release[@]}" -Wl,-z,max-page-size=4096 -flto
     if [ "$program" = pb626-epd ]; then
         run_one "$program" packed-transitions "${release[@]}" -Wl,-z,max-page-size=4096 -DPB626_PACKED_TRANSITIONS
     elif [ "$program" = pb626-x11-epd ]; then
+        run_one "$program" rgb565-arithmetic "${release[@]}" -Wl,-z,max-page-size=4096 -DPB626_RGB565_ARITHMETIC
         for rows in 32 64 256; do
             run_one "$program" "capture-$rows" "${release[@]}" -Wl,-z,max-page-size=4096 "-DPB626_CAPTURE_ROWS=$rows"
         done

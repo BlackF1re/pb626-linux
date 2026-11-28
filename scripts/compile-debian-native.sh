@@ -80,8 +80,10 @@ in_build /bin/bash -euc '
   test -s src/.libs/dummy_drv.so
   strip --strip-unneeded src/.libs/dummy_drv.so
   cd ..
-  export CFLAGS="-O2 -std=gnu17"
-  export LDFLAGS="-Wl,-z,max-page-size=4096"
+  # Keep distribution hardening for private clients as well as native C tools.
+  export CPPFLAGS="${cppflags[*]}"
+  export CFLAGS="${cflags[*]} -O2 -std=gnu17"
+  export LDFLAGS="${ldflags[*]} -Wl,-z,max-page-size=4096"
   cd matchbox-keyboard
   patch -p1 < ../matchbox-keyboard-eink.patch
   autoreconf -fi
@@ -118,8 +120,11 @@ in_build /bin/bash -euc '
     esac
     candidate="/tmp/pb626-build/audit-$component"
     echo "Matchbox size audit: $component"
-    if make clean && make -j2 CFLAGS="-Os -std=gnu17 -ffunction-sections -fdata-sections" LDFLAGS="-Wl,-z,max-page-size=4096,--gc-sections" &&
-       make install CFLAGS="-Os -std=gnu17 -ffunction-sections -fdata-sections" LDFLAGS="-Wl,-z,max-page-size=4096,--gc-sections" DESTDIR="$candidate"; then
+    # Same hardening and ABI as the release, changing only optimization.
+    compact_cflags="${cflags[*]} -Os -std=gnu17 -ffunction-sections -fdata-sections"
+    compact_ldflags="${ldflags[*]} -Wl,-z,max-page-size=4096,--gc-sections"
+    if make clean && make -j2 CFLAGS="$compact_cflags" LDFLAGS="$compact_ldflags" &&
+       make install CFLAGS="$compact_cflags" LDFLAGS="$compact_ldflags" DESTDIR="$candidate"; then
       for binary in "$@"; do
         base="/tmp/pb626-build/$release/usr/bin/$binary"
         alt="$candidate/usr/bin/$binary"
