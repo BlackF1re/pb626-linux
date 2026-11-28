@@ -307,15 +307,27 @@ class EthernetRecovery:
 
 
 def mapped_chunks(path, total=P1_BYTES):
+    return set(rootfs_map(path,total)[0])
+
+
+def rootfs_map(path, total=P1_BYTES, require_hashes=False):
     data = json.loads(path.read_text())
     count = (total+CHUNK-1)//CHUNK
-    require(data.get("version")==1 and data.get("image_bytes")==total
+    require(data.get("version") in (1,2) and data.get("image_bytes")==total
             and data.get("chunk_bytes")==CHUNK, "Invalid rootfs map geometry")
     values = data.get("mapped")
     require(isinstance(values,list) and values and values[0]==0
             and all(type(x) is int and 0<=x<count for x in values)
             and values==sorted(set(values)), "Invalid rootfs map entries")
-    return set(values)
+    hashes=data.get("sha256")
+    if data["version"]==2:
+        require(isinstance(hashes,dict) and set(hashes)=={str(i) for i in values}
+                and all(isinstance(h,str) and re.fullmatch(r"[0-9a-f]{64}",h) for h in hashes.values()),
+                "Invalid rootfs chunk hashes")
+    else:
+        require(not require_hashes,"This Windows bundle requires a version-2 hashed rootfs map")
+        hashes={}
+    return values,{int(i):h for i,h in hashes.items()}
 
 
 def get_wbf(r):
@@ -512,7 +524,8 @@ def main():
     journal(args.journal,'preflight')
     print('Paired flashable firmware:', rev, flush=True)
     theme_module = importlib.import_module('pb626_sleep_theme')
-    mapped = mapped_chunks(kit/'native/pb626-rootfs.bmap.json')
+    mapped_list,expected_chunks=rootfs_map(kit/'native/pb626-rootfs.bmap.json',require_hashes=args.windows)
+    mapped=set(mapped_list)
     r = EthernetRecovery(windows=args.windows)
     try:
         rows = check_windows_recovery(r,kit) if args.windows else r.lines('probe')
@@ -620,6 +633,8 @@ def main():
                 if i not in mapped:
                     require(data == bytes(len(data)), 'Nonzero omitted rootfs chunk')
                     continue
+                require(not expected_chunks or sha(data)==expected_chunks[i],
+                        f'Rootfs source chunk {i} differs from the verified bundle')
                 written += write_if_different(r,cid,'rootfs',i,data,args.journal,args.windows)
                 done += 1
                 progress('Rootfs',done,len(mapped),started)

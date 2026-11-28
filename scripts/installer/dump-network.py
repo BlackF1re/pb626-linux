@@ -61,6 +61,23 @@ def digest(r,cid,sectors,region,op):
     d.require(len(hashes)==1,"Missing full-device hash")
     return hashes[0]
 
+def verified_source(path,size,wanted):
+    # Same approach as the old PowerShell restore: obtain full and per-block
+    # hashes in one pass. Recheck the exact bytes just before any write.
+    full=hashlib.sha256()
+    hashes={}
+    with path.open("rb") as f:
+        for i,offset in enumerate(range(0,size,CHUNK)):
+            length=min(CHUNK,size-offset)
+            data=f.read(length)
+            d.require(len(data)==length,"Short dump source")
+            full.update(data)
+            hashes[i]=d.sha(data)
+        d.require(not f.read(1),"Oversized dump source")
+    d.require(full.hexdigest()==wanted,"Invalid dump file "+path.name)
+    return hashes
+
+
 def scan(r,cid,sectors,region,count):
     rows=r.lines("dump",cid,sectors,"scan",region,timeout=3600,max_response=32*1024*1024)
     actual={}
@@ -183,8 +200,12 @@ def main():
         return
     sums=d.manifest(path/"SHA256SUMS")
     names=[cidname]+([extname] if ext is not None else [])+[n for _,n,_ in images]
-    for n in names:
+    for n in [cidname]+([extname] if ext is not None else []):
         d.require(d.filehash(path/n)==sums.get(n),"Invalid dump file "+n)
+    source_hashes={}
+    for region,name,size in images:
+        print("Validating source image:",name,flush=True)
+        source_hashes[region]=verified_source(path/name,size,sums.get(name))
     d.require((path/cidname).read_text().strip()==cid,"Different card CID")
     if ext is not None:
         old=(path/extname).read_bytes()
@@ -211,7 +232,8 @@ def main():
                 length=min(CHUNK,size-i*CHUNK)
                 data=f.read(length)
                 d.require(len(data)==length,"Dump changed during restore")
-                if d.sha(data)!=actual[i]:
+                d.require(d.sha(data)==source_hashes[region][i],"Dump source changed after preflight; refusing to write")
+                if source_hashes[region][i]!=actual[i]:
                     d.journal(args.journal,'writing',f'restore {region} chunk {i}')
                     write_block(r,cid,sectors,region,i,data)
                     written+=1

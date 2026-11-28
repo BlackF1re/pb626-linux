@@ -144,6 +144,15 @@ class Tests(unittest.TestCase):
                     dump.backup_region(None,"a",2,"user",1024,partial,finished)
             self.assertEqual(partial.read_bytes(),blocks[0])
             self.assertFalse(finished.exists())
+    def test_verified_source_chunk_map(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"dump"
+            path.write_bytes(b"a"*512+b"b"*16)
+            with patch.object(dump,"CHUNK",512):
+                self.assertEqual(dump.verified_source(path,528,direct.filehash(path)),
+                                 {0:direct.sha(b"a"*512),1:direct.sha(b"b"*16)})
+                with self.assertRaises(RuntimeError):
+                    dump.verified_source(path,528,"0"*64)
     def test_restore_requires_readback_ack(self):
         class Device:
             def lines(self,*args,**kwargs): return []

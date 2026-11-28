@@ -22,6 +22,8 @@ class Tests(unittest.TestCase):
             subprocess.check_call(["mke2fs","-q","-F","-t","ext4","-b","4096",
                                    "-E","lazy_itable_init=0,lazy_journal_init=0",str(p)])
             m=b.build_map(p)
+            self.assertEqual(m["version"],2)
+            self.assertEqual(set(m["sha256"]),{str(i) for i in m["mapped"]})
             self.assertIn(0,m["mapped"])
             self.assertLess(len(m["mapped"]),16)
             target=Path(tmp)/"dirty"

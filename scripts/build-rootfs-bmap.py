@@ -5,6 +5,7 @@ dumpe2fs enumerates filesystem-free blocks, not merely zero bytes or host
 file holes. A chunk is omitted only if every block is free AND the source
 chunk is zero. The target's free space need not be zero (not a secure erase).
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -53,6 +54,7 @@ def build_map(image):
     if sum(b-a for a,b in merged) != free_count:
         raise ValueError("Ext4 free-block accounting mismatch")
     mapped = []
+    hashes = {}
     cursor = 0
     with image.open("rb") as f:
         for idx, start in enumerate(range(0,size,CHUNK)):
@@ -61,13 +63,15 @@ def build_map(image):
             while cursor < len(merged) and merged[cursor][1] <= a:
                 cursor += 1
             free = cursor < len(merged) and merged[cursor][0] <= a and merged[cursor][1] >= b
-            if free and idx != 0:
-                f.seek(start)
-                data = f.read(end-start)
-                if data == bytes(end-start):
-                    continue
+            f.seek(start)
+            data = f.read(end-start)
+            if len(data)!=end-start:
+                raise ValueError("Short ext4 chunk")
+            if free and idx != 0 and data == bytes(end-start):
+                continue
             mapped.append(idx)
-    return {"version":1,"image_bytes":size,"chunk_bytes":CHUNK,"mapped":mapped}
+            hashes[str(idx)]=hashlib.sha256(data).hexdigest()
+    return {"version":2,"image_bytes":size,"chunk_bytes":CHUNK,"mapped":mapped,"sha256":hashes}
 
 if __name__ == "__main__":
     result = build_map(Path(sys.argv[1]))
