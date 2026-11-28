@@ -61,8 +61,8 @@ def confirm(prompt, expected):
         raise Cancelled("Cancelled by user; no additional writes requested")
 
 
-def experimental_warning(backup):
-    return ("; experimental BT0 may prevent FEL recovery" +
+def bootloader_warning(backup):
+    return ("; BT0 update may prevent FEL recovery" +
             ("; NO BACKUP" if backup is None else "; backup verified"))
 
 
@@ -399,18 +399,17 @@ def get_wbf(r):
 def kit_profile(kit):
     path=kit/'PROFILE'
     profile=path.read_text().strip() if path.is_file() else 'standard'
-    require(profile in ('standard','deep-lab'),'Invalid kit profile')
+    require(profile == 'standard','Invalid kit profile')
     return profile
 
 
-def candidate_path(kit):
-    name='BT0-uncaged-deep-candidate.bin' if kit_profile(kit)=='deep-lab' else 'BT0-uncaged-source-candidate.bin'
-    return kit/'candidate'/name
+def resume_spl_path(kit):
+    return kit/'bootloader'/'BT0-uncaged-resume.bin'
 
 
 def check_windows_recovery(r, kit, ready=True):
     expected = '{} {} {}'.format((kit/'native/BUILD-COMMIT').read_text().strip(),
-                                kit_profile(kit), filehash(candidate_path(kit)))
+                                kit_profile(kit), filehash(resume_spl_path(kit)))
     require(r.lines('identity',timeout=5)==[expected],
             'Wrong RAM recovery build/profile; boot recovery from this bundle')
     if not ready:
@@ -446,12 +445,12 @@ def checked_inputs(kit, spl_mode='qualified'):
     spl = None
     if spl_mode == 'qualified':
         spl = bytes(bt0.build(kit/'fel-inputs/pb626-spl.bin', native/'pb626-bt0-menu.raw'))
-    elif spl_mode == 'candidate':
-        candidate = candidate_path(kit)
+    elif spl_mode == 'resume':
+        candidate = resume_spl_path(kit)
         spl = candidate.read_bytes()
         bt0.verify(spl)
         sums = manifest(kit/'SHA256SUMS')
-        require(sha(spl) == sums.get('candidate/'+candidate.name), 'Candidate manifest mismatch')
+        require(sha(spl) == sums.get('bootloader/'+candidate.name), 'Bootloader manifest mismatch')
     else:
         require(spl_mode == 'keep', 'Unknown SPL mode')
     return rev, raw, spl
@@ -518,26 +517,26 @@ def main():
     ap.add_argument('--port', help='Legacy compatibility; ACM is not used for bulk data')
     ap.add_argument('--distro', default='Ubuntu')
     ap.add_argument('--windows', action='store_true', help='Native Windows TCP; adapter configured by launcher')
-    ap.add_argument('--spl', choices=('keep','qualified','candidate'), default='qualified')
+    ap.add_argument('--spl', choices=('keep','qualified','resume'), default='qualified')
     partial=ap.add_mutually_exclusive_group()
     partial.add_argument('--spl-only', action='store_true', help='Only replace the selected primary SPL')
     partial.add_argument('--rootfs-only',action='store_true',help='Replace rootfs only if exact paired kernel is installed')
     partial.add_argument('--kernel-only',action='store_true',help='Replace kernel only if installed modules match the bundle')
-    ap.add_argument('--candidate-backup', type=Path, help='Verified full dump for experimental BT0')
+    ap.add_argument('--bootloader-backup', type=Path, help='Verified full dump for BT0 update')
     ap.add_argument('--journal',type=Path,help='Local write-state record')
     ap.add_argument('--allow-no-backup', action='store_true',
-                    help='Allow experimental Windows BT0 without a dump')
+                    help='Allow Windows BT0 update without a dump')
     args = ap.parse_args()
     kit = args.kit.resolve()
     require(not args.spl_only or args.spl != 'keep', 'No SPL selected')
     require(not (args.rootfs_only or args.kernel_only) or (args.windows and args.spl=='keep'),
             'Partial kernel/rootfs operations preserve BT0 and require native Windows recovery')
-    require(args.spl != 'candidate' or args.windows, 'Experimental SPL is restricted to Windows lab recovery')
-    require(not args.allow_no_backup or (args.windows and args.spl == 'candidate' and args.candidate_backup is None),
-            'Backup waiver is only for experimental Windows BT0 without a supplied dump')
-    profile=kit_profile(kit)
-    require(profile!='deep-lab' or (args.windows and args.spl=='candidate' and not (args.spl_only or args.rootfs_only or args.kernel_only)),
-            'Deep lab kernel/rootfs and resume SPL must be installed as one explicit pair')
+    require(args.spl != 'resume' or args.windows, 'Resume SPL requires the authorized Windows recovery image')
+    require(not args.allow_no_backup or (args.windows and args.spl == 'resume' and args.bootloader_backup is None),
+            'Backup waiver is only for Windows BT0 without a supplied dump')
+    kit_profile(kit)
+    require(not args.windows or (args.spl=='resume' and not (args.spl_only or args.rootfs_only or args.kernel_only)),
+            'Install the kernel, rootfs and resume bootloader as one pair')
     rev, raw, spl = checked_inputs(kit, args.spl)
     journal(args.journal,'preflight')
     print('Paired flashable firmware:', rev, flush=True)
@@ -561,18 +560,18 @@ def main():
         if args.spl == 'keep':
             current = r.run('{} bootloader-hash {}'.format(REMOTE,cid))
             allowed = {'1da6d425de2f17d65c0b2f0fd9e33245f6662c551773b367a28f9c60e404a3d6'}
-            candidate = candidate_path(kit)
+            candidate = resume_spl_path(kit)
             if candidate.is_file():
                 allowed.add(filehash(candidate))
             require(len(current)==1 and current[0] in allowed,
                     'Installed BT0 is not recognized; choose qualified installation instead of keep')
-        if args.spl == 'candidate':
+        if args.spl == 'resume':
             require(r.run('{} spl-check {}'.format(REMOTE,cid)) == [sha(spl)],
-                    'Running recovery does not authorize this exact same-run candidate')
-            if args.candidate_backup is None:
+                    'Running recovery does not authorize this exact same-run bootloader')
+            if args.bootloader_backup is None:
                 require(args.allow_no_backup, 'Supply a verified backup or explicitly waive it')
             else:
-                backup = args.candidate_backup
+                backup = args.bootloader_backup
                 sums = manifest(backup/'SHA256SUMS')
                 sizes = {'pb626-emmc-user.img':15269888*512, 'pb626-emmc-boot0.img':CHUNK,
                          'pb626-emmc-boot1.img':CHUNK, 'pb626-emmc-ext-csd.bin':512}
@@ -583,7 +582,7 @@ def main():
                 for name,size in sizes.items():
                     path=backup/name
                     require(path.stat().st_size==size and filehash(path)==sums.get(name),'Invalid backup: '+name)
-            print('Candidate SHA256:', sha(spl), flush=True)
+            print('Bootloader SHA256:', sha(spl), flush=True)
         if args.rootfs_only:
             print('Checking the installed raw kernel against this bundle...',flush=True)
             for i,offset in enumerate(range(0,len(raw),CHUNK)):
@@ -617,10 +616,10 @@ def main():
             except RuntimeError as exc:
                 raise RuntimeError('BT0-only update requires the native kernel/rootfs from this kit. Use paired installation first. '+str(exc)) from exc
             description = 'Replace BT0 only (LBA 16-63)'
-            if args.spl == 'candidate':
-                description += experimental_warning(args.candidate_backup)
+            if args.spl == 'resume':
+                description += bootloader_warning(args.bootloader_backup)
             confirm_write(description,cid,args.windows,'BOOTLOADER')
-            write_if_different(r,cid,'spl-candidate' if args.spl == 'candidate' else 'spl',0,spl,args.journal,args.windows)
+            write_if_different(r,cid,'spl-candidate' if args.spl == 'resume' else 'spl',0,spl,args.journal,args.windows)
             require('CID='+cid in r.lines('probe'), 'Final identity check failed')
             journal(args.journal,'verified','BT0 only')
             print('SUCCESS: BT0 alone written and read back; rootfs and kernel unchanged.', flush=True)
@@ -635,8 +634,8 @@ def main():
         description = 'Replace p1 (all files)' if args.rootfs_only else 'Replace p1 (all files) and kernel/DTB'
         if spl is not None:
             description += ' and BT0'
-        if args.spl == 'candidate':
-            description += experimental_warning(args.candidate_backup)
+        if args.spl == 'resume':
+            description += bootloader_warning(args.bootloader_backup)
         confirm_write(description,cid,args.windows,'FLASH')
         # Verify recovery supports the new protocol before any write. This operation
         # only creates a private directory in RAM, not on eMMC.
@@ -671,7 +670,7 @@ def main():
         print('Checking remaining selected components...', flush=True)
         images = [] if args.rootfs_only else [('kernel', raw)]
         if spl is not None:
-            images.append(('spl-candidate' if args.spl == 'candidate' else 'spl', spl))
+            images.append(('spl-candidate' if args.spl == 'resume' else 'spl', spl))
         for kind, image in images:
             started=time.monotonic()
             total=(len(image)+CHUNK-1)//CHUNK

@@ -186,7 +186,7 @@ def main():
     elif args.action=="validate":
         import importlib
         direct=importlib.import_module("install-direct")
-        rev, raw, spl=direct.checked_inputs(kit,"candidate")
+        rev, raw, spl=direct.checked_inputs(kit,"resume")
         mapped, hashes=direct.rootfs_map(kit/"native/pb626-rootfs.bmap.json",require_hashes=True)
         root=kit/"recovery"
         size=(root/"pb626-megi-initramfs.cpio.gz").stat().st_size
@@ -197,7 +197,7 @@ def main():
         direct.require(direct.filehash(modules)==direct.manifest(kit/"native/SHA256SUMS").get(modules.name)
                        and re.fullmatch(r"[0-9a-f]{64}",modules.read_text().strip()),
                        "Invalid module-tree hash")
-        print(f"Validated {direct.kit_profile(kit)}: {rev}; raw kernel {len(raw)} bytes; {len(mapped)} mapped rootfs chunks; candidate {sha(spl)}")
+        print(f"Validated {direct.kit_profile(kit)}: {rev}; raw kernel {len(raw)} bytes; {len(mapped)} mapped rootfs chunks; bootloader {sha(spl)}")
     elif args.action=="test":
         import importlib
         direct=importlib.import_module("install-direct")

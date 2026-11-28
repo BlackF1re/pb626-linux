@@ -245,8 +245,8 @@ def config_number(path, key):
     raise AssertionError("missing "+key)
 
 def candidate(directory, deep, baseline):
-    prefix = directory/"deep-resume" if deep else directory
-    image = (prefix/("BT0-uncaged-deep-candidate.bin" if deep else "BT0-uncaged-source-candidate.bin")).read_bytes()
+    prefix = directory/"resume" if deep else directory
+    image = (prefix/("BT0-uncaged-resume.bin" if deep else "BT0-uncaged-cold.bin")).read_bytes()
     check_header(image)
     sym = symbols(prefix/("spl.elf"))
     result = {"sha256": hashlib.sha256(image).hexdigest()}
@@ -301,7 +301,7 @@ def main():
             report["reference"] = "NOT CONFIGURED"
         if args.candidates:
             report["native"] = candidate(args.candidates,False,base)
-            report["deep_cold_path"] = candidate(args.candidates,True,base)
+            report["resume_cold_path"] = candidate(args.candidates,True,base)
         require(not args.require_reference or base is not None,
                 "Configure PB626_REFERENCE_SPL_B64 to enable mandatory differential validation")
         report["result"] = "tested contract passed" if base else "candidate-only; no differential validation"

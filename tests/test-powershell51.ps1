@@ -123,12 +123,12 @@ try {
     $engine=Join-Path $PSHOME 'powershell.exe'
     $output=@(& $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -Action Validate)
     if ($LASTEXITCODE -eq 0 -or ($output -join ' ') -notmatch 'ERROR') { throw 'Missing profile was not rejected' }
-    Set-Content -LiteralPath (Join-Path $temp 'PROFILE') -Value 'deep-lab' -Encoding ASCII
-    $output=@(& $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -Action Bootloader)
-    if ($LASTEXITCODE -eq 0 -or ($output -join ' ') -notmatch 'Deep profile requires') { throw 'Deep profile allowed isolated BT0 update' }
     Set-Content -LiteralPath (Join-Path $temp 'PROFILE') -Value 'standard' -Encoding ASCII
-    $output=@(& $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -Action InstallDeepLab)
-    if ($LASTEXITCODE -eq 0 -or ($output -join ' ') -notmatch 'separate deep lab') { throw 'Standard profile allowed deep operation' }
+    $output=@(& $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -Action Bootloader)
+    if ($LASTEXITCODE -eq 0 -or ($output -join ' ') -notmatch 'Use Install to update the paired') { throw 'Paired firmware allowed isolated BT0 update' }
+    Set-Content -LiteralPath (Join-Path $temp 'PROFILE') -Value 'invalid' -Encoding ASCII
+    $output=@(& $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -Action Validate)
+    if ($LASTEXITCODE -eq 0 -or ($output -join ' ') -notmatch 'Unknown firmware profile') { throw 'Invalid profile allowed' }
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
 Write-Host 'WINDOWS CONSOLE OFFLINE FAILURE PATHS PASS' -ForegroundColor Green
 

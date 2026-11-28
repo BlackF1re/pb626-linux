@@ -101,8 +101,8 @@ class Tests(unittest.TestCase):
             kit=Path(directory)
             (kit/"native").mkdir()
             (kit/"native/BUILD-COMMIT").write_text("a"*40)
-            (kit/"candidate").mkdir()
-            candidate=direct.candidate_path(kit)
+            (kit/"bootloader").mkdir()
+            candidate=direct.resume_spl_path(kit)
             candidate.write_bytes(b"spl")
             expected="a"*40+" standard "+direct.filehash(candidate)
             class Mock:
@@ -134,8 +134,8 @@ class Tests(unittest.TestCase):
         with patch("builtins.input",return_value="Y") as ask:
             direct.confirm_write("Replace BT0","a"*32,True,"FLASH")
             ask.assert_called_once()
-        self.assertIn("NO BACKUP",direct.experimental_warning(None))
-        self.assertIn("backup verified",direct.experimental_warning(Path("dump")))
+        self.assertIn("NO BACKUP",direct.bootloader_warning(None))
+        self.assertIn("backup verified",direct.bootloader_warning(Path("dump")))
     def test_lost_write_ack(self):
         class Device:
             media=b"old"
