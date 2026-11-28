@@ -53,7 +53,11 @@ jobs:
           grep -qx 'CONFIG_SUN5I_PM=y' linux/.config
           grep -qx 'CONFIG_ARM_CPU_SUSPEND=y' linux/.config
           cp linux/.config deep-resume-lab/experimental.config
-          make -C linux -j"$(nproc)" KCFLAGS=-Wno-error arch/arm/mach-sunxi/pm-sun5i.o arch/arm/mach-sunxi/sleep-sun5i.o
+          # One directory target: multiple individual targets in this directory
+          # spawn competing Kbuild instances writing the same .o/.d files.
+          make -C linux -j"$(nproc)" KCFLAGS=-Wno-error arch/arm/mach-sunxi/
+          test -s linux/arch/arm/mach-sunxi/pm-sun5i.o
+          test -s linux/arch/arm/mach-sunxi/sleep-sun5i.o
           arm-linux-gnueabihf-objdump -dr linux/arch/arm/mach-sunxi/sleep-sun5i.o > deep-resume-lab/sram-disassembly.txt
           arm-linux-gnueabihf-size linux/arch/arm/mach-sunxi/{pm-sun5i,sleep-sun5i}.o | tee deep-resume-lab/object-sizes.txt
           git -C linux diff --check
