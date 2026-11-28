@@ -43,7 +43,10 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
     if ! cmp -s "$tmp/before" "$tmp/after"; then break; fi
     sleep 1
 done
-! cmp -s "$tmp/before" "$tmp/after"
+if cmp -s "$tmp/before" "$tmp/after"; then
+    echo "Matchbox panel did not create a window" >&2
+    exit 1
+fi
 "$panel_dir/mb-applet-battery" &
 battery=$!
 sleep 2

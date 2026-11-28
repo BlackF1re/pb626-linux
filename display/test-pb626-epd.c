@@ -242,8 +242,55 @@ static void test_state_format(void)
 	fclose(file);
 }
 
+/* CPU-only synthetic scan preparation, never access panel hardware. */
+static void bench_transitions(void)
+{
+	static struct renderer r;
+	static uint32_t words[FRAME_WORDS];
+	static uint8_t codes[GATES * GROUPS];
+	struct buffer buffer = { .data = words };
+	struct phase phase = { .scans = 1 };
+	r.group_codes = codes;
+	init_neutral_data(&r);
+	puts("pattern,style,renderer_bytes,ns_per_frame");
+	for (int pattern = 0; pattern < 3; pattern++) {
+		transition_clear(&r, 0, PIXELS);
+		for (unsigned int y = 0; y < GATES; y++) {
+			unsigned int first = pattern == 0 ? 20 : 0;
+			unsigned int end = pattern == 0 ? 24 : GROUPS;
+			r.rows[y] = (struct span_range){first, end};
+			for (unsigned int x = 4 * first; x < 4 * end; x++)
+				transition_set(&r, y * SOURCES + x,
+					       pattern == 2 ? (y * 13 + x * 17) % 257 :
+					       ((x + y) & 1 ? 256 : 1));
+		}
+		for (int style = RENDER_SCALAR; style <= RENDER_INDEXED; style++) {
+			r.style = style;
+			r.patterns_count = style == RENDER_INDEXED ? index_groups(&r) : 0;
+			scan_template(words);
+			memset(buffer.rows, 0, sizeof(buffer.rows));
+			struct timespec start, end;
+			assert(!clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start));
+			enum { REPEATS = 32 };
+			for (unsigned int i = 0; i < REPEATS; i++) {
+				for (unsigned int t = 0; t < TRANSITIONS; t++)
+					phase.lut[t] = (t + i) % 4;
+				render(&buffer, &r, &phase, false);
+			}
+			assert(!clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end));
+			double elapsed = (end.tv_sec - start.tv_sec) * 1e9 +
+					 (end.tv_nsec - start.tv_nsec);
+			printf("%d,%d,%zu,%.0f\n", pattern, style, sizeof(r), elapsed / REPEATS);
+		}
+	}
+}
+
 int main(void)
 {
+	if (getenv("PB626_BENCH_TRANSITIONS")) {
+		bench_transitions();
+		return 0;
+	}
 	test_state_format();
 	test_transition_storage();
 	test_quantization();

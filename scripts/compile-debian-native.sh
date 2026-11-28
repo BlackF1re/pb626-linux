@@ -119,7 +119,7 @@ in_build /bin/bash -euc '
     candidate="/tmp/pb626-build/audit-$component"
     echo "Matchbox size audit: $component"
     if make clean && make -j2 CFLAGS="-Os -std=gnu17 -ffunction-sections -fdata-sections" LDFLAGS="-Wl,-z,max-page-size=4096,--gc-sections" &&
-       make install DESTDIR="$candidate"; then
+       make install CFLAGS="-Os -std=gnu17 -ffunction-sections -fdata-sections" LDFLAGS="-Wl,-z,max-page-size=4096,--gc-sections" DESTDIR="$candidate"; then
       for binary in "$@"; do
         base="/tmp/pb626-build/$release/usr/bin/$binary"
         alt="$candidate/usr/bin/$binary"
