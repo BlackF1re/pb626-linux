@@ -115,7 +115,7 @@ def boot(kit, profile):
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument("action",choices=("prepare","probe","boot","hello","ready","validate"))
+    ap.add_argument("action",choices=("prepare","probe","boot","hello","ready","validate","test"))
     ap.add_argument("--profile",choices=("ncm","rndis"),default="ncm")
     ap.add_argument("--kit",type=Path,default=Path(__file__).resolve().parent)
     args=ap.parse_args()
@@ -130,6 +130,24 @@ def main():
         rev, raw, spl=direct.checked_inputs(kit,"candidate")
         mapped=direct.mapped_chunks(kit/"native/pb626-rootfs.bmap.json")
         print(f"Validated {direct.kit_profile(kit)}: {rev}; raw kernel {len(raw)} bytes; {len(mapped)} mapped rootfs chunks; candidate {sha(spl)}")
+    elif args.action=="test":
+        import importlib
+        direct=importlib.import_module("install-direct")
+        dump=importlib.import_module("dump-network")
+        recovery=direct.EthernetRecovery(windows=True)
+        try:
+            rows=direct.check_windows_recovery(recovery,kit)
+            cid=next(x[4:] for x in rows if re.fullmatch(r"CID=[0-9a-f]{32}",x))
+            recovery.test_transport()
+            direct.require(recovery.lines("layout")==["1 1009664 14260224","2 73728 65536","8 275456 500736"],"Unexpected partition layout")
+            other,sectors,ext=dump.info(recovery,False)
+            direct.require(other==cid and sectors==15269888 and len(ext)==512,"Wrong eMMC geometry")
+            for region in ("user","boot0","boot1"):
+                data=dump.read_block(recovery,cid,sectors,region,0,direct.CHUNK)
+                print(f"{region}: read-only 4 MiB verified {direct.sha(data)}",flush=True)
+            print("Recovery diagnostic passed: identity, transport, layout, EXT_CSD, all three regions. No eMMC writes.")
+        finally:
+            recovery.close()
     elif args.action in ("hello","ready"):
         import importlib
         direct=importlib.import_module("install-direct")

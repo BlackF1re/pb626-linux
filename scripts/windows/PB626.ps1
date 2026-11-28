@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader','Backup','Restore','Preflight','Validate','Prepare','Recovery')][string]$Action,
+    [ValidateSet('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader','RootfsOnly','KernelOnly','Backup','ResumeBackup','Restore','Preflight','Validate','Prepare','Recovery','RecoveryTest')][string]$Action,
     [ValidateSet('Auto','NCM','RNDIS')][string]$UsbProfile='Auto',
     [string]$DataDir,
     [string]$BackupDir,
@@ -71,7 +71,7 @@ function Verify-Kit {
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $digest) { throw "Kit hash mismatch: $name" }
     }
     Write-Progress -Activity 'Verify firmware package' -Completed
-    foreach ($name in @('PB626.ps1','windows-fel.py','install-direct.py','dump-network.py','host/python/python.exe','host/sunxi-fel.exe','host/fdtget.exe','host/openssl.exe','host/direct-entry.bin','native/BUILD-COMMIT','native/KERNELRELEASE','native/SHA256SUMS','native/raw-linux.img','native/pb626-rootfs.ext4.gz','native/pb626-rootfs.bmap.json','native/pb626-bt0-menu.raw','recovery/BUILD-COMMIT','recovery/pb626-megi-zImage','recovery/pb626-megi-initramfs.cpio.gz','recovery/pb626-elan-emmc-backup.dtb','recovery/pb626-elan-emmc-windows-rndis.dtb',$candidate,'qualification/emulation.json','PROFILE')) {
+    foreach ($name in @('PB626.ps1','windows-fel.py','install-direct.py','dump-network.py','host/python/python.exe','host/sunxi-fel.exe','host/fdtget.exe','host/openssl.exe','host/direct-entry.bin','native/BUILD-COMMIT','native/KERNELRELEASE','native/SHA256SUMS','native/raw-linux.img','native/pb626-rootfs.ext4.gz','native/pb626-rootfs.bmap.json','native/pb626-modules.sha256','native/pb626-bt0-menu.raw','recovery/BUILD-COMMIT','recovery/pb626-megi-zImage','recovery/pb626-megi-initramfs.cpio.gz','recovery/pb626-elan-emmc-backup.dtb','recovery/pb626-elan-emmc-windows-rndis.dtb',$candidate,'qualification/emulation.json','PROFILE')) {
         if (!$seen.ContainsKey($name)) { throw "Missing kit file: $name" }
     }
     $native=(Get-Content -Raw -LiteralPath (Join-Path $kit 'native/BUILD-COMMIT')).Trim()
@@ -173,13 +173,13 @@ Write-Host '========================================================' -Foregroun
 Write-Host "  Profile: $firmwareProfile | Data: $DataDir" -ForegroundColor Gray
 if (!$Action) {
     if ($firmwareProfile -eq 'deep-lab') {
-        $menu=[ordered]@{'1'=@('InstallDeepLab','Install experimental deep kernel + modules + resume SPL');'2'=@('Backup','Back up complete eMMC');'3'=@('Restore','Restore verified eMMC dump');'4'=@('Preflight','Read-only restore preflight');'5'=@('Recovery','Boot RAM recovery only');'6'=@('Validate','Verify package (offline)');'7'=@('Prepare','Prepare historical FEL inputs')}
+        $menu=[ordered]@{'1'=@('InstallDeepLab','Install experimental deep kernel + modules + resume SPL');'2'=@('Backup','Back up complete eMMC');'3'=@('Restore','Restore verified eMMC dump');'4'=@('Preflight','Read-only restore preflight');'5'=@('Recovery','Boot RAM recovery only');'6'=@('Validate','Verify package (offline)');'7'=@('Prepare','Prepare historical FEL inputs');'8'=@('ResumeBackup','Resume incomplete eMMC backup');'9'=@('RecoveryTest','Test recovery and read-only storage')}
         Write-Warning 'DEEP LAB: not hardware qualified.'
     } else {
-        $menu=[ordered]@{'1'=@('Install','Update Debian + kernel; keep recognized BT0');'2'=@('InstallQualified','Install Debian + kernel + historical qualified BT0');'3'=@('InstallCandidate','Install Debian + kernel + experimental BT0');'4'=@('Bootloader','Update ONLY BT0 (experimental)');'5'=@('RestoreBootloader','Restore ONLY historical BT0');'6'=@('Backup','Back up complete eMMC');'7'=@('Restore','Restore verified eMMC dump');'8'=@('Preflight','Read-only restore preflight');'9'=@('Recovery','Boot RAM recovery only');'10'=@('Validate','Verify package (offline)');'11'=@('Prepare','Prepare historical FEL inputs')}
+        $menu=[ordered]@{'1'=@('Install','Update Debian + kernel; keep recognized BT0');'2'=@('InstallQualified','Install Debian + kernel + historical qualified BT0');'3'=@('InstallCandidate','Install Debian + kernel + experimental BT0');'4'=@('Bootloader','Update ONLY BT0 (experimental)');'5'=@('RestoreBootloader','Restore ONLY historical BT0');'6'=@('Backup','Back up complete eMMC');'7'=@('Restore','Restore verified eMMC dump');'8'=@('Preflight','Read-only restore preflight');'9'=@('Recovery','Boot RAM recovery only');'10'=@('Validate','Verify package (offline)');'11'=@('Prepare','Prepare historical FEL inputs');'12'=@('RootfsOnly','Replace ONLY Debian rootfs (paired kernel required)');'13'=@('KernelOnly','Replace ONLY kernel/DTB (matching modules required)');'14'=@('ResumeBackup','Resume incomplete eMMC backup');'15'=@('RecoveryTest','Test recovery and read-only storage')}
     }
     foreach ($key in $menu.Keys) {
-        $color=if ($menu[$key][0] -in @('InstallDeepLab','InstallCandidate','Bootloader','Restore','InstallQualified','RestoreBootloader')) {'Yellow'} else {'Gray'}
+        $color=if ($menu[$key][0] -in @('InstallDeepLab','InstallCandidate','Bootloader','Restore','InstallQualified','RestoreBootloader','RootfsOnly','KernelOnly')) {'Yellow'} else {'Gray'}
         Write-Host ('  {0,2}   {1}' -f $key,$menu[$key][1]) -ForegroundColor $color
     }
     Write-Host '   0   Exit'
@@ -190,7 +190,7 @@ if (!$Action) {
         else { Write-Host 'Invalid choice. Enter a listed number.' -ForegroundColor Yellow }
     }
 }
-if ($firmwareProfile -eq 'deep-lab' -and $Action -in @('Install','InstallQualified','InstallCandidate','Bootloader','RestoreBootloader')) { throw 'Deep profile requires the paired InstallDeepLab action' }
+if ($firmwareProfile -eq 'deep-lab' -and $Action -in @('Install','InstallQualified','InstallCandidate','Bootloader','RestoreBootloader','RootfsOnly','KernelOnly')) { throw 'Deep profile requires the paired InstallDeepLab action' }
 if ($firmwareProfile -eq 'standard' -and $Action -eq 'InstallDeepLab') { throw 'Use the separate deep lab bundle' }
 if ($Action -eq 'Validate') {
     Verify-Kit
@@ -237,13 +237,13 @@ if ($Action -in @('InstallCandidate','Bootloader','InstallDeepLab')) {
     }
     if (!(Test-Path -LiteralPath (Join-Path $BackupDir 'SHA256SUMS') -PathType Leaf)) { throw 'Backup manifest missing' }
 }
-if ($Action -like 'Install*') { Write-Warning 'Installation replaces the complete Debian p1 partition, including user files. Back up first.' }
+if ($Action -like 'Install*' -or $Action -eq 'RootfsOnly') { Write-Warning 'Installation replaces the complete Debian p1 partition, including user files. Back up first.' }
 if (!$UseRunningRecovery -and $null -ne (Find-Adapter)) {
     $answer=(Read-Host 'Recovery adapter detected. Reuse running recovery [y/N/0=cancel]?').Trim()
     if ($answer -eq '0') { Cancel-Operation }
     if ($answer -match '^[yY]$') { $UseRunningRecovery=$true }
 }
-if (!$UseRunningRecovery) {
+function Start-ColdRecovery {
     Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare')
     Say 'STEP 1 / Cold FEL'
     while ($true) {
@@ -274,32 +274,86 @@ if (!$UseRunningRecovery) {
     $script:FelStarted=$true
     Invoke-Python @((Join-Path $kit 'windows-fel.py'),'boot','--profile',$profile)
 }
+function Invoke-Transfer([string[]]$Arguments) {
+    while ($true) {
+        $previous=$ErrorActionPreference
+        try {
+            $ErrorActionPreference='Continue'
+            & $python @Arguments
+            $code=$LASTEXITCODE
+        } finally { $ErrorActionPreference=$previous }
+        if ($code -eq 0) { return }
+        if ($code -eq 2) { Cancel-Operation }
+        if ($code -ne 75) { throw "Operation failed (exit $code). Check the reported error; no automatic retry." }
+        Write-Host 'USB connection interrupted. The next attempt will compare verified media data, not blindly repeat writes.' -ForegroundColor Yellow
+        Write-Host 'Keep the reader powered if possible. Do not power-cycle a partially flashed reader.' -ForegroundColor Yellow
+        Disconnect-Recovery
+        $script:AddedAddress=$false
+        $script:RestoreDhcp=$false
+        while ($true) {
+            $answer=(Read-Host 'Reconnect USB and choose R=running recovery, F=reader already fully powered off, 0=stop').Trim()
+            if ($answer -eq '0' -or !$answer) { Cancel-Operation }
+            if ($answer -notin @('R','F')) { Write-Host 'Choose R, F or 0.' -ForegroundColor Yellow; continue }
+            if ($answer -eq 'F') {
+                Write-Warning 'Use cold FEL only if the reader is already fully powered off. Never reboot just to retry a write.'
+                if ((Read-Host 'Type COLD if power was already lost') -cne 'COLD') { continue }
+                Start-ColdRecovery
+            }
+            try {
+                Connect-Recovery
+                break
+            } catch {
+                Write-Host "Reconnect failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                Disconnect-Recovery
+                $script:AddedAddress=$false
+                $script:RestoreDhcp=$false
+            }
+        }
+        Say 'Resuming operation; already matching chunks will be skipped.'
+    }
+}
+if (!$UseRunningRecovery) { Start-ColdRecovery }
 Say 'STEP 3 / Establish native USB Ethernet connection'
 $script:AddedAddress=$false; $script:RestoreDhcp=$false
 try {
     Connect-Recovery
     if ($Action -eq 'Recovery') { Write-Host 'RAM recovery verified. No eMMC write.' -ForegroundColor Green; return }
+    if ($Action -eq 'RecoveryTest') {
+        Invoke-Python @((Join-Path $kit 'windows-fel.py'),'test')
+        Write-Host 'Recovery diagnostic passed. No eMMC write.' -ForegroundColor Green
+        return
+    }
     Say 'STEP 4 / Device and data verification'
-    if ($Action -in @('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader')) {
-        $mode=switch ($Action) { 'Install' {'keep'} 'InstallQualified' {'qualified'} 'InstallCandidate' {'candidate'} 'InstallDeepLab' {'candidate'} 'Bootloader' {'candidate'} 'RestoreBootloader' {'qualified'} }
+    if ($Action -in @('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader','RootfsOnly','KernelOnly')) {
+        $mode=switch ($Action) { 'Install' {'keep'} 'InstallQualified' {'qualified'} 'InstallCandidate' {'candidate'} 'InstallDeepLab' {'candidate'} 'Bootloader' {'candidate'} 'RestoreBootloader' {'qualified'} 'RootfsOnly' {'keep'} 'KernelOnly' {'keep'} }
         if ($mode -eq 'qualified') { Invoke-Python @((Join-Path $kit 'windows-fel.py'),'prepare') }
         $argsList=@((Join-Path $kit 'install-direct.py'),'--kit',$kit,'--windows','--spl',$mode,'--journal',$script:JournalPath)
         if ($Action -in @('Bootloader','RestoreBootloader')) { $argsList+='--spl-only' }
+        if ($Action -eq 'RootfsOnly') { $argsList+='--rootfs-only' }
+        if ($Action -eq 'KernelOnly') { $argsList+='--kernel-only' }
         if ($mode -eq 'candidate') {
             $argsList+=@('--candidate-backup',[IO.Path]::GetFullPath($BackupDir))
         }
-        Invoke-Python $argsList
+        Invoke-Transfer $argsList
     } else {
         if ($Action -eq 'Backup') {
             $null=New-Item -ItemType Directory -Force -Path $DataDir
             $target=Join-Path $DataDir ('backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+        } elseif ($Action -eq 'ResumeBackup') {
+            $recent=Get-ChildItem -LiteralPath $DataDir -Directory -ErrorAction SilentlyContinue | Where-Object {
+                (Test-Path -LiteralPath (Join-Path $_.FullName 'pb626-emmc-cid.txt') -PathType Leaf) -and !(Test-Path -LiteralPath (Join-Path $_.FullName 'SHA256SUMS'))
+            } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $default=if ($BackupDir) {$BackupDir} elseif ($recent) {$recent.FullName} else {''}
+            $target=Read-Directory 'Incomplete backup directory' $default
+            if (Test-Path -LiteralPath (Join-Path $target 'SHA256SUMS')) { throw 'This backup is already complete.' }
         } else {
             $target=Read-Directory 'Verified dump directory' $BackupDir
         }
-        Invoke-Python @((Join-Path $kit 'dump-network.py'),$Action.ToLowerInvariant(),$target,'--windows','--journal',$script:JournalPath)
+        $verb=if ($Action -eq 'ResumeBackup') {'backup'} else {$Action.ToLowerInvariant()}
+        Invoke-Transfer @((Join-Path $kit 'dump-network.py'),$verb,$target,'--windows','--journal',$script:JournalPath)
     }
     Write-Host 'SUCCESS / All requested operations verified.' -ForegroundColor Green
-    if ($Action -in @('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader','Restore')) {
+    if ($Action -in @('Install','InstallQualified','InstallCandidate','InstallDeepLab','Bootloader','RestoreBootloader','RootfsOnly','KernelOnly','Restore')) {
         Write-Host 'Writes verified. Power off and boot normally. Check Menu/FEL again before further changes.' -ForegroundColor Green
     } else { Write-Host 'No device writes requested. Recovery remains running.' }
 } finally { Disconnect-Recovery }
@@ -323,7 +377,7 @@ try {
             if ($script:JournalPath -and (Test-Path -LiteralPath $script:JournalPath)) { $state=@(Get-Content -LiteralPath $script:JournalPath) }
             if ($state.Count -and $state[0] -eq 'writing') {
                 Write-Host "WRITE STATE UNCERTAIN: $($state[1])" -ForegroundColor Red
-                Write-Host 'Keep the reader powered and connected. Do not reboot. Relaunch using running recovery to restore or reflash; no block is automatically retried.' -ForegroundColor Yellow
+                Write-Host 'Keep the reader powered and connected. Do not reboot. Relaunch the same operation using running recovery. Existing matching chunks will be skipped.' -ForegroundColor Yellow
             } elseif ($state.Count -and $state[0] -eq 'verified') {
                 Write-Host 'Device writes were verified, but a later host-side step failed. Check the reported error before disconnecting.' -ForegroundColor Yellow
             } elseif ($script:FelStarted) {

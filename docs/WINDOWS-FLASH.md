@@ -100,3 +100,22 @@ check the native image ID, matching module release and waveform. If the
 reader still runs factory firmware or another kernel, install the paired
 kernel/rootfs first. This restriction is intentional: a BT0-only operation
 must not replace the stock boot chain while leaving stock payloads in place.
+
+## Partial updates and interruption recovery
+
+Standard bundles add RootfsOnly (requires exact installed raw kernel),
+KernelOnly (requires exact installed module-tree manifest), and ResumeBackup.
+Deep lab retains the explicit all-component pair restriction. RecoveryTest
+checks same-run identity, random RAM transfer, CID, layout, EXT_CSD and
+read-only 4 MiB samples of user/boot0/boot1. No destructive self-test.
+
+If TCP is interrupted, choose R to reconnect to running recovery; F is
+only for a reader that already lost power. Do not deliberately power-cycle
+a partially flashed reader. The same session pins CID, operation and input
+manifest. Each firmware or restore chunk is compared to actual eMMC data;
+matching chunks are skipped, even if the final acknowledgement was lost.
+A rootfs install may redo changed personalization metadata and requires the
+root password again. Partial backup files are synced per chunk and checked
+against live hashes before reuse. ResumeBackup accepts an incomplete dump
+folder; a SHA256SUMS completion marker is written only after all regions
+are verified. A validation/hash failure is not automatically retried.
