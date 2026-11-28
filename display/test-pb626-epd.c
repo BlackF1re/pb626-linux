@@ -22,6 +22,33 @@ static void test_quantization(void)
 			assert(preview_level(i, j) == 0 || preview_level(i, j) == WHITE);
 }
 
+static void test_transition_storage(void)
+{
+	static struct renderer r;
+	for (size_t i = 0; i < PIXELS; i++)
+		transition_set(&r, i, i % 257);
+	for (size_t i = 0; i < PIXELS; i += 4) {
+		uint16_t scratch[4];
+		const uint16_t *p = transition_group(&r, i, scratch);
+		for (unsigned int j = 0; j < 4; j++) {
+			assert(transition_get(&r, i + j) == (i + j) % 257);
+			assert(p[j] == (i + j) % 257);
+		}
+	}
+	/* Clear all start/end half-byte alignments, preserving neighbours. */
+	for (size_t first = 0; first <= 12; first += 4)
+		for (size_t count = 0; count <= 16; count += 4) {
+			for (size_t i = 0; i < 32; i++)
+				transition_set(&r, i, 256);
+			transition_clear(&r, first, count);
+			for (size_t i = 0; i < 32; i++)
+				assert(transition_get(&r, i) == (i >= first && i < first + count ? 0 : 256));
+		}
+	transition_clear(&r, 0, PIXELS);
+	for (size_t i = 0; i < PIXELS; i++)
+		assert(transition_get(&r, i) == 0);
+}
+
 static void test_sparse_scan(void)
 {
 	static struct renderer renderer;
@@ -41,15 +68,15 @@ static void test_sparse_scan(void)
 	assert(portrait_index(GATES - 1, SOURCES - 1) == PIXELS - WIDTH);
 
 	renderer.rows[0] = (struct span_range){ 0, 1 };
-	renderer.transitions[0] = 0xf0 + 1;
-	renderer.transitions[3] = 1;
+	transition_set(&renderer, 0, 0xf0 + 1);
+	transition_set(&renderer, 3, 1);
 	render(&buffer, &renderer, &phase, false);
 	assert(buffer_words[3] == htole32(2));
 	assert(buffer_words[row] == (neutral[row] | htole32(source_word(0x81))));
 	assert(buffer_words[row + 1] == neutral[row + 1]);
 
 	renderer.rows[0] = (struct span_range){ 2, 3 };
-	renderer.transitions[8] = 1;
+	transition_set(&renderer, 8, 1);
 	render(&buffer, &renderer, &phase, false);
 	assert(buffer_words[row] == neutral[row]);
 	assert(buffer_words[row + 2] == (neutral[row + 2] | htole32(source_word(0x40))));
@@ -76,7 +103,7 @@ static void test_render_equivalence(void)
 	scan_template(candidate_words);
 	for (unsigned int pass = 0; pass < 12; pass++) {
 		memset(renderer.rows, 0, sizeof(renderer.rows));
-		memset(renderer.transitions, 0, sizeof(renderer.transitions));
+		transition_clear(&renderer, 0, PIXELS);
 		for (unsigned int y = 0; y < GATES; y++) {
 			if ((y + pass) % 3 == 0)
 				continue;
@@ -84,9 +111,9 @@ static void test_render_equivalence(void)
 			unsigned int end = GROUPS - y % 31;
 			renderer.rows[y] = (struct span_range){first, end};
 			for (unsigned int x = first; x < end; x++) {
-				uint16_t *p = renderer.transitions + y * SOURCES + 4 * x;
 				for (unsigned int i = 0; i < 4; i++)
-					p[i] = (x + y + i) % 5 == 0 ? 0 : (x + y + i) % 2 ? 256 : 1;
+					transition_set(&renderer, y * SOURCES + 4 * x + i,
+						(x + y + i) % 5 == 0 ? 0 : (x + y + i) % 2 ? 256 : 1);
 			}
 		}
 		for (unsigned int i = 0; i < TRANSITIONS; i++)
@@ -106,8 +133,8 @@ static void test_render_equivalence(void)
 	renderer.rows[0] = (struct span_range){0, GROUPS};
 	renderer.rows[1] = (struct span_range){0, GROUPS};
 	for (unsigned int x = 0; x < 2 * GROUPS; x++) {
-		renderer.transitions[4 * x] = x % 257;
-		renderer.transitions[4 * x + 1] = x / 257;
+		transition_set(&renderer, 4 * x, x % 257);
+		transition_set(&renderer, 4 * x + 1, x / 257);
 	}
 	assert(index_groups(&renderer) == 0);
 }
@@ -218,6 +245,7 @@ static void test_state_format(void)
 int main(void)
 {
 	test_state_format();
+	test_transition_storage();
 	test_quantization();
 	test_sparse_scan();
 	test_render_equivalence();

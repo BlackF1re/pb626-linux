@@ -93,7 +93,9 @@ for program in pb626-epd pb626-x11-epd pb626-charge; do
     run_one "$program" release-before-page4k "${release[@]}"
     # Production binaries must pass with the qualified 4 KiB load alignment.
     run_one "$program" release "${release[@]}" -Wl,-z,max-page-size=4096
-    run_one "$program" release-page4k "${release[@]}" -Wl,-z,max-page-size=4096
+    if [ "$program" = pb626-epd ]; then
+        run_one "$program" packed-transitions "${release[@]}" -Wl,-z,max-page-size=4096 -DPB626_PACKED_TRANSITIONS
+    fi
     run_one "$program" release-page4k-common "${release[@]}" -Wl,-z,max-page-size=4096,-z,common-page-size=4096
     for profile in baseline release-before-page4k release release-page4k-common; do
         if [ -s "$out/$profile/$program/elf.txt" ]; then

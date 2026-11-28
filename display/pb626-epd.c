@@ -94,10 +94,69 @@ struct renderer {
 	uint64_t temperature_checked;
 	uint32_t neutral_data[2][GROUPS];
 	uint8_t previous[PACKED_PIXELS];
+#ifdef PB626_PACKED_TRANSITIONS
+	/* Exact codes 0..256: low byte plus a bitmap for code 256.
+	 * Only the experimental build selects this representation. */
+	uint8_t transitions[PIXELS], transition_high[(PIXELS + 7) / 8];
+#else
 	uint16_t transitions[PIXELS];
+#endif
 	struct span_range rows[GATES];
 	bool known, auto_fast;
 };
+
+static inline uint16_t transition_get(const struct renderer *r, size_t i)
+{
+#ifdef PB626_PACKED_TRANSITIONS
+	return r->transitions[i] | (((r->transition_high[i >> 3] >> (i & 7)) & 1u) << 8);
+#else
+	return r->transitions[i];
+#endif
+}
+
+static inline void transition_set(struct renderer *r, size_t i, uint16_t value)
+{
+	r->transitions[i] = value;
+#ifdef PB626_PACKED_TRANSITIONS
+	uint8_t bit = 1u << (i & 7);
+	r->transition_high[i >> 3] = (r->transition_high[i >> 3] & ~bit) |
+		(value == 256 ? bit : 0);
+#endif
+}
+
+/* Spans are always aligned to four-source groups, including row boundaries. */
+static inline void transition_clear(struct renderer *r, size_t first, size_t count)
+{
+	memset(r->transitions + first, 0, count * sizeof(*r->transitions));
+#ifdef PB626_PACKED_TRANSITIONS
+	if (!count)
+		return;
+	if (first & 7) {
+		r->transition_high[first >> 3] &= 0x0f;
+		first += 4;
+		count -= 4;
+	}
+	if (count & 7) {
+		r->transition_high[(first + count - 4) >> 3] &= 0xf0;
+		count -= 4;
+	}
+	memset(r->transition_high + (first >> 3), 0, count >> 3);
+#endif
+}
+
+static inline const uint16_t *transition_group(const struct renderer *r, size_t i,
+					      uint16_t scratch[4])
+{
+#ifdef PB626_PACKED_TRANSITIONS
+	unsigned int high = r->transition_high[i >> 3] >> (i & 7);
+	for (unsigned int p = 0; p < 4; p++)
+		scratch[p] = r->transitions[i + p] | (((high >> p) & 1u) << 8);
+	return scratch;
+#else
+	(void)scratch;
+	return r->transitions + i;
+#endif
+}
 
 static _Noreturn void fail(const char *message)
 {
@@ -477,7 +536,8 @@ static unsigned int index_groups(struct renderer *renderer)
 	for (unsigned int y = 0; y < GATES; y++) {
 		struct span_range row = renderer->rows[y];
 		for (unsigned int x = row.first; x < row.end; x++) {
-			const uint16_t *p = renderer->transitions + y * SOURCES + 4 * x;
+			uint16_t scratch[4];
+			const uint16_t *p = transition_group(renderer, y * SOURCES + 4 * x, scratch);
 			unsigned int slot = (p[0] * 137 + p[1] * 149 + p[2] * 167 +
 					     p[3] * 179) & (GROUP_HASH_SIZE - 1);
 			while (hash[slot] &&
@@ -533,7 +593,6 @@ static void render(struct buffer *buffer, const struct renderer *renderer,
 				unsigned int first = old.first > row.end ? old.first : row.end;
 				memcpy(out + first, neutral + first, (old.end - first) * sizeof(*out));
 			}
-			const uint16_t *pixels = renderer->transitions + y * SOURCES + 4 * row.first;
 			uint32_t staged[GROUPS];
 			uint32_t *dest = renderer->style == RENDER_SCALAR ? out : staged;
 			if (reset) {
@@ -544,9 +603,12 @@ static void render(struct buffer *buffer, const struct renderer *renderer,
 				for (unsigned int x = row.first; x < row.end; x++)
 					dest[x] = neutral[x] | group_pins[codes[x]];
 			} else {
-				for (unsigned int x = row.first; x < row.end; x++, pixels += 4)
+				for (unsigned int x = row.first; x < row.end; x++) {
+					uint16_t scratch[4];
+					const uint16_t *pixels = transition_group(renderer, y * SOURCES + 4 * x, scratch);
 					dest[x] = neutral[x] | pins[0][pixels[0]] | pins[1][pixels[1]] |
 						  pins[2][pixels[2]] | pins[3][pixels[3]];
+				}
 			}
 			if (dest == staged)
 				memcpy(out + row.first, staged + row.first,
@@ -738,8 +800,8 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 	if (mode != INIT) {
 		for (unsigned int gate = 0; gate < GATES; gate++) {
 			struct span_range old = renderer->rows[gate];
-			memset(renderer->transitions + gate * SOURCES + 4 * old.first, 0,
-			       4 * (old.end - old.first) * sizeof(*renderer->transitions));
+			transition_clear(renderer, gate * SOURCES + 4 * old.first,
+					 4 * (old.end - old.first));
 			renderer->rows[gate] = (struct span_range){0};
 		}
 		for (int ty = 0; ty < TILE_ROWS; ty++)
@@ -769,7 +831,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 						unsigned int t = old | (level << 4);
 						active[t] = true;
 						changed = true;
-						renderer->transitions[gate * SOURCES + source] = t + 1;
+						transition_set(renderer, gate * SOURCES + source, t + 1);
 						struct span_range *row = &renderer->rows[gate];
 						if (!row->end)
 							row->first = source / 4;
@@ -828,7 +890,7 @@ static void apply(struct renderer *renderer, enum mode mode, const uint8_t *imag
 		for (unsigned int gate = 0; gate < GATES; gate++) {
 			struct span_range row = renderer->rows[gate];
 			for (unsigned int source = 4 * row.first; source < 4 * row.end; source++) {
-				uint16_t transition = renderer->transitions[gate * SOURCES + source];
+				uint16_t transition = transition_get(renderer, gate * SOURCES + source);
 				if (transition)
 					nibble_set(previous, portrait_index(gate, source), (transition - 1) >> 4);
 			}
