@@ -24,9 +24,9 @@ jobs:
       debian_only: false
 
   deep-resume-lab:
-    name: Deep resume ARM compile check (not for flash)
+    name: Deep resume isolated kernel and SRAM model (not for flash)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Install pinned-tree build prerequisites
@@ -34,13 +34,20 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends git gcc-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod
-      - uses: actions/setup-python@v5
+      - name: Fingerprint deep kernel build tools
+        id: tools
+        run: |
+          set -euo pipefail
+          dpkg-query -W gcc-arm-linux-gnueabihf gcc-13-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross make bc bison flex libssl-dev libelf-dev device-tree-compiler libncurses-dev lz4 kmod | tee /tmp/deep-toolchain
+          echo "fingerprint=$(sha256sum /tmp/deep-toolchain | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Restore isolated deep kernel cache
+        id: deep
+        uses: actions/cache/restore@v4
         with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: BT0-uncaged/emulator/requirements.txt
-      - run: python -m pip install -r BT0-uncaged/emulator/requirements.txt
-      - name: Compile isolated deep-resume objects
+          path: deep-resume-lab
+          key: pb626-deep-kernel-v1-facc87117511221-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('scripts/build-megi-kernel.sh', 'scripts/configure-megi-kernel.sh', 'scripts/build-megi-variants.sh', 'board/megi/**', 'patches/pwm-backlight-disconnect-when-off.patch', 'patches/ektf2227-pocketbook-touch.patch', 'patches/a13-mbus-dma-devlink.patch', 'patches/sun5i-eink-runtime-pm.patch', 'patches/sun4i-lradc-system-pm.patch', 'patches/axp209-boot-source.patch', 'patches/lab/**', '.github/workflows/request-firmware.yml') }}
+      - name: Compile and link isolated deep kernel
+        if: steps.deep.outputs.cache-hit != 'true'
         env:
           ARCH: arm
           CROSS_COMPILE: arm-linux-gnueabihf-
@@ -54,22 +61,66 @@ jobs:
             git -C linux apply --check "$PWD/$patch"
             git -C linux apply "$PWD/$patch"
           done
-          linux/scripts/config --file linux/.config -e SUN5I_PM
+          linux/scripts/config --file linux/.config -e SUN5I_PM --set-str LOCALVERSION '-pb626-deep-lab'
           make -C linux olddefconfig
           grep -qx 'CONFIG_SUN5I_PM=y' linux/.config
           grep -qx 'CONFIG_ARM_CPU_SUSPEND=y' linux/.config
           cp linux/.config deep-resume-lab/experimental.config
-          # One directory target: multiple individual targets in this directory
-          # spawn competing Kbuild instances writing the same .o/.d files.
-          make -C linux -j"$(nproc)" KCFLAGS=-Wno-error arch/arm/mach-sunxi/
+          # One Kbuild invocation for the complete kernel and modules.
+          make -C linux -j"$(nproc)" KCFLAGS=-Wno-error zImage modules
           test -s linux/arch/arm/mach-sunxi/pm-sun5i.o
           test -s linux/arch/arm/mach-sunxi/sleep-sun5i.o
+          cp linux/arch/arm/boot/zImage deep-resume-lab/zImage
+          cp linux/arch/arm/mach-sunxi/sleep-sun5i.o deep-resume-lab/
           arm-linux-gnueabihf-objdump -dr linux/arch/arm/mach-sunxi/sleep-sun5i.o > deep-resume-lab/sram-disassembly.txt
-          arm-linux-gnueabihf-size linux/arch/arm/mach-sunxi/{pm-sun5i,sleep-sun5i}.o | tee deep-resume-lab/object-sizes.txt
+          arm-linux-gnueabihf-size linux/arch/arm/mach-sunxi/{pm-sun5i,sleep-sun5i}.o > deep-resume-lab/object-sizes.txt
+          arm-linux-gnueabihf-nm linux/vmlinux | awk '$3 == "cpu_resume" {print $1}' > deep-resume-lab/cpu-resume-virtual.txt
+          test "$(wc -l < deep-resume-lab/cpu-resume-virtual.txt)" -eq 1
+          release=$(cat linux/include/config/kernel.release)
+          test -n "$release"
+          printf '%s\n' "$release" > deep-resume-lab/KERNELRELEASE
+          make -C linux modules_install KERNELRELEASE="$release" INSTALL_MOD_PATH="$PWD/deep-module-root" INSTALL_MOD_STRIP=1 DEPMOD=true
+          depmod -b deep-module-root "$release"
+          tar -C deep-module-root -czf deep-resume-lab/kernel-modules.tar.gz lib/modules
+          bash scripts/build-megi-variants.sh linux deep-dtbs "$PWD"
+          cp deep-dtbs/pb626-elan-emmc-native.dtb deep-resume-lab/
           git -C linux diff --check
-          arm-linux-gnueabihf-objcopy -O binary -j .text linux/arch/arm/mach-sunxi/sleep-sun5i.o deep-resume-lab/sram.bin
-          python3 tests/test-deep-sram.py linux/arch/arm/mach-sunxi/sleep-sun5i.o deep-resume-lab/sram.bin
-          printf '%s\n' 'Compile and SRAM control-flow model only: no linked kernel, no board resume qualification, not for flash.' > deep-resume-lab/STATUS
+          cp /tmp/deep-toolchain deep-resume-lab/toolchain.txt
+          (cd deep-resume-lab && sha256sum production.config experimental.config zImage sleep-sun5i.o sram-disassembly.txt object-sizes.txt cpu-resume-virtual.txt KERNELRELEASE kernel-modules.tar.gz pb626-elan-emmc-native.dtb toolchain.txt > SHA256SUMS)
+      - name: Verify isolated kernel artifacts
+        run: |
+          set -euo pipefail
+          (cd deep-resume-lab && sha256sum -c SHA256SUMS)
+          cmp /tmp/deep-toolchain deep-resume-lab/toolchain.txt
+          bash scripts/configure-megi-kernel.sh --check deep-resume-lab/production.config
+          grep -qx 'CONFIG_SUN5I_PM=y' deep-resume-lab/experimental.config
+          grep -qx 'CONFIG_ARM_CPU_SUSPEND=y' deep-resume-lab/experimental.config
+          grep -qx 'CONFIG_LOCALVERSION="-pb626-deep-lab"' deep-resume-lab/experimental.config
+          test -s deep-resume-lab/zImage
+          test "$(fdtget -t x deep-resume-lab/pb626-elan-emmc-native.dtb /memory@40000000 reg)" = "40000000 10000000"
+          gzip -t deep-resume-lab/kernel-modules.tar.gz
+          tar -xOzf deep-resume-lab/kernel-modules.tar.gz "lib/modules/$(cat deep-resume-lab/KERNELRELEASE)/modules.dep" >/tmp/deep-modules.dep
+          test -s /tmp/deep-modules.dep
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: BT0-uncaged/emulator/requirements.txt
+      - run: python -m pip install -r BT0-uncaged/emulator/requirements.txt
+      - name: Execute actual SRAM object with current fault tests (also on cache hit)
+        run: |
+          set -euo pipefail
+          arm-linux-gnueabihf-objcopy -O binary -j .text deep-resume-lab/sleep-sun5i.o /tmp/deep-sram.bin
+          python3 tests/test-deep-sram.py deep-resume-lab/sleep-sun5i.o /tmp/deep-sram.bin
+      - name: Cache verified isolated kernel, not test result
+        if: steps.deep.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: deep-resume-lab
+          key: ${{ steps.deep.outputs.cache-primary-key }}
+      - name: Record qualification limits
+        run: |
+          printf '%s\n' 'Linked laboratory kernel and SRAM control-flow model only. No board resume qualification, no approved SPL pairing, not for flash.' > deep-resume-lab/STATUS
       - uses: actions/upload-artifact@v4
         if: always()
         with:
