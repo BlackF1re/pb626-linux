@@ -179,6 +179,8 @@ jobs:
           python3 BT0-uncaged/test_recover_base.py
           cc -std=c99 -O2 -Wall -Wextra -Werror BT0-uncaged/test-led-morse.c -o /tmp/test-led-morse
           /tmp/test-led-morse
+          cc -std=c99 -O2 -Wall -Wextra -Werror BT0-uncaged/test-resume-contract.c -o /tmp/test-resume-contract
+          /tmp/test-resume-contract
           cc -std=c99 -O2 -Wall -Wextra -Werror -I BT0-uncaged/test-stubs -I BT0-uncaged BT0-uncaged/test-led-runtime.c -o /tmp/test-led-runtime
           /tmp/test-led-runtime
           python3 -m py_compile BT0-uncaged/prepare-source-led.py

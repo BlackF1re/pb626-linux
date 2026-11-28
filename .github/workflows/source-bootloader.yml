@@ -33,7 +33,7 @@ jobs:
         id: cache
         with:
           path: source-boot-candidates
-          key: pb626-source-spl-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/build-from-source.sh', 'BT0-uncaged/prepare-source-hook.py', 'BT0-uncaged/prepare-source-led.py', 'BT0-uncaged/pb626-led.c', 'BT0-uncaged/pb626-led.h', 'BT0-uncaged/led-morse.h', 'BT0-uncaged/prepare-source-resume.py', 'BT0-uncaged/early-menu.S', 'BT0-uncaged/fel-entry.S', 'patches/sunxi-fel-keep-mmu-off.patch') }}
+          key: pb626-source-spl-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.fingerprint }}-${{ hashFiles('BT0-uncaged/build-from-source.sh', 'BT0-uncaged/prepare-source-hook.py', 'BT0-uncaged/prepare-source-led.py', 'BT0-uncaged/pb626-led.c', 'BT0-uncaged/pb626-led.h', 'BT0-uncaged/led-morse.h', 'BT0-uncaged/prepare-source-resume.py', 'BT0-uncaged/pb626-resume-contract.h', 'BT0-uncaged/early-menu.S', 'BT0-uncaged/fel-entry.S', 'patches/sunxi-fel-keep-mmu-off.patch') }}
       - name: Build independently from pinned source
         if: steps.cache.outputs.cache-hit != 'true'
         run: bash BT0-uncaged/build-from-source.sh source-boot-candidates
