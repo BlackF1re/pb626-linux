@@ -265,3 +265,9 @@ this policy. This reduces the chance of scanning a transient window or
 partially painted widget. It does not change waveforms or cleanup.
 The window adds latency to an isolated update, while potentially avoiding
 hundreds of milliseconds of physical scanout for transient content.
+
+Exact-first DU also drives near-endpoint transitions (for example 1→0
+and 14→15) directly. The former approximation dead band is unnecessary
+for a binary target and would otherwise force a slower GL16 fallback.
+A2 eligibility still excludes nonbinary old levels; explicit legacy
+approximation retains its original dead band.

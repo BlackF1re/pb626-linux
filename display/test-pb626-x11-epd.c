@@ -580,7 +580,8 @@ static void test_exact_preview_policy(void)
 				}
 				unsigned int level = commands[m] == PREVIEW_DU4 ?
 					(old != target ? preview_level4(target) : old) :
-					(abs((int)target - (int)old) >= 3 ? preview_level(target, old) : old);
+					(target == 0 || target == WHITE ? target :
+					 (abs((int)target - (int)old) >= 3 ? preview_level(target, old) : old));
 				assert(command == (level != target ? SETTLE : commands[m]));
 			}
 	/* A mixed tile must not leak a partially prepared fast frame. */

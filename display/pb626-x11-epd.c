@@ -1449,9 +1449,13 @@ static unsigned int prepare_internal(uint8_t command, const uint8_t *desired, co
 					int scrub = command == CLEAN && target == old && needs_scrub(panel, x, y);
 					uint8_t level = target;
 					differs |= target != old;
-					if (command == PREVIEW || command == PREVIEW_A2)
-                        level = abs(target - old) >= 3 ? preview_level(target, old) : old;
-                    else if (command == PREVIEW_DU4)
+					if (command == PREVIEW || command == PREVIEW_A2) {
+						/* In exact-first mode DU can drive every changed
+						 * binary target, including 1->0 and 14->15.
+						 * A2 is still selected only after eligibility. */
+						if (!exact_only || (target != 0 && target != WHITE))
+							level = abs(target - old) >= 3 ? preview_level(target, old) : old;
+					} else if (command == PREVIEW_DU4)
                         level = target != old ? preview_level4(target) : old;
 					if (exact_only && level != target)
 						return UINT32_MAX;
