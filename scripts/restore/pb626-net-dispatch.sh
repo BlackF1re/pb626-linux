@@ -19,6 +19,11 @@ case "$1" in
         test "$#" = 1
         printf 'PB626-NCM-1\n'
         ;;
+    identity)
+        test "$#" = 1
+        test -f /etc/pb626-windows-build
+        cat /etc/pb626-windows-build
+        ;;
     test)
         test "$#" = 2
         work=$(mktemp /run/pb626-net-test.XXXXXX)

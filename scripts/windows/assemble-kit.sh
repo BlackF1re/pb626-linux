@@ -45,8 +45,9 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/etc"
 printf '%s\n' "$digest" >"$work/etc/pb626-spl-candidate.sha256"
-chmod 444 "$work/etc/pb626-spl-candidate.sha256"
-(cd "$work" && printf 'etc/pb626-spl-candidate.sha256\0' | cpio --null -o --format=newc --owner=0:0 --quiet) | gzip -n -9 >"$work/overlay.gz"
+printf '%s %s %s\n' "$rev" "$profile" "$digest" >"$work/etc/pb626-windows-build"
+chmod 444 "$work/etc/"*
+(cd "$work" && printf '%s\0' etc/pb626-spl-candidate.sha256 etc/pb626-windows-build | cpio --null -o --format=newc --owner=0:0 --quiet) | gzip -n -9 >"$work/overlay.gz"
 gzip -dc "$work/overlay.gz" | cpio --extract --to-stdout etc/pb626-spl-candidate.sha256 2>/dev/null | grep -Fx "$digest"
 cat "$work/overlay.gz" >>"$out/recovery/pb626-megi-initramfs.cpio.gz"
 gzip -t "$out/recovery/pb626-megi-initramfs.cpio.gz"

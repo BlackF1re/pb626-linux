@@ -132,9 +132,13 @@ def main():
         print(f"Validated {direct.kit_profile(kit)}: {rev}; raw kernel {len(raw)} bytes; {len(mapped)} mapped rootfs chunks; candidate {sha(spl)}")
     elif args.action=="hello":
         import importlib
-        recovery=importlib.import_module("install-direct").EthernetRecovery(windows=True)
-        recovery.close()
-        print("Recovery protocol OK")
+        direct=importlib.import_module("install-direct")
+        recovery=direct.EthernetRecovery(windows=True)
+        try:
+            direct.check_windows_recovery(recovery,kit)
+        finally:
+            recovery.close()
+        print("Same-build recovery and storage ready")
     else:
         boot(kit,args.profile)
 if __name__=="__main__":

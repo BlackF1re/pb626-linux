@@ -304,6 +304,17 @@ def candidate_path(kit):
     return kit/'candidate'/name
 
 
+def check_windows_recovery(r, kit):
+    expected = '{} {} {}'.format((kit/'native/BUILD-COMMIT').read_text().strip(),
+                                kit_profile(kit), filehash(candidate_path(kit)))
+    require(r.lines('identity',timeout=5)==[expected],
+            'Wrong RAM recovery build/profile; boot recovery from this bundle')
+    rows=r.lines('probe',timeout=10)
+    require(sum(bool(re.fullmatch(r'CID=[0-9a-f]{32}',row)) for row in rows)==1,
+            'eMMC not ready or not qualified')
+    return rows
+
+
 def checked_inputs(kit, spl_mode='qualified'):
     native = kit/'native'
     rev = (native/'BUILD-COMMIT').read_text().strip()
@@ -395,8 +406,8 @@ def main():
     mapped = mapped_chunks(kit/'native/pb626-rootfs.bmap.json')
     r = EthernetRecovery(windows=args.windows)
     try:
+        rows = check_windows_recovery(r,kit) if args.windows else r.lines('probe')
         r.test_transport()
-        rows = r.lines('probe')
         ids = [x[4:] for x in rows if re.fullmatch(r'CID=[0-9a-f]{32}', x)]
         require(len(ids) == 1, 'Unqualified eMMC')
         cid = ids[0]
