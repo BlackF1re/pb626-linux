@@ -296,6 +296,11 @@ case "$operation" in
         lock_region || fail "Failed to relock $device"
         unlocked=0
         if test "$1" = sd; then sd_identity; fi
+        blockdev --flushbufs "$device"
+        dd if="$device" of="$work/readback" bs="$chunk" skip="$2" count=1 status=none
+        test "$(wc -c <"$work/readback")" -eq "$length" || fail "Short write readback"
+        check_hash "$work/readback"
+        printf 'PB626_WRITTEN %s %s\n' "$2" "$expected_hash"
         ;;
     *) fail "Unknown operation" ;;
 esac

@@ -45,13 +45,70 @@ def read_block(r,cid,sectors,region,i,length):
 def write_block(r,cid,sectors,region,i,data):
     packed=gzip.compress(data,compresslevel=1)
     fmt,payload=("gzip",packed) if len(packed)<len(data) else ("raw",data)
-    r.request("dump",cid,sectors,"write",region,i,fmt,len(payload),d.sha(data),payload=payload)
+    rows=r.lines("dump",cid,sectors,"write",region,i,fmt,len(payload),d.sha(data),payload=payload)
+    d.require(rows==[f"PB626_WRITTEN {i} {d.sha(data)}"],"Missing verified restore acknowledgement")
 
 def digest(r,cid,sectors,region,op):
     rows=r.lines("dump",cid,sectors,op,region,timeout=3600)
     hashes=[x[7:] for x in rows if re.fullmatch("SHA256 [0-9a-f]{64}",x)]
     d.require(len(hashes)==1,"Missing full-device hash")
     return hashes[0]
+
+def scan(r,cid,sectors,region,count):
+    rows=r.lines("dump",cid,sectors,"scan",region,timeout=3600,max_response=32*1024*1024)
+    actual={}
+    for line in rows:
+        m=re.fullmatch("BLOCK ([0-9]+) ([0-9a-f]{64})",line)
+        if m:
+            index=int(m[1]); d.require(index not in actual,"Duplicate scan entry")
+            actual[index]=m[2]
+    d.require(set(actual)==set(range(count)),"Incomplete disk scan")
+    return actual
+
+
+def backup_region(r,cid,sectors,region,size,partial,finished):
+    d.require(not (partial.exists() and finished.exists()),"Ambiguous backup files")
+    count=(size+CHUNK-1)//CHUNK
+    local=finished if finished.exists() else partial
+    if local.exists():
+        d.require(local.is_file() and local.stat().st_size<=size,"Invalid partial backup extent")
+        print("Checking saved chunks against current eMMC:",region,flush=True)
+        actual=scan(r,cid,sectors,region,count)
+        if local==finished:
+            # A completed region may be reused only if the live medium
+            # still matches the complete local image.
+            if local.stat().st_size==size and d.filehash(local)==digest(r,cid,sectors,region,"backup-hash"):
+                print("Already verified:",region,flush=True)
+                return
+            local.rename(partial)
+        mode="r+b"
+    else:
+        actual={}
+        mode="x+b"
+    h=hashlib.sha256()
+    started=time.monotonic()
+    reused=0
+    with partial.open(mode) as f:
+        for i,offset in enumerate(range(0,size,CHUNK)):
+            length=min(CHUNK,size-offset)
+            f.seek(offset)
+            data=f.read(length)
+            if len(data)==length and actual.get(i)==d.sha(data):
+                reused+=1
+            else:
+                data=read_block(r,cid,sectors,region,i,length)
+                f.seek(offset)
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            h.update(data)
+            d.progress(region,i+1,count,started)
+        f.truncate(size); f.flush(); os.fsync(f.fileno())
+    print(f"{region}: {reused} saved chunks reused. Verifying full region...",flush=True)
+    d.require(h.hexdigest()==digest(r,cid,sectors,region,"backup-hash"),"Full backup hash mismatch; keep partial and resume")
+    d.require(d.filehash(partial)==h.hexdigest(),"Local backup readback mismatch")
+    partial.rename(finished)
+
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
@@ -74,32 +131,43 @@ def main():
     if args.action=="backup":
         path.parent.mkdir(parents=True,exist_ok=True)
         required=sum(size for _,_,size in images)
-        d.require(shutil.disk_usage(path.parent).free>=required+16*1024*1024,
-                  f"Not enough disk space; backup needs {required/1024**3:.2f} GiB plus metadata")
-        path.mkdir(exist_ok=False)
+        names=[cidname]+([extname] if ext is not None else [])
+        if path.exists():
+            d.require(path.is_dir() and not (path/"SHA256SUMS").exists(),"Not an incomplete backup directory")
+            d.require((path/cidname).read_text().strip()==cid,"Partial backup belongs to a different card")
+            if ext is not None:
+                old=(path/extname).read_bytes()
+                d.require(len(old)==512,"Invalid partial EXT_CSD")
+                for start,end in ((143,156),(179,180),(212,216),(226,227)):
+                    d.require(old[start:end]==ext[start:end],"Partial backup geometry differs")
+            for _,name,size in images:
+                candidates=[p for p in (path/name,path/(name+".partial")) if p.exists()]
+                d.require(len(candidates)<=1,"Ambiguous partial backup")
+                if candidates:
+                    d.require(candidates[0].is_file() and candidates[0].stat().st_size<=size,"Invalid partial extent")
+                    required-=candidates[0].stat().st_size
+        else:
+            path.mkdir(exist_ok=False)
+            (path/cidname).write_text(cid+"\n")
+            if ext is not None:
+                (path/extname).write_bytes(ext)
+        d.require(shutil.disk_usage(path).free>=required+16*1024*1024,
+                  f"Not enough disk space; remaining backup needs {required/1024**3:.2f} GiB plus metadata")
         print("Backup directory:",path,flush=True)
-        names=[cidname]
-        (path/cidname).write_text(cid+"\n")
-        if ext is not None:
-            (path/extname).write_bytes(ext)
-            names.append(extname)
         for region,name,size in images:
-            h=hashlib.sha256()
-            partial=path/(name+".partial")
-            started=time.monotonic()
-            with partial.open("xb") as f:
-                for i,offset in enumerate(range(0,size,CHUNK)):
-                    data=read_block(r,cid,sectors,region,i,min(CHUNK,size-offset))
-                    f.write(data); h.update(data)
-                    d.progress(region,i+1,(size+CHUNK-1)//CHUNK,started)
-                f.flush(); os.fsync(f.fileno())
-            print("Verifying complete device region:",region,flush=True)
-            d.require(h.hexdigest()==digest(r,cid,sectors,region,"backup-hash"),
-                      "Full backup hash mismatch")
-            partial.rename(path/name)
+            backup_region(r,cid,sectors,region,size,path/(name+".partial"),path/name)
             names.append(name)
         d.require(info(r,args.sd)[0]==cid,"CID changed")
-        (path/"SHA256SUMS").write_text("".join(d.filehash(path/n)+"  "+n+"\n" for n in names))
+        # Final manifest is the completion marker; never publish one for a
+        # partial dump. Verify all device regions again before publishing it.
+        for region,name,size in images:
+            d.require(d.filehash(path/name)==digest(r,cid,sectors,region,"backup-hash"),
+                      "Device changed during backup; resume to reconcile")
+        pending=path/"SHA256SUMS.partial"
+        with pending.open("w",encoding="ascii") as f:
+            f.write("".join(d.filehash(path/n)+"  "+n+"\n" for n in names))
+            f.flush(); os.fsync(f.fileno())
+        pending.replace(path/"SHA256SUMS")
         print("Verified full dump:",path,flush=True)
         return
     sums=d.manifest(path/"SHA256SUMS")
@@ -120,16 +188,9 @@ def main():
     d.confirm("Type RESTORE "+cid+" to continue (anything else cancels): ","RESTORE "+cid)
     for region,name,size in images:
         print("Scanning current device region:",region,flush=True)
-        rows=r.lines("dump",cid,sectors,"scan",region,timeout=3600,
-                     max_response=32*1024*1024)
-        actual={}
-        for line in rows:
-            m=re.fullmatch("BLOCK ([0-9]+) ([0-9a-f]{64})",line)
-            if m:
-                index=int(m[1]); d.require(index not in actual,"Duplicate scan entry")
-                actual[index]=m[2]
         count=(size+CHUNK-1)//CHUNK
-        d.require(set(actual)==set(range(count)),"Incomplete disk scan")
+        actual=scan(r,cid,sectors,region,count)
+        written=0
         with (path/name).open("rb") as f:
             order=list(range(count))
             if region=="user": order=order[1:]+order[:1]
@@ -142,7 +203,9 @@ def main():
                 if d.sha(data)!=actual[i]:
                     d.journal(args.journal,'writing',f'restore {region} chunk {i}')
                     write_block(r,cid,sectors,region,i,data)
+                    written+=1
                 d.progress(region,done,count,started)
+        print(f"{region}: {written} written, {count-written} already matching.",flush=True)
         d.require(digest(r,cid,sectors,region,"verify")==sums[name],"Full restore hash mismatch")
     d.require(info(r,args.sd)[0]==cid,"CID changed")
     d.journal(args.journal,'verified','full restore')
